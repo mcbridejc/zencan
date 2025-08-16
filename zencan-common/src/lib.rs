@@ -29,6 +29,3 @@ pub use socketcan::open_socketcan;
 pub use node_id::NodeId;
 
 pub use messages::{CanError, CanId, CanMessage};
-
-#[cfg(test)]
-pub mod test_utils;

@@ -222,18 +222,6 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
             }),
         },
         ObjectDefinition {
-            index: 0x1010,
-            parameter_name: "Object Save Command".to_string(),
-            application_callback: true,
-            object: Object::Array(ArrayDefinition {
-                data_type: DataType::UInt32,
-                access_type: AccessType::Rw.into(),
-                array_size: 1,
-                persist: false,
-                ..Default::default()
-            }),
-        },
-        ObjectDefinition {
             index: 0x1017,
             parameter_name: "Heartbeat Producer Time (ms)".to_string(),
             application_callback: false,
@@ -392,11 +380,131 @@ fn pdo_objects(num_rpdo: usize, num_tpdo: usize) -> Vec<ObjectDefinition> {
     objects
 }
 
+fn bootloader_objects(cfg: &BootloaderConfig) -> Vec<ObjectDefinition> {
+    let mut objects = Vec::new();
+
+    if cfg.sections.is_empty() {
+        return objects;
+    }
+    objects.push(ObjectDefinition {
+        index: 0x5500,
+        parameter_name: "Bootloader Info".into(),
+        application_callback: false,
+        object: Object::Record(RecordDefinition {
+            subs: vec![
+                SubDefinition {
+                    sub_index: 1,
+                    parameter_name: "Bootloader Config".into(),
+                    field_name: Some("config".into()),
+                    data_type: DataType::UInt32,
+                    access_type: AccessType::Ro.into(),
+                    default_value: Some(0.into()),
+                    pdo_mapping: PdoMapping::None,
+                    persist: false,
+                },
+                SubDefinition {
+                    sub_index: 2,
+                    parameter_name: "Number of Section".into(),
+                    field_name: Some("num_sections".into()),
+                    data_type: DataType::UInt8,
+                    access_type: AccessType::Ro.into(),
+                    default_value: Some(cfg.sections.len().into()),
+                    pdo_mapping: PdoMapping::None,
+                    persist: false,
+                },
+                SubDefinition {
+                    sub_index: 3,
+                    parameter_name: "Reset to Bootloader Command".into(),
+                    field_name: None,
+                    data_type: DataType::UInt32,
+                    access_type: AccessType::Wo.into(),
+                    default_value: None,
+                    pdo_mapping: PdoMapping::None,
+                    persist: false,
+                },
+            ],
+        }),
+    });
+
+    for (i, section) in cfg.sections.iter().enumerate() {
+        objects.push(ObjectDefinition {
+            index: 0x5510 + i as u16,
+            parameter_name: format!("Bootloader Section {i}"),
+            application_callback: true,
+            object: Object::Record(RecordDefinition {
+                subs: vec![
+                    SubDefinition {
+                        sub_index: 1,
+                        parameter_name: "Mode bits".into(),
+                        data_type: DataType::UInt8,
+                        access_type: AccessType::Const.into(),
+                        ..Default::default()
+                    },
+                    SubDefinition {
+                        sub_index: 2,
+                        parameter_name: "Section Name".into(),
+                        data_type: DataType::VisibleString(0),
+                        access_type: AccessType::Const.into(),
+                        default_value: Some(section.name.as_str().into()),
+                        ..Default::default()
+                    },
+                    SubDefinition {
+                        sub_index: 3,
+                        parameter_name: "Section Size".into(),
+                        data_type: DataType::UInt32,
+                        access_type: AccessType::Const.into(),
+                        default_value: Some((section.size as i64).into()),
+                        ..Default::default()
+                    },
+                    SubDefinition {
+                        sub_index: 4,
+                        parameter_name: "Erase Command".into(),
+                        data_type: DataType::UInt8,
+                        access_type: AccessType::Wo.into(),
+                        ..Default::default()
+                    },
+                    SubDefinition {
+                        sub_index: 5,
+                        parameter_name: "Data".into(),
+                        data_type: DataType::Domain,
+                        access_type: AccessType::Rw.into(),
+                        ..Default::default()
+                    },
+                ],
+            }),
+        });
+    }
+
+    objects
+}
+
+fn object_storage_objects(dev: &DeviceConfig) -> Vec<ObjectDefinition> {
+    if dev.support_storage {
+        vec![ObjectDefinition {
+            index: 0x1010,
+            parameter_name: "Object Save Command".to_string(),
+            application_callback: false,
+            object: Object::Array(ArrayDefinition {
+                data_type: DataType::UInt32,
+                access_type: AccessType::Rw.into(),
+                array_size: 1,
+                persist: false,
+                ..Default::default()
+            }),
+        }]
+    } else {
+        vec![]
+    }
+}
+
 fn default_num_rpdo() -> u8 {
     4
 }
 fn default_num_tpdo() -> u8 {
     4
+}
+fn default_true() -> bool {
+    true
 }
 
 /// Configuration options for PDOs
@@ -462,12 +570,39 @@ impl PdoMapping {
     }
 }
 
+/// Configuration object to define a programmable bootloader section
+#[derive(Clone, Debug, Deserialize)]
+pub struct BootloaderSection {
+    /// Name of the section
+    pub name: String,
+    /// Size of the section
+    pub size: u32,
+}
+
+/// Configuration of bootloader parameters
+#[derive(Clone, Deserialize, Debug, Default)]
+pub struct BootloaderConfig {
+    /// If true, this node is an application which supports resetting to a bootloader, rather than a
+    /// bootloader implementation
+    #[serde(default)]
+    pub application: bool,
+    /// List of programmable sections
+    #[serde(default)]
+    pub sections: Vec<BootloaderSection>,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
-/// Device configuration structure
+/// Private struct for seserializing device config files
 pub struct DeviceConfig {
     /// The name describing the type of device (e.g. a model)
     pub device_name: String,
+
+    /// Enables object storage commands (object 0x1010)
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub support_storage: bool,
 
     /// A version describing the hardware
     #[serde(default)]
@@ -486,6 +621,10 @@ pub struct DeviceConfig {
     /// Configure PDO settings
     #[serde(default)]
     pub pdos: PdoConfig,
+
+    /// Configure bootloader options
+    #[serde(default)]
+    pub bootloader: BootloaderConfig,
 
     /// A list of application specific objects to define on the device
     #[serde(default)]
@@ -535,6 +674,36 @@ pub enum DefaultValue {
     String(String),
 }
 
+impl From<i64> for DefaultValue {
+    fn from(value: i64) -> Self {
+        Self::Integer(value)
+    }
+}
+
+impl From<i32> for DefaultValue {
+    fn from(value: i32) -> Self {
+        Self::Integer(value as i64)
+    }
+}
+
+impl From<usize> for DefaultValue {
+    fn from(value: usize) -> Self {
+        Self::Integer(value as i64)
+    }
+}
+
+impl From<f64> for DefaultValue {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
+impl From<&str> for DefaultValue {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
 /// An enum representing the different types of objects which can be defined in a device config
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "object_type", rename_all = "lowercase")]
@@ -545,8 +714,6 @@ pub enum Object {
     Array(ArrayDefinition),
     /// A record is a collection of sub objects all with different types
     Record(RecordDefinition),
-    /// A domain is a chunk of bytes which can be accessed via the object
-    Domain(DomainDefinition),
 }
 
 /// Descriptor for a var object
@@ -626,7 +793,6 @@ impl ObjectDefinition {
             Object::Var(_) => ObjectCode::Var,
             Object::Array(_) => ObjectCode::Array,
             Object::Record(_) => ObjectCode::Record,
-            Object::Domain(_) => ObjectCode::Domain,
         }
     }
 }
@@ -644,10 +810,14 @@ impl DeviceConfig {
 
         // Add mandatory objects to the config
         config.objects.extend(mandatory_objects(&config));
+        config
+            .objects
+            .extend(bootloader_objects(&config.bootloader));
         config.objects.extend(pdo_objects(
             config.pdos.num_rpdo as usize,
             config.pdos.num_tpdo as usize,
         ));
+        config.objects.extend(object_storage_objects(&config));
 
         Self::validate_unique_indices(&config.objects)?;
 

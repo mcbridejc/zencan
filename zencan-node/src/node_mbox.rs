@@ -28,9 +28,9 @@ impl NodeMbox {
     /// # Args
     ///
     /// - `rx_pdos`: A slice of Pdo objects for all of the receive PDOs
-    pub const fn new(rx_pdos: &'static [Pdo]) -> Self {
+    pub const fn new(rx_pdos: &'static [Pdo], sdo_buffer: &'static mut [u8]) -> Self {
         let sdo_cob_id = AtomicCell::new(None);
-        let sdo_receiver = SdoReceiver::new();
+        let sdo_receiver = SdoReceiver::new(sdo_buffer);
         let nmt_mbox = AtomicCell::new(None);
         let lss_receiver = LssReceiver::new();
         let sync_flag = AtomicCell::new(false);
@@ -58,10 +58,6 @@ impl NodeMbox {
         if let Some(notify_cb) = self.notify_cb.load() {
             notify_cb();
         }
-    }
-
-    pub(crate) fn num_rx_pdos(&self) -> usize {
-        self.rx_pdos.len()
     }
 
     pub(crate) fn set_sdo_cob_id(&self, cob_id: Option<CanId>) {

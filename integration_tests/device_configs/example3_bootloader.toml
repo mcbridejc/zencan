@@ -1,0 +1,17 @@
+# A simple config for a bootloader
+device_name = "Bootload Example"
+
+[pdos]
+num_rpdo = 4
+num_tpdo = 4
+
+[identity]
+vendor_id = 5000
+product_code = 0x80001002
+revision_number = 2
+
+[bootloader]
+application = false
+[[bootloader.sections]]
+name = "application"
+size = 122880

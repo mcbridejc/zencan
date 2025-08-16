@@ -4,38 +4,12 @@ use std::{
     time::Duration,
 };
 
-use integration_tests::{
-    object_dict1,
-    sim_bus::{SimBus, SimBusReceiver, SimBusSender},
-};
-use zencan_client::{RawAbortCode, SdoClient, SdoClientError};
-use zencan_common::{objects::ODEntry, sdo::AbortCode, NodeId};
-use zencan_node::{Node, NodeMbox, NodeStateAccess};
+use integration_tests::object_dict1;
+use zencan_client::{RawAbortCode, SdoClientError};
+use zencan_common::sdo::AbortCode;
 
 mod utils;
-use utils::{test_with_background_process, BusLogger};
-
-fn setup<'a, S: NodeStateAccess>(
-    od: &'static [ODEntry],
-    mbox: &'static NodeMbox,
-    state: &'static S,
-) -> (
-    Node,
-    SdoClient<SimBusSender<'a>, SimBusReceiver>,
-    SimBus<'a>,
-) {
-    const SLAVE_NODE_ID: u8 = 1;
-
-    let node = Node::init(NodeId::new(SLAVE_NODE_ID).unwrap(), mbox, state, od).finalize();
-
-    let mut bus = SimBus::new(vec![mbox]);
-
-    let sender = bus.new_sender();
-    let receiver = bus.new_receiver();
-    let client = SdoClient::new_std(SLAVE_NODE_ID, sender, receiver);
-
-    (node, client, bus)
-}
+use utils::{setup_single_node, test_with_background_process, BusLogger};
 
 #[serial_test::serial]
 #[tokio::test]
@@ -44,7 +18,7 @@ async fn test_device_info_readback() {
     const DEVICE_HW_VER_ID: u16 = 0x1009;
     const DEVICE_SW_VER_ID: u16 = 0x100A;
 
-    let (mut node, mut client, mut bus) = setup(
+    let (mut node, mut client, mut bus) = setup_single_node(
         &object_dict1::OD_TABLE,
         &object_dict1::NODE_MBOX,
         &object_dict1::NODE_STATE,
@@ -79,7 +53,7 @@ async fn test_identity_readback() {
     const REVISION_SUB_ID: u8 = 3;
     const SERIAL_SUB_ID: u8 = 4;
 
-    let (mut node, mut client, mut bus) = setup(
+    let (mut node, mut client, mut bus) = setup_single_node(
         &object_dict1::OD_TABLE,
         &object_dict1::NODE_MBOX,
         &object_dict1::NODE_STATE,
@@ -126,7 +100,7 @@ async fn test_identity_readback() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_string_write() {
-    let (mut node, mut client, mut bus) = setup(
+    let (mut node, mut client, mut bus) = setup_single_node(
         &object_dict1::OD_TABLE,
         &object_dict1::NODE_MBOX,
         &object_dict1::NODE_STATE,
@@ -173,7 +147,7 @@ async fn test_record_access() {
     let od = &object_dict1::OD_TABLE;
     let state = &object_dict1::NODE_STATE;
     let mbox = &object_dict1::NODE_MBOX;
-    let (mut node, mut client, mut bus) = setup(od, mbox, state);
+    let (mut node, mut client, mut bus) = setup_single_node(od, mbox, state);
 
     // Create a logger to display messages on the bus on test failure for debugging
     let _logger = BusLogger::new(bus.new_receiver());
@@ -219,7 +193,7 @@ async fn test_record_access() {
 async fn test_array_access() {
     const OBJECT_ID: u16 = 0x2000;
 
-    let (mut node, mut client, mut bus) = setup(
+    let (mut node, mut client, mut bus) = setup_single_node(
         &object_dict1::OD_TABLE,
         &object_dict1::NODE_MBOX,
         &object_dict1::NODE_STATE,
@@ -261,7 +235,7 @@ async fn test_store_and_restore_objects() {
 
     let od = &object_dict1::OD_TABLE;
     let (mut node, mut client, mut bus) =
-        setup(od, &object_dict1::NODE_MBOX, &object_dict1::NODE_STATE);
+        setup_single_node(od, &object_dict1::NODE_MBOX, &object_dict1::NODE_STATE);
 
     let mut sender = bus.new_sender();
 
@@ -337,7 +311,7 @@ async fn test_empty_string_read() {
 
     let od = &object_dict1::OD_TABLE;
     let (mut node, mut client, mut bus) =
-        setup(od, &object_dict1::NODE_MBOX, &object_dict1::NODE_STATE);
+        setup_single_node(od, &object_dict1::NODE_MBOX, &object_dict1::NODE_STATE);
 
     let mut sender = bus.new_sender();
 

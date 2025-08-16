@@ -1,7 +1,4 @@
 use crate::errors::CompileError;
-use crate::utils::{
-    scalar_read_snippet, scalar_write_snippet, string_read_snippet, string_write_snippet,
-};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use zencan_common::device_config::{
@@ -28,6 +25,27 @@ fn get_sub_field_name(sub: &SubDefinition) -> Result<syn::Ident, CompileError> {
     }
 }
 
+/// Get the struct attribute type used to store this type
+fn get_storage_type(data_type: DCDataType) -> (syn::Type, usize) {
+    match data_type {
+        DCDataType::Boolean => (syn::parse_quote!(ScalarField<bool>), 1),
+        DCDataType::Int8 => (syn::parse_quote!(ScalarField<i8>), 1),
+        DCDataType::Int16 => (syn::parse_quote!(ScalarField<i16>), 2),
+        DCDataType::Int32 => (syn::parse_quote!(ScalarField<i32>), 4),
+        DCDataType::UInt8 => (syn::parse_quote!(ScalarField<u8>), 1),
+        DCDataType::UInt16 => (syn::parse_quote!(ScalarField<u16>), 2),
+        DCDataType::UInt32 => (syn::parse_quote!(ScalarField<u32>), 4),
+        DCDataType::Real32 => (syn::parse_quote!(ScalarField<f32>), 4),
+        DCDataType::VisibleString(n) | DCDataType::UnicodeString(n) => (
+            syn::parse_str(&format!("NullTermByteField::<{}>", n)).unwrap(),
+            n,
+        ),
+        DCDataType::OctetString(n) => (syn::parse_str(&format!("ByteField::<{}>", n)).unwrap(), n),
+        DCDataType::Domain => (syn::parse_quote!(CallbackSubObject), 0),
+        _ => panic!("Unsupported data type {:?}", data_type),
+    }
+}
+
 fn get_rust_type_and_size(data_type: DCDataType) -> (syn::Type, usize) {
     match data_type {
         DCDataType::Boolean => (syn::parse_quote!(bool), 1),
@@ -41,6 +59,7 @@ fn get_rust_type_and_size(data_type: DCDataType) -> (syn::Type, usize) {
         DCDataType::VisibleString(n)
         | DCDataType::OctetString(n)
         | DCDataType::UnicodeString(n) => (syn::parse_str(&format!("[u8; {}]", n)).unwrap(), n),
+        DCDataType::Domain => (syn::parse_quote!(None), 0),
         _ => panic!("Unsupported data type {:?}", data_type),
     }
 }
@@ -108,7 +127,6 @@ fn object_supports_tpdo(obj: &ObjectDefinition) -> bool {
         Object::Var(def) => def.pdo_mapping.supports_tpdo(),
         Object::Array(def) => def.pdo_mapping.supports_tpdo(),
         Object::Record(def) => def.subs.iter().any(|s| s.pdo_mapping.supports_tpdo()),
-        Object::Domain(_) => false,
     }
 }
 
@@ -139,34 +157,30 @@ fn generate_object_definition(obj: &ObjectDefinition) -> Result<TokenStream, Com
         Object::Record(def) => {
             for sub in &def.subs {
                 let field_name = get_sub_field_name(sub)?;
-                let (field_type, _) = get_rust_type_and_size(sub.data_type);
+                let (field_type, _) = get_storage_type(sub.data_type);
                 field_tokens.extend(quote! {
-                    pub #field_name: AtomicCell<#field_type>,
+                    pub #field_name: #field_type,
                 });
                 tpdo_mapping |= sub.pdo_mapping.supports_tpdo();
                 highest_sub_index = highest_sub_index.max(sub.sub_index);
             }
         }
         Object::Array(def) => {
-            let (field_type, _) = get_rust_type_and_size(def.data_type);
+            let (field_type, _) = get_storage_type(def.data_type);
             let array_size = def.array_size;
             field_tokens.extend(quote! {
-                pub size: u8,
-                pub array: Mutex<RefCell<[#field_type; #array_size]>>,
+                pub array: [#field_type; #array_size],
             });
             tpdo_mapping |= def.pdo_mapping.supports_tpdo();
             highest_sub_index = array_size as u8;
         }
         Object::Var(def) => {
-            let (field_type, _) = get_rust_type_and_size(def.data_type);
+            let (field_type, _) = get_storage_type(def.data_type);
             field_tokens.extend(quote! {
-                pub value: AtomicCell<#field_type>,
+                pub value: #field_type,
             });
             tpdo_mapping |= def.pdo_mapping.supports_tpdo();
             highest_sub_index = 0;
-        }
-        Object::Domain(_) => {
-            panic!("Domain objects are only supported with application callback enabled")
         }
     }
 
@@ -179,7 +193,6 @@ fn generate_object_definition(obj: &ObjectDefinition) -> Result<TokenStream, Com
 
     Ok(quote! {
         #[allow(dead_code)]
-        #[derive(Debug)]
         pub struct #struct_name {
             #field_tokens
         }
@@ -210,6 +223,9 @@ fn get_default_tokens(
     value: &DefaultValue,
     data_type: DCDataType,
 ) -> Result<TokenStream, CompileError> {
+    if matches!(data_type, DCDataType::Domain) {
+        return Ok(quote!(CallbackSubObject::new()));
+    }
     match value {
         DefaultValue::String(s) => {
             if !data_type.is_str() {
@@ -220,10 +236,16 @@ fn get_default_tokens(
                     ),
                 });
             }
-            Ok(string_to_byte_literal_tokens(s, data_type.size())?)
+            let byte_lit = string_to_byte_literal_tokens(s, data_type.size())?;
+            // OctetStrings are always the exact length
+            if matches!(data_type, DCDataType::OctetString(_)) {
+                Ok(quote!(ByteField::new(#byte_lit)))
+            } else {
+                Ok(quote!(NullTermByteField::new(#byte_lit)))
+            }
         }
         DefaultValue::Float(f) => match data_type {
-            DCDataType::Real32 => Ok(quote!(#f)),
+            DCDataType::Real32 => Ok(quote!(ScalarField<f32>::new(#f))),
             _ => Err(CompileError::DefaultValueTypeMismatch {
                 message: format!(
                     "Default value {} is not a valid value for type {:?}",
@@ -236,18 +258,18 @@ fn get_default_tokens(
             match data_type {
                 DCDataType::Boolean => {
                     if *i != 0 {
-                        Ok(quote!(true))
+                        Ok(quote!(ScalarField<bool>::new(true)))
                     } else {
-                        Ok(quote!(false))
+                        Ok(quote!(ScalarField<bool>::new(false)))
                     }
                 }
-                DCDataType::Int8 => Ok(quote!(#i as i8)),
-                DCDataType::Int16 => Ok(quote!(#i as i16)),
-                DCDataType::Int32 => Ok(quote!(#i as i32)),
-                DCDataType::UInt8 => Ok(quote!(#i as u8)),
-                DCDataType::UInt16 => Ok(quote!(#i as u16)),
-                DCDataType::UInt32 => Ok(quote!(#i as u32)),
-                DCDataType::Real32 => Ok(quote!(#i as f32)),
+                DCDataType::Int8 => Ok(quote!(ScalarField::<i8>::new(#i as i8))),
+                DCDataType::Int16 => Ok(quote!(ScalarField::<i16>::new(#i as i16))),
+                DCDataType::Int32 => Ok(quote!(ScalarField::<i32>::new(#i as i32))),
+                DCDataType::UInt8 => Ok(quote!(ScalarField::<u8>::new(#i as u8))),
+                DCDataType::UInt16 => Ok(quote!(ScalarField::<u16>::new(#i as u16))),
+                DCDataType::UInt32 => Ok(quote!(ScalarField::<u32>::new(#i as u32))),
+                DCDataType::Real32 => Ok(quote!(ScalarField::<f32>::new(#i as f32))),
                 _ => Err(CompileError::DefaultValueTypeMismatch {
                     message: format!(
                         "Default value {} is not a valid value for type {:?}",
@@ -263,25 +285,11 @@ fn get_object_impls(
     obj: &ObjectDefinition,
     struct_name: &syn::Ident,
 ) -> Result<TokenStream, CompileError> {
-    fn get_tpdo_event_snippet(max_sub: usize) -> TokenStream {
-        quote! {
-            fn set_event_flag(&self, sub: u8) -> Result<(), AbortCode> {
-                if sub as usize > #max_sub {
-                    return Err(AbortCode::NoSuchSubIndex);
-                }
-                self.flags.set_flag(sub);
-                Ok(())
-            }
-
-            fn read_event_flag(&self, sub: u8) -> bool {
-                self.flags.get_flag(sub)
-            }
-
-            fn clear_events(&self) {
-                self.flags.clear();
-            }
-        }
-    }
+    let mut accessor_methods = TokenStream::new();
+    let mut default_init_tokens = TokenStream::new();
+    let mut get_sub_tokens = TokenStream::new();
+    let mut flag_number = 0usize;
+    let object_code;
 
     match &obj.object {
         Object::Var(def) => {
@@ -289,15 +297,6 @@ fn get_object_impls(
             let field_name = format_ident!("value");
             let setter_name = format_ident!("set_{}", field_name);
             let getter_name = format_ident!("get_{}", field_name);
-            let write_snippet;
-            let read_snippet;
-            if def.data_type.is_str() {
-                write_snippet = string_write_snippet(&field_name, size);
-                read_snippet = string_read_snippet(&field_name, size);
-            } else {
-                write_snippet = scalar_write_snippet(&field_name, &field_type);
-                read_snippet = scalar_read_snippet(&field_name);
-            }
             let data_type = data_type_to_tokens(def.data_type);
             let access_type = access_type_to_tokens(def.access_type.0);
             let pdo_mapping = pdo_mapping_to_tokens(def.pdo_mapping);
@@ -307,78 +306,52 @@ fn get_object_impls(
                 .default_value
                 .clone()
                 .unwrap_or(default_default_value(def.data_type));
-            let default_tokens = get_default_tokens(&default_value, def.data_type)?;
+            let default_value = get_default_tokens(&default_value, def.data_type)?;
+            default_init_tokens.extend(quote! {
+                #field_name: #default_value,
+            });
 
-            let mut tpdo_event_tokens = TokenStream::new();
-            let mut tpdo_default_tokens = TokenStream::new();
             if def.pdo_mapping.supports_tpdo() {
-                tpdo_event_tokens.extend(get_tpdo_event_snippet(0));
-                tpdo_default_tokens.extend(quote! {
-                    flags: ObjectFlags::<1>::new(NODE_STATE.pdo_sync()),
-                });
+                flag_number = 1;
             }
 
-            Ok(quote! {
-                #[allow(dead_code)]
-                impl #struct_name {
+            // Accessors are generated for all data types, except Domain
+            if !matches!(def.data_type, DCDataType::Domain) {
+                accessor_methods.extend(quote! {
+                    #[allow(dead_code)]
                     pub fn #setter_name(&self, value: #field_type) {
                         self.#field_name.store(value);
                     }
 
+                    #[allow(dead_code)]
                     pub fn #getter_name(&self) -> #field_type {
                         self.#field_name.load()
                     }
+                });
+            }
 
-                    const fn default() -> Self {
-                        #struct_name {
-                            #field_name: AtomicCell::new(#default_tokens),
-                            #tpdo_default_tokens
-                        }
-                    }
-                }
-
-                impl ObjectRawAccess for #struct_name {
-                    fn write(&self, sub: u8, offset: usize, data: &[u8]) -> Result<(), AbortCode> {
-                        if sub == 0 {
-                            #write_snippet
-                            Ok(())
-                        } else {
-                            Err(AbortCode::NoSuchSubIndex)
-                        }
-                    }
-                    fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<(), AbortCode> {
-                        if sub == 0 {
-                            #read_snippet
-                            Ok(())
-                        } else {
-                            Err(AbortCode::NoSuchSubIndex)
-                        }
-                    }
-                    fn sub_info(&self, sub: u8) -> Result<SubInfo, AbortCode> {
-                        if sub != 0 {
-                            return Err(AbortCode::NoSuchSubIndex);
-                        }
-                        Ok(SubInfo {
+            get_sub_tokens.extend(quote! {
+                match sub {
+                    0 => Some(
+                        (SubInfo {
                             access_type: #access_type,
                             data_type: #data_type,
                             size: #size,
                             pdo_mapping: #pdo_mapping,
                             persist: #persist,
-                        })
-                    }
-                    fn object_code(&self) -> zencan_node::common::objects::ObjectCode {
-                        zencan_node::common::objects::ObjectCode::Var
-                    }
-
-                    #tpdo_event_tokens
+                        },
+                        &self.value)
+                    ),
+                    _ => None
                 }
-            })
+            });
+
+            object_code = quote!(zencan_node::common::objects::ObjectCode::Var);
         }
 
         Object::Array(def) => {
             let (field_type, storage_size) = get_rust_type_and_size(def.data_type);
             let array_size = def.array_size;
-            let flag_size = (array_size + 1).div_ceil(8);
             let data_type = data_type_to_tokens(def.data_type);
             let access_type = access_type_to_tokens(def.access_type.0);
             let pdo_mapping = pdo_mapping_to_tokens(def.pdo_mapping);
@@ -394,192 +367,87 @@ fn get_object_impls(
                 .map(|v| get_default_tokens(v, def.data_type))
                 .collect::<Result<Vec<_>, CompileError>>()?;
 
-            let write_snippet;
-            let read_snippet;
-            if def.data_type.is_str() {
-                write_snippet = quote! {
-                    if offset + data.len() > #storage_size {
-                        return Err(AbortCode::DataTypeMismatchLengthHigh);
-                    }
-                    zencan_node::critical_section::with(|cs| {
-                        let mut array = self.array.borrow_ref_mut(cs);
-                        array[(sub - 1) as usize][offset..offset + data.len()].copy_from_slice(data)
-                    });
-                };
-                read_snippet = quote! {
-                    if offset + data.len() > #storage_size {
-                        return Err(AbortCode::DataTypeMismatchLengthHigh);
-                    }
-                    zencan_node::critical_section::with(|cs| {
-                        let mut array = self.array.borrow_ref(cs);
-                        buf.copy_from_slice(&array[(sub - 1) as usize][offset..offset + data.len()]);
-                    })
-                };
-            } else {
-                write_snippet = quote! {
-                    if offset != 0 {
-                        return Err(AbortCode::UnsupportedAccess);
-                    }
-                    let value = #field_type::from_le_bytes(data.try_into().map_err(|_| {
-                        if data.len() < size_of::<#field_type>() {
-                            AbortCode::DataTypeMismatchLengthLow
-                        } else {
-                            AbortCode::DataTypeMismatchLengthHigh
-                        }
-                    })?);
-                    self.set((sub - 1) as usize, value)?;
-                };
-                read_snippet = quote! {
-                    let value = self.get((sub - 1) as usize)?;
-                    let bytes = value.to_le_bytes();
-                    if offset + buf.len() > size_of::<#field_type>() {
-                        return Err(AbortCode::DataTypeMismatchLengthHigh);
-                    }
-                    buf.copy_from_slice(&bytes[offset..offset+buf.len()]);
-                }
-            }
-
-            let mut tpdo_event_tokens = TokenStream::new();
-            let mut tpdo_default_tokens = TokenStream::new();
-            if def.pdo_mapping.supports_tpdo() {
-                tpdo_event_tokens.extend(get_tpdo_event_snippet(array_size));
-                tpdo_default_tokens.extend(quote! {
-                    flags: ObjectFlags::<#flag_size>::new(NODE_STATE.pdo_sync()),
-                });
-            }
-
-            Ok(quote! {
-                impl #struct_name {
+            if !matches!(def.data_type, DCDataType::Domain) {
+                accessor_methods.extend(quote! {
+                    #[allow(dead_code)]
                     pub fn set(&self, idx: usize, value: #field_type) -> Result<(), AbortCode> {
                         if idx >= #array_size {
                             return Err(AbortCode::NoSuchSubIndex)
                         }
-                        zencan_node::critical_section::with(|cs| {
-                            let mut array = self.array.borrow_ref_mut(cs);
-                            array[idx] = value;
-                        });
+                        self.array[idx].store(value);
                         Ok(())
                     }
-
+                    #[allow(dead_code)]
                     pub fn get(&self, idx: usize) -> Result<#field_type, AbortCode> {
                         if idx >= #array_size {
                             return Err(AbortCode::NoSuchSubIndex)
                         }
-                        let value = zencan_node::critical_section::with(|cs| {
-                            let array = self.array.borrow_ref(cs);
-                            array[idx]
-                        });
-                        Ok(value)
+                        Ok(self.array[idx].load())
                     }
+                });
+            }
 
-                    const fn default() -> Self {
-                        #struct_name {
-                            size: #array_size as u8,
-                            array: Mutex::new(RefCell::new([#(#default_tokens),*])),
-                            #tpdo_default_tokens
-                        }
-                    }
+            default_init_tokens.extend(quote! {
+                array: [#(#default_tokens),*],
+            });
+
+            get_sub_tokens.extend(quote! {
+                if sub == 0 {
+                    Some((
+                        SubInfo::MAX_SUB_NUMBER,
+                        const { &ConstField::new((#array_size as u8).to_le_bytes()) },
+                    ))
+                } else if sub as usize > #array_size {
+                    return None;
+                } else {
+                    Some((SubInfo {
+                        access_type: #access_type,
+                        data_type: #data_type,
+                        size: #storage_size,
+                        pdo_mapping: #pdo_mapping,
+                        persist: #persist,
+                    }, &self.array[sub as usize - 1]))
                 }
+            });
 
-                impl ObjectRawAccess for #struct_name {
-                    fn write(&self, sub: u8, offset: usize, data: &[u8]) -> Result<(), AbortCode> {
-                        if sub == 0 {
-                            return Err(AbortCode::ReadOnly);
-                        }
-                        #write_snippet
-                        Ok(())
-                    }
+            if def.pdo_mapping.supports_tpdo() {
+                flag_number = array_size + 1;
+            }
 
-                    fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<(), AbortCode> {
-                        if sub == 0 {
-                            if offset != 0 {
-                                return Err(AbortCode::UnsupportedAccess);
-                            }
-                            if buf.len() != 1 {
-                                return Err(AbortCode::DataTypeMismatchLengthHigh);
-                            }
-                            buf[0] = #array_size as u8;
-                            return Ok(())
-                        }
-                        #read_snippet
-                        Ok(())
-                    }
-
-                    fn sub_info(&self, sub: u8) -> Result<SubInfo, AbortCode> {
-                        if sub == 0 {
-                            return Ok(SubInfo {
-                                access_type: zencan_node::common::objects::AccessType::Ro,
-                                data_type: zencan_node::common::objects::DataType::UInt8,
-                                size: 1,
-                                pdo_mapping: zencan_node::common::objects::PdoMapping::None,
-                                persist: false,
-                            });
-                        }
-                        if sub as usize > #array_size {
-                            return Err(AbortCode::NoSuchSubIndex);
-                        }
-                        Ok(SubInfo {
-                            access_type: #access_type,
-                            data_type: #data_type,
-                            size: #storage_size,
-                            pdo_mapping: #pdo_mapping,
-                            persist: #persist,
-                        })
-                    }
-
-                    fn object_code(&self) -> zencan_node::common::objects::ObjectCode {
-                        zencan_node::common::objects::ObjectCode::Array
-                    }
-
-                    #tpdo_event_tokens
-                }
-            })
+            object_code = quote!(zencan_node::common::objects::ObjectCode::Array);
         }
 
         Object::Record(def) => {
-            let mut accessor_methods = TokenStream::new();
-            let mut write_match_statements = TokenStream::new();
-            let mut read_match_statements = TokenStream::new();
-            let mut sub_info_match_statements = TokenStream::new();
-            let mut default_init_statements = TokenStream::new();
+            let mut match_statements = TokenStream::new();
 
             // For records, sub0 gives the highest sub object support by the record
             let max_sub = def.subs.iter().map(|s| s.sub_index).max().unwrap_or(0);
-            let flag_size = (max_sub as usize).div_ceil(8);
+
+            if object_supports_tpdo(obj) {
+                flag_number = max_sub as usize + 1;
+            }
+
             accessor_methods.extend(quote! {
+                #[allow(dead_code)]
                 pub fn get_sub0(&self) -> u8 {
                     #max_sub
                 }
             });
-            write_match_statements.extend(quote! {
+
+            match_statements.extend(quote! {
                 0 => {
-                    Err(AbortCode::ReadOnly)
-                }
-            });
-            let read_snippet = scalar_read_snippet(&format_ident!("sub0"));
-            read_match_statements.extend(quote! {
-                0 => {
-                    #read_snippet
-                    Ok(())
-                }
-            });
-            sub_info_match_statements.extend(quote! {
-                0 => {
-                    Ok(SubInfo {
-                        access_type: zencan_node::common::objects::AccessType::Ro,
-                        data_type: zencan_node::common::objects::DataType::UInt8,
-                        size: 1,
-                        pdo_mapping: zencan_node::common::objects::PdoMapping::None,
-                        persist: false,
-                    })
+                    Some(
+                        (
+                            SubInfo::MAX_SUB_NUMBER,
+                            const { &ConstField::new(#max_sub.to_le_bytes()) },
+                        )
+                    )
                 }
             });
 
             for sub in &def.subs {
                 let field_name = get_sub_field_name(sub)?;
                 let (field_type, size) = get_rust_type_and_size(sub.data_type);
-                let read_snippet;
-                let write_snippet;
                 let setter_name = format_ident!("set_{}", field_name);
                 let getter_name = format_ident!("get_{}", field_name);
                 let sub_index = sub.sub_index;
@@ -594,100 +462,87 @@ fn get_object_impls(
                 let default_tokens = get_default_tokens(&default_value, sub.data_type)?;
 
                 let access_type = access_type_to_tokens(sub.access_type.0);
-                if sub.data_type.is_str() {
-                    write_snippet = string_write_snippet(&field_name, size);
-                    read_snippet = string_read_snippet(&field_name, size);
-                } else {
-                    write_snippet = scalar_write_snippet(&field_name, &field_type);
-                    read_snippet = scalar_read_snippet(&field_name);
+
+                if !matches!(sub.data_type, DCDataType::Domain) {
+                    accessor_methods.extend(quote! {
+                        #[allow(dead_code)]
+                        pub fn #setter_name(&self, value: #field_type) {
+                            self.#field_name.store(value)
+                        }
+                        #[allow(dead_code)]
+                        pub fn #getter_name(&self) -> #field_type {
+                            self.#field_name.load()
+                        }
+                    });
                 }
-                accessor_methods.extend(quote! {
-                    pub fn #setter_name(&self, value: #field_type) {
-                        self.#field_name.store(value)
-                    }
-                    pub fn #getter_name(&self) -> #field_type {
-                        self.#field_name.load()
-                    }
+                match_statements.extend(quote! {
+                    #sub_index => Some(
+                        (
+                            SubInfo {
+                                access_type: #access_type,
+                                data_type: #data_type,
+                                size: #size,
+                                pdo_mapping: #pdo_mapping,
+                                persist: #persist,
+                            },
+                            &self.#field_name
+                        )
+                    ),
                 });
-                write_match_statements.extend(quote! {
-                    #sub_index => {
-                        #write_snippet
-                        Ok(())
-                    }
-                });
-                read_match_statements.extend(quote! {
-                    #sub_index => {
-                        #read_snippet
-                        Ok(())
-                    }
-                });
-                sub_info_match_statements.extend(quote! {
-                    #sub_index => {
-                        Ok(SubInfo {
-                            access_type: #access_type,
-                            data_type: #data_type,
-                            size: #size,
-                            pdo_mapping: #pdo_mapping,
-                            persist: #persist,
-                        })
-                    }
-                });
-                default_init_statements.extend(quote! {
-                    #field_name: AtomicCell::new(#default_tokens),
+                default_init_tokens.extend(quote! {
+                    #field_name: #default_tokens,
                 });
             }
 
-            let mut tpdo_event_tokens = TokenStream::new();
-            let mut tpdo_default_tokens = TokenStream::new();
-            if object_supports_tpdo(obj) {
-                tpdo_event_tokens.extend(get_tpdo_event_snippet(max_sub as usize));
-                tpdo_default_tokens.extend(quote! {
-                    flags: ObjectFlags::<#flag_size>::new(NODE_STATE.pdo_sync()),
-                })
-            }
-
-            Ok(quote! {
-                impl #struct_name {
-                    #accessor_methods
-
-                    const fn default() -> Self {
-                        #struct_name {
-                            #default_init_statements
-                            #tpdo_default_tokens
-                        }
-                    }
+            get_sub_tokens.extend(quote! {
+                match sub {
+                    #match_statements
+                    _ => None,
                 }
+            });
 
-                impl ObjectRawAccess for #struct_name {
-                    fn write(&self, sub: u8, offset: usize, data: &[u8]) -> Result<(), AbortCode> {
-                        match sub {
-                            #write_match_statements,
-                            _ => Err(AbortCode::NoSuchSubIndex),
-                        }
-                    }
-
-                    fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<(), AbortCode> {
-                        match sub {
-                            #read_match_statements,
-                            _ => Err(AbortCode::NoSuchSubIndex),
-                        }
-                    }
-
-                    fn sub_info(&self, sub: u8) -> Result<SubInfo, AbortCode> {
-                        match sub {
-                            #sub_info_match_statements
-                            _ => Err(AbortCode::NoSuchSubIndex),
-                        }
-                    }
-
-                    fn object_code(&self) -> zencan_node::common::objects::ObjectCode {
-                        zencan_node::common::objects::ObjectCode::Record
-                    }
-                }
-            })
+            object_code = quote!(zencan_node::common::objects::ObjectCode::Record);
         }
-        Object::Domain(_) => todo!(),
     }
+
+    let mut flag_method_tokens = TokenStream::new();
+    let mut flag_default_tokens = TokenStream::new();
+    if flag_number > 0 {
+        let flag_size = (flag_number).div_ceil(8);
+        flag_method_tokens.extend(quote! {
+            fn flags(&self) -> Option<&dyn ObjectFlagAccess> {
+                Some(&self.flags)
+            }
+        });
+        flag_default_tokens.extend(quote! {
+            flags: ObjectFlags::<#flag_size>::new(NODE_STATE.pdo_sync()),
+        });
+    }
+
+    Ok(quote! {
+        impl #struct_name {
+            #accessor_methods
+
+            const fn default() -> Self {
+                #struct_name {
+                    #default_init_tokens
+                    #flag_default_tokens
+                }
+            }
+        }
+
+        impl ProvidesSubObjects for #struct_name {
+            fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
+                #get_sub_tokens
+            }
+
+            #flag_method_tokens
+
+            fn object_code(&self) -> zencan_node::common::objects::ObjectCode {
+                #object_code
+            }
+        }
+    })
 }
 
 pub fn generate_object_code(
@@ -706,10 +561,72 @@ pub fn generate_object_code(
 pub fn generate_state_inst(dev: &DeviceConfig) -> TokenStream {
     let n_rpdo = dev.pdos.num_rpdo as usize;
     let n_tpdo = dev.pdos.num_tpdo as usize;
-    quote! {
-        pub static NODE_STATE: NodeState<#n_rpdo, #n_tpdo> = NodeState::new();
-        pub static NODE_MBOX: NodeMbox = NodeMbox::new(NODE_STATE.rpdos());
+
+    let mut tokens = TokenStream::new();
+
+    if !dev.bootloader.sections.is_empty() {
+        let num_sections = dev.bootloader.sections.len() as u8;
+        let application = dev.bootloader.application;
+        tokens.extend(quote! {
+            pub static BOOTLOADER_INFO:
+                zencan_node::BootloaderInfo<#application, #num_sections> =
+                zencan_node::BootloaderInfo::new();
+        });
+        for (i, section) in dev.bootloader.sections.iter().enumerate() {
+            let var_name = format_ident!("BOOTLOADER_SECTION{i}");
+            let size: u32 = section.size;
+            let section_name = &section.name;
+            tokens.extend(quote! {
+                pub static #var_name: zencan_node::BootloaderSection =
+                    zencan_node::BootloaderSection::new(
+                        #section_name,
+                        #size
+                    );
+            })
+        }
     }
+
+    let tpdo_numbers = 0..n_tpdo;
+    tokens.extend(quote! {
+        pub static TPDO_COMM_OBJECTS: [PdoCommObject; #n_tpdo] = [
+            #(PdoCommObject::new(&NODE_STATE.tpdos()[#tpdo_numbers])),*
+        ];
+    });
+    let tpdo_numbers = 0..n_tpdo;
+    tokens.extend(quote! {
+        pub static TPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_tpdo] = [
+            #(PdoMappingObject::new(&OD_TABLE, &NODE_STATE.tpdos()[#tpdo_numbers])),*
+        ];
+    });
+    let rpdo_numbers = 0..n_rpdo;
+    tokens.extend(quote! {
+        pub static RPDO_COMM_OBJECTS: [PdoCommObject; #n_rpdo] = [
+            #(PdoCommObject::new(&NODE_STATE.rpdos()[#rpdo_numbers])),*
+        ];
+    });
+    let rpdo_numbers = 0..n_rpdo;
+    tokens.extend(quote! {
+        pub static RPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_rpdo] = [
+            #(PdoMappingObject::new(&OD_TABLE, &NODE_STATE.rpdos()[#rpdo_numbers])),*
+        ];
+    });
+
+    if dev.support_storage {
+        tokens.extend(quote! {
+            pub static STORAGE_COMMAND_OBJECT: StorageCommandObject =
+                StorageCommandObject::new(&OD_TABLE, NODE_STATE.storage_context());
+        });
+    }
+
+    tokens.extend(quote! {
+        #[allow(static_mut_refs)]
+        static mut SDO_BUFFER: [u8; SDO_BUFFER_SIZE] = [0; SDO_BUFFER_SIZE];
+        pub static NODE_STATE: NodeState<#n_rpdo, #n_tpdo> = NodeState::new();
+        #[allow(static_mut_refs)]
+        pub static NODE_MBOX: NodeMbox = NodeMbox::new(NODE_STATE.rpdos(), unsafe { &mut SDO_BUFFER });
+    });
+
+    tokens
 }
 
 /// Generate code for a node from a [`DeviceConfig`] as a TokenStream
@@ -725,7 +642,63 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
         let struct_name = format_ident!("Object{:X}", obj.index);
         let inst_name = format_ident!("OBJECT{:X}", obj.index);
         let index: syn::Lit = syn::parse_str(&format!("0x{:X}", obj.index)).unwrap();
-        if !obj.application_callback {
+        if obj.index == 0x1010 {
+            table_entries.extend(quote! {
+                ODEntry {
+                    index: #index,
+                    data: &STORAGE_COMMAND_OBJECT,
+                },
+            });
+        } else if obj.index == 0x5500 {
+            // bootloader info object as usize
+            table_entries.extend(quote! {
+                ODEntry {
+                    index: #index,
+                    data: &BOOTLOADER_INFO,
+                },
+            });
+        } else if obj.index >= 0x5510 && obj.index <= 0x551f {
+            let section = obj.index - 0x5510;
+            let object_ident = format_ident!("BOOTLOADER_SECTION{}", section);
+            table_entries.extend(quote! {
+                ODEntry {
+                    index: #index,
+                    data: &#object_ident,
+                },
+            });
+        } else if obj.index >= 0x1400 && obj.index < 0x1600 {
+            let n = obj.index as usize - 0x1400;
+            table_entries.extend(quote! {
+                ODEntry {
+                    index: #index,
+                    data: &RPDO_COMM_OBJECTS[#n]
+                },
+            })
+        } else if obj.index >= 0x1600 && obj.index < 0x1800 {
+            let n = obj.index as usize - 0x1600;
+            table_entries.extend(quote! {
+                ODEntry {
+                    index: #index,
+                    data: &RPDO_MAPPING_OBJECTS[#n]
+                },
+            })
+        } else if obj.index >= 0x1800 && obj.index < 0x1A00 {
+            let n = obj.index as usize - 0x1800;
+            table_entries.extend(quote! {
+                ODEntry {
+                    index: #index,
+                    data: &TPDO_COMM_OBJECTS[#n]
+                },
+            })
+        } else if obj.index >= 0x1A00 && obj.index < 0x1C00 {
+            let n = obj.index as usize - 0x1A00;
+            table_entries.extend(quote! {
+                ODEntry {
+                    index: #index,
+                    data: &TPDO_MAPPING_OBJECTS[#n]
+                },
+            })
+        } else if !obj.application_callback {
             object_defs.extend(generate_object_code(obj, &struct_name)?);
             object_instantiations.extend(quote! {
                 pub static #inst_name: #struct_name = #struct_name::default();
@@ -733,7 +706,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             table_entries.extend(quote! {
                 ODEntry {
                     index: #index,
-                    data: ObjectData::Storage(&#inst_name),
+                    data: &#inst_name,
                 },
             });
         } else {
@@ -744,7 +717,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             table_entries.extend(quote! {
                 ODEntry {
                     index: #index,
-                    data: ObjectData::Callback(&#inst_name),
+                    data: &#inst_name,
                 },
             });
         }
@@ -763,9 +736,30 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
         #[allow(unused_imports)]
         use zencan_node::critical_section::Mutex;
         #[allow(unused_imports)]
-        use zencan_node::common::objects::{CallbackObject, ObjectFlags, ODEntry, ObjectData, ObjectRawAccess, SubInfo};
+        use zencan_node::common::objects::SubInfo;
         #[allow(unused_imports)]
         use zencan_node::common::sdo::AbortCode;
+        #[allow(unused_imports)]
+        use zencan_node::object_dict::{
+            CallbackObject,
+            CallbackSubObject,
+            ObjectFlags,
+            ODEntry,
+            ObjectAccess,
+            ProvidesSubObjects,
+            SubObjectAccess,
+            ObjectFlagAccess,
+            ScalarField,
+            ByteField,
+            ConstField,
+            NullTermByteField,
+        };
+        #[allow(unused_imports)]
+        use zencan_node::SDO_BUFFER_SIZE;
+        #[allow(unused_imports)]
+        use zencan_node::pdo::{PdoCommObject, PdoMappingObject};
+        #[allow(unused_imports)]
+        use zencan_node::storage::StorageCommandObject;
         #[allow(unused_imports)]
         use zencan_node::NodeMbox;
         #[allow(unused_imports)]

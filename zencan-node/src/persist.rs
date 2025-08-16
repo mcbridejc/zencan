@@ -6,8 +6,8 @@ use core::{
     task::Context,
 };
 
+use crate::object_dict::{find_object, ODEntry};
 use futures::{pending, task::noop_waker_ref};
-use zencan_common::objects::{find_object, ODEntry, ObjectRawAccess};
 
 use defmt_or_log::{debug, warn};
 
@@ -52,7 +52,7 @@ async fn write_bytes(bytes: &[u8], reg: &RefCell<u8>) {
 async fn serialize_object(obj: &ODEntry<'_>, sub: u8, reg: &RefCell<u8>) {
     // Unwrap safety: This can only fail if the sub doesn't exist, and we already
     // checked for that above
-    let data_size = obj.data.current_size(sub).unwrap() as u16;
+    let data_size = obj.data.read_size(sub).unwrap() as u16;
     // Serialized node size is the variable length object data, plus node type (u8), index (u16), and sub index (u8)
     let node_size = data_size + 4;
 
@@ -61,10 +61,24 @@ async fn serialize_object(obj: &ODEntry<'_>, sub: u8, reg: &RefCell<u8>) {
     write_bytes(&obj.index.to_le_bytes(), reg).await;
     write_bytes(&[sub], reg).await;
 
-    let mut buf = [0u8];
-    for i in 0..data_size as usize {
-        obj.data.read(sub, i, &mut buf).unwrap();
-        write_bytes(&buf, reg).await;
+    const CHUNK_SIZE: usize = 32;
+    let mut buf = [0u8; CHUNK_SIZE];
+    let mut read_pos = 0;
+    loop {
+        // Note: returned read_len is not checked, on purpose. We already committed above to writing
+        // a certain number of bytes, and we must write them. This is fine for fields which are
+        // shorter than CHUNK_SIZE. This is a problem for fields which are larger than CHUNK_SIZE,
+        // and can lead to "torn reads", where different chunks come from different values because
+        // the value changed between the two chunks. This is only a problem for large fields which
+        // can be modified on a different thread than `Node::process()` is called. Fixing it
+        // requires an object locking mechanism, which may be worth considering in the future.
+        obj.data.read(sub, read_pos, &mut buf).unwrap();
+        let copy_len = data_size as usize - read_pos;
+        read_pos += copy_len;
+        write_bytes(&buf[0..copy_len], reg).await;
+        if read_pos >= data_size as usize {
+            break;
+        }
     }
 }
 
@@ -104,7 +118,7 @@ pub fn serialized_size(objects: &[ODEntry]) -> usize {
             }
             // Unwrap safety: This can only fail if the sub doesn't exist, and we already
             // checked for that above
-            let data_size = obj.data.current_size(sub).unwrap();
+            let data_size = obj.data.read_size(sub).unwrap();
             // Serialized node size is the variable length object data, plus node type (u8),
             // index (u16), and sub index (u8), plus a length header (u16)
             size += data_size + OVERHEAD_SIZE;
@@ -260,21 +274,16 @@ pub fn restore_stored_objects(od: &[ODEntry], stored_data: &[u8]) {
         match item {
             PersistNodeRef::ObjectValue(restore) => {
                 if let Some(obj) = find_object(od, restore.index) {
-                    if let Ok(sub_info) = obj.sub_info(restore.sub) {
+                    if let Ok(_sub_info) = obj.sub_info(restore.sub) {
                         debug!(
                             "Restoring 0x{:x}sub{} with {:?}",
                             restore.index, restore.sub, restore.data
                         );
-                        if let Err(abort_code) = obj.write(restore.sub, 0, restore.data) {
+                        if let Err(abort_code) = obj.write(restore.sub, restore.data) {
                             warn!(
                                 "Error restoring object 0x{:x}sub{}: {:x}",
                                 restore.index, restore.sub, abort_code as u32
                             );
-                        }
-                        // Null terminate short strings when restoring
-                        if sub_info.data_type.is_str() && restore.data.len() < sub_info.size {
-                            obj.write(restore.sub, restore.data.len(), &[0])
-                                .expect("Error null terminated restored string");
                         }
                     } else {
                         warn!(
@@ -294,28 +303,74 @@ pub fn restore_stored_objects(od: &[ODEntry], stored_data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zencan_common::objects::ODEntry;
-    use zencan_macro::record_object;
+    use crate::object_dict::{
+        ConstField, NullTermByteField, ODEntry, ProvidesSubObjects, ScalarField, SubObjectAccess,
+    };
+    use zencan_common::objects::{DataType, ObjectCode, SubInfo};
 
-    // The `record_object` macro output references `zencan_node`, so in the context of the
-    // zencan_node crate, we have to provide this name
-    use crate::{self as zencan_node, persist::serialize};
+    use crate::persist::serialize;
 
     #[test]
     fn test_serialize_deserialize() {
-        #[derive(Debug, Default)]
-        #[record_object]
+        #[derive(Default)]
         struct Object100 {
-            #[record(persist)]
-            value1: u32,
-            value2: u16,
+            value1: ScalarField<u32>,
+            value2: ScalarField<u16>,
         }
 
-        #[derive(Debug, Default)]
-        #[record_object]
+        impl ProvidesSubObjects for Object100 {
+            fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
+                match sub {
+                    0 => Some((
+                        SubInfo::MAX_SUB_NUMBER,
+                        const { &ConstField::new(2u8.to_le_bytes()) },
+                    )),
+                    1 => Some((
+                        SubInfo {
+                            size: 4,
+                            data_type: DataType::UInt32,
+                            persist: true,
+                            ..Default::default()
+                        },
+                        &self.value1,
+                    )),
+                    2 => Some((
+                        SubInfo {
+                            size: 4,
+                            data_type: DataType::UInt32,
+                            persist: false,
+                            ..Default::default()
+                        },
+                        &self.value2,
+                    )),
+                    _ => None,
+                }
+            }
+
+            fn object_code(&self) -> ObjectCode {
+                ObjectCode::Record
+            }
+        }
+
+        #[derive(Default)]
         struct Object200 {
-            #[record(persist)]
-            string: [u8; 15],
+            string: NullTermByteField<15>,
+        }
+
+        impl ProvidesSubObjects for Object200 {
+            fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
+                match sub {
+                    0 => Some((
+                        SubInfo::new_visibile_str(self.string.len()).persist(true),
+                        &self.string,
+                    )),
+                    _ => None,
+                }
+            }
+
+            fn object_code(&self) -> ObjectCode {
+                ObjectCode::Var
+            }
         }
 
         let inst100 = Box::leak(Box::new(Object100::default()));
@@ -324,15 +379,15 @@ mod tests {
         let od = Box::leak(Box::new([
             ODEntry {
                 index: 0x100,
-                data: zencan_common::objects::ObjectData::Storage(inst100),
+                data: inst100,
             },
             ODEntry {
                 index: 0x200,
-                data: zencan_common::objects::ObjectData::Storage(inst200),
+                data: inst200,
             },
         ]));
-        inst100.set_value1(42);
-        inst200.set_string("test".as_bytes());
+        inst100.value1.store(42);
+        inst200.string.set_str("test".as_bytes()).unwrap();
 
         let data = RefCell::new(Vec::new());
         serialize(od, |reader, _size| {
@@ -364,7 +419,7 @@ mod tests {
             deser.next().unwrap(),
             PersistNodeRef::ObjectValue(ObjectValue {
                 index: 0x200,
-                sub: 1,
+                sub: 0,
                 data: "test".as_bytes()
             })
         );

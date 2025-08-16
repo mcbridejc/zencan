@@ -95,3 +95,9 @@ object_type = "var"
 data_type = "OctetString(1200)"
 access_type = "rw"
 
+[[objects]]
+index = 0x3007
+parameter_name = "Domain"
+object_type = "var"
+data_type = "domain"
+access_type = "rw"

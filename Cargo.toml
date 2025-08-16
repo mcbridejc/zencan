@@ -35,10 +35,14 @@ crossbeam = { version = "0.8.4", default-features = false }
 defmt = "1.0.1"
 defmt-or-log = { version = "0.2.1", default-features = false }
 embedded-io = { version = "0.6.1" }
-futures = { version = "0.3.31", default-features = false, features = ["async-await"] }
+futures = { version = "0.3.31", default-features = false, features = [
+    "async-await",
+] }
 heapless = "0.8.0"
 log = "0.4.27"
 serde = { version = "1.0.219", features = ["derive"] }
 snafu = { version = "0.8.5", default-features = false }
-socketcan = { version = "3.5.0", features = ["tokio"], git = "https://github.com/mcbridejc/socketcan-rs" }
+socketcan = { version = "3.5.0", features = [
+    "tokio",
+], git = "https://github.com/mcbridejc/socketcan-rs" }
 toml = "0.8.20"

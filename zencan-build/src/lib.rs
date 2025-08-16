@@ -82,7 +82,6 @@ use snafu::ResultExt;
 
 mod codegen;
 pub mod errors;
-pub mod utils;
 
 pub use codegen::device_config_to_string;
 pub use codegen::device_config_to_tokens;

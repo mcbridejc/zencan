@@ -1,0 +1,17 @@
+# A simple system with a bootloader
+device_name = "Bootload Example"
+
+[pdos]
+num_rpdo = 4
+num_tpdo = 4
+
+[identity]
+vendor_id = 5000
+product_code = 0x1002
+revision_number = 2
+
+[bootloader]
+application = true
+[[bootloader.sections]]
+name = "application"
+size = 122880

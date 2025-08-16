@@ -883,14 +883,14 @@ impl SdoResponse {
     }
 
     /// Create a `ConfirmUpload` response for a segmented upload
-    pub fn upload_acknowledge(index: u16, sub: u8, size: u32) -> SdoResponse {
+    pub fn upload_acknowledge(index: u16, sub: u8, size: Option<u32>) -> SdoResponse {
         SdoResponse::ConfirmUpload {
             n: 0,
             e: false,
-            s: true,
+            s: size.is_some(),
             index,
             sub,
-            data: size.to_le_bytes(),
+            data: size.unwrap_or(0).to_le_bytes(),
         }
     }
 

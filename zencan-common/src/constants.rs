@@ -24,4 +24,10 @@ pub mod object_ids {
 pub mod values {
     /// Magic value used to trigger object storage by writing to object 0x1010
     pub const SAVE_CMD: u32 = 0x73617665;
+
+    /// Magic value used to trigger a reset to bootloader by writing to object 0x5500
+    pub const BOOTLOADER_RESET_CMD: u32 = 0x544F4F42;
+
+    /// Magic value used to trigger bootloader section erase by writing objects 0x5510-0x551f
+    pub const BOOTLOADER_ERASE_CMD: u32 = 0x53415245;
 }

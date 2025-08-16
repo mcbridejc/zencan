@@ -33,7 +33,6 @@ pub enum LssEvent {
 }
 
 /// A Sync structure providing message handling for message receive thread
-#[derive(Debug)]
 pub(crate) struct LssReceiver {
     selected_identity: AtomicCell<LssIdentity>,
     rx_req: AtomicCell<Option<LssRequest>>,

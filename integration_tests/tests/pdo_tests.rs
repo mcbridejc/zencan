@@ -12,10 +12,10 @@ use tokio::time::timeout;
 use zencan_client::{nmt_master::NmtMaster, PdoConfig, PdoMapping, SdoClient};
 use zencan_common::{
     messages::{CanId, CanMessage, SyncObject},
-    objects::{find_object, ODEntry, ObjectRawAccess},
     traits::{AsyncCanReceiver, AsyncCanSender},
     NodeId,
 };
+use zencan_node::object_dict::{find_object, ODEntry};
 use zencan_node::{Node, NodeMbox, NodeStateAccess};
 
 mod utils;

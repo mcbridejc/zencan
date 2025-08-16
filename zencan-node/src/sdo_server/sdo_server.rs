@@ -1,8 +1,10 @@
 use crc16::CrcType as _;
 use zencan_common::{
-    objects::{find_object_entry, ODEntry, ObjectId, ObjectRawAccess, SubInfo},
+    objects::{DataType, ObjectId, SubInfo},
     sdo::{AbortCode, SdoRequest, SdoResponse},
 };
+
+use crate::object_dict::{find_object_entry, ODEntry};
 
 use crate::sdo_server::{sdo_receiver::ReceiverState, SdoReceiver};
 
@@ -14,7 +16,12 @@ const BLKSIZE: u8 = 127;
 const SDO_TIMEOUT_US: u32 = 25000;
 
 fn validate_download_size(dl_size: usize, subobj: &SubInfo) -> Result<(), AbortCode> {
-    if subobj.data_type.is_str() {
+    if subobj.size == 0 {
+        // Some objects (e.g. domains) do not provide a size, and we simply must write to them and
+        // see if it fails. These objects report a size of 0.
+        return Ok(());
+    }
+    if subobj.data_type.is_str() || matches!(subobj.data_type, DataType::Domain) {
         // Strings can write shorter lengths
         if dl_size > subobj.size {
             return Err(AbortCode::DataTypeMismatchLengthHigh);
@@ -28,21 +35,6 @@ fn validate_download_size(dl_size: usize, subobj: &SubInfo) -> Result<(), AbortC
         }
     }
     Ok(())
-}
-
-/// Implements an SDO server
-///
-/// A single SDO server can be controlled by a single SDO client (at one time). This struct wraps up
-/// the state and implements handling of SDO requests. A node implementing multiple SDO servers can
-/// instantiate multiple instances of `SdoServer` to track each.
-pub(crate) struct SdoServer {
-    state: SdoState,
-}
-
-impl Default for SdoServer {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 struct SdoResult {
@@ -96,6 +88,7 @@ struct Segmented {
     sub: u8,
     toggle_state: bool,
     segment_counter: u32,
+    bytes_in_buffer: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -171,16 +164,8 @@ impl SdoState {
                         return SdoResult::abort(index, sub, abort_code);
                     }
 
-                    if let Err(abort_code) = obj.write(sub, 0, &data[0..dl_size]) {
+                    if let Err(abort_code) = obj.write(sub, &data[0..dl_size]) {
                         return SdoResult::abort(index, sub, abort_code);
-                    }
-
-                    // When writing a string with length less than buffer, zero terminate
-                    // Note: dl_size != subobj.size implies the data type of the object is a string
-                    if dl_size < subinfo.size {
-                        if let Err(abort_code) = obj.write(sub, dl_size, &[0]) {
-                            return SdoResult::abort(index, sub, abort_code);
-                        }
                     }
 
                     SdoResult {
@@ -193,7 +178,7 @@ impl SdoState {
                     // If size is provided, verify data size requested by client fits object, and
                     // abort if not
                     if s {
-                        let dl_size = 4 - n as usize;
+                        let dl_size = u32::from_le_bytes(data) as usize;
                         if let Err(abort_code) = validate_download_size(dl_size, &subinfo) {
                             return SdoResult::abort(index, sub, abort_code);
                         }
@@ -204,6 +189,7 @@ impl SdoState {
                         sub,
                         toggle_state: false,
                         segment_counter: 0,
+                        bytes_in_buffer: Some(0),
                     });
                     SdoResult::response(SdoResponse::download_acknowledge(index, sub), new_state)
                 }
@@ -213,36 +199,50 @@ impl SdoState {
                     Some(x) => x,
                     None => return SdoResult::abort(index, sub, AbortCode::NoSuchObject),
                 };
-                let obj = &od_entry.data;
+                let obj = od_entry.data;
 
-                let mut buf = [0u8; 4];
-                let current_size = match obj.current_size(sub) {
+                let mut full_buf = rx.borrow_buffer();
+                let len = full_buf.len();
+                // Limit buffer to be a multiple of segment size
+                let buf = &mut full_buf[0..len - (len % 7)];
+                let read_size = match obj.read(sub, 0, buf) {
                     Ok(s) => s,
                     Err(abort_code) => return SdoResult::abort(index, sub, abort_code),
                 };
 
-                if current_size <= 4 {
+                let response = if read_size <= 4 {
                     // Do expedited upload
-                    if let Err(abort_code) = obj.read(sub, 0, &mut buf[0..current_size]) {
-                        return SdoResult::abort(index, sub, abort_code);
-                    }
-
                     SdoResult::response(
-                        SdoResponse::expedited_upload(index, sub, &buf[..current_size]),
+                        SdoResponse::expedited_upload(index, sub, &buf[..read_size]),
                         SdoState::Idle,
                     )
                 } else {
                     // Start a segmented upload
+
+                    // If read size is less than the buffer length then the read is atomic and we
+                    // can safely report the size of the read up front. If it is equal, then the
+                    // read may be longer and we do not report the size up front because it may
+                    // change in the interim. We can't achieve atomic reads for sub objects that are
+                    // larger than the buffer, and so the read size may change. If large objects are
+                    // written during an SDO transfer, it is possible for the client to receive a
+                    // torn read, which is some combination of multiple values.
+                    let ack_size = if read_size == buf.len() {
+                        None
+                    } else {
+                        Some(read_size as u32)
+                    };
                     SdoResult::response(
-                        SdoResponse::upload_acknowledge(index, sub, current_size as u32),
+                        SdoResponse::upload_acknowledge(index, sub, ack_size),
                         SdoState::UploadSegmented(Segmented {
                             object: od_entry,
                             sub,
                             toggle_state: false,
                             segment_counter: 0,
+                            bytes_in_buffer: ack_size,
                         }),
                     )
-                }
+                };
+                response
             }
             SdoRequest::InitiateBlockDownload {
                 cc,
@@ -318,40 +318,80 @@ impl SdoState {
                 }
 
                 let obj = &state.object.data;
-                // Unwrap: If in DownloadSegmented state, then existence of the sub object has
-                // already been validated
-                let subinfo = obj.sub_info(state.sub).unwrap();
+                let mut buf = rx.borrow_buffer();
 
-                let offset = state.segment_counter as usize * 7;
+                // Offset into the objec
+                let total_offset = state.segment_counter as usize * 7;
+                // Offset into the current buffer
+                let buffer_offset = total_offset % buf.len();
+
+                let on_first_buffer = total_offset == buffer_offset;
+
                 let segment_size = 7 - n as usize;
-                let write_len = offset + segment_size;
-                // Make sure this segment won't overrun the allocated storage
-                if write_len > subinfo.size {
-                    return SdoResult::abort(
-                        state.object.index,
-                        state.sub,
-                        AbortCode::DataTypeMismatchLengthHigh,
-                    );
-                }
 
-                // Unwrap safety: Both existence and size of the sub object are already checked
-                obj.write(state.sub, offset, &data[0..segment_size])
-                    .unwrap();
-                // If this is the last segment, and it's shorter than the object, zero terminate
-                if c && write_len < subinfo.size {
-                    obj.write(state.sub, write_len, &[0]).unwrap();
+                let copy_len = segment_size.min(buf.len() - buffer_offset);
+                buf[buffer_offset..buffer_offset + copy_len].copy_from_slice(&data[0..copy_len]);
+
+                let buffer_full = buffer_offset + copy_len == buf.len();
+                let more_bytes_in_message = copy_len < segment_size;
+
+                // See if we need to make this a partial write
+                if buffer_full && (!c || more_bytes_in_message) {
+                    if on_first_buffer {
+                        if let Err(abort_code) = obj.begin_partial(state.sub) {
+                            return SdoResult::abort(state.object.index, state.sub, abort_code);
+                        }
+                    }
+
+                    if let Err(abort_code) = obj.write_partial(state.sub, &buf) {
+                        return SdoResult::abort(state.object.index, state.sub, abort_code);
+                    }
+
+                    if more_bytes_in_message {
+                        buf[0..segment_size - copy_len]
+                            .copy_from_slice(&data[copy_len..segment_size]);
+                    }
                 }
 
                 if c {
-                    // Transfer complete
-                    let new_state = SdoState::Idle;
+                    // See if we already opened a partial write
+                    if (buffer_full && more_bytes_in_message) || !on_first_buffer {
+                        if more_bytes_in_message {
+                            if let Err(abort_code) =
+                                obj.write_partial(state.sub, &buf[0..segment_size - copy_len])
+                            {
+                                return SdoResult::abort(state.object.index, state.sub, abort_code);
+                            }
+                        } else {
+                            if let Err(abort_code) =
+                                obj.write_partial(state.sub, &buf[..buffer_offset + segment_size])
+                            {
+                                return SdoResult::abort(state.object.index, state.sub, abort_code);
+                            }
+                        }
+                        if let Err(abort_code) = obj.end_partial(state.sub) {
+                            return SdoResult::abort(state.object.index, state.sub, abort_code);
+                        }
+                    } else {
+                        if let Err(abort_code) =
+                            obj.write(state.sub, &buf[0..buffer_offset + segment_size])
+                        {
+                            return SdoResult::abort(state.object.index, state.sub, abort_code);
+                        }
+                    }
+
                     SdoResult::response_with_update(
                         SdoResponse::download_segment_acknowledge(state.toggle_state),
                         state.object.index,
                         state.sub,
-                        new_state,
+                        SdoState::Idle,
                     )
                 } else {
+                    // Segments that didn't fit in the buffer get stored to beginning of new buffer
+                    if copy_len < segment_size {
+                        buf[0..segment_size - copy_len]
+                            .copy_from_slice(&data[copy_len..segment_size]);
+                    }
                     // More segments remaining to be received
                     let new_state = SdoState::DownloadSegmented(Segmented {
                         toggle_state: !state.toggle_state,
@@ -399,18 +439,54 @@ impl SdoState {
                     );
                 }
 
-                let obj = &state.object.data;
-                // Unwrap: If in DownloadSegment state, then the existence of the sub object
-                // is already established.
-                let current_size = obj.current_size(state.sub).unwrap();
+                let mut full_buf = rx.borrow_buffer();
+                let len = full_buf.len();
+                // Limit buffer to be a multiple of segment size
+                let buf = &mut full_buf[0..len - (len % 7)];
 
-                let read_offset = state.segment_counter as usize * 7;
-                let read_size = (current_size - read_offset).min(7);
-                let mut buf = [0; 7];
-                obj.read(state.sub, read_offset, &mut buf[0..read_size])
-                    .unwrap();
-                // Compute complete bit (is this the last segment of the upload?)
-                let c = (read_size + read_offset) == current_size;
+                // How far into the object data we are
+                let total_read_offset = state.segment_counter as usize * 7;
+                // How far into the current buffer we are
+                let buf_read_offset = total_read_offset % buf.len();
+
+                let segment_size = if let Some(bytes_in_buffer) = state.bytes_in_buffer {
+                    bytes_in_buffer as usize - buf_read_offset
+                } else {
+                    buf.len() - buf_read_offset
+                }
+                .min(7);
+                let mut msg_buf = [0; 7];
+                msg_buf[..segment_size]
+                    .copy_from_slice(&buf[buf_read_offset..buf_read_offset + segment_size]);
+
+                let mut c = false;
+                let mut bytes_in_buffer = state.bytes_in_buffer;
+                if state.bytes_in_buffer.is_none() {
+                    if buf_read_offset + segment_size == buf.len() {
+                        // We completed the buffered data. Read again to see if there is more data
+                        // to send
+                        let read_size = state
+                            .object
+                            .data
+                            .read(state.sub, total_read_offset + segment_size, buf)
+                            .unwrap();
+                        if read_size == 0 {
+                            // No further data in object, this is the last segment
+                            c = true;
+                        } else {
+                            // We read more data. If the buffer was not filled, this is the last of
+                            // it.
+                            if read_size != buf.len() {
+                                bytes_in_buffer = Some(read_size as u32)
+                            }
+                        }
+                    }
+                } else {
+                    // This segment finished the bytes in this buffer
+                    if buf_read_offset + segment_size == bytes_in_buffer.unwrap() as usize {
+                        c = true;
+                    }
+                }
 
                 let new_state = if c {
                     SdoState::Idle
@@ -420,13 +496,23 @@ impl SdoState {
                         sub: state.sub,
                         toggle_state: !state.toggle_state,
                         segment_counter: state.segment_counter + 1,
+                        bytes_in_buffer,
                     })
                 };
 
-                SdoResult::response(
-                    SdoResponse::upload_segment(state.toggle_state, c, &buf[0..read_size]),
-                    new_state,
-                )
+                let response =
+                    SdoResponse::upload_segment(state.toggle_state, c, &msg_buf[0..segment_size]);
+
+                if c {
+                    SdoResult::response_with_update(
+                        response,
+                        state.object.index,
+                        state.sub,
+                        new_state,
+                    )
+                } else {
+                    SdoResult::response(response, new_state)
+                }
             }
             SdoRequest::Abort {
                 index: _,
@@ -491,18 +577,29 @@ impl SdoState {
                         })
                     } else {
                         // Store the data from this block
-                        let write_offset = state.block_counter * BLKSIZE as usize * 7;
                         let write_length = last_segment as usize * 7;
 
-                        // Safety: If SDO protocol is followed, client cannot be sending
-                        // segments after the last segment, so no segments should be received
-                        // while we hold this shared ref and therefore no mut refs should exist
-                        let buf = unsafe { rx.buffer() };
+                        let buf = rx.borrow_buffer();
                         let valid_data = &buf[..write_length];
+
                         // Update the running CRC
                         let crc = crc16::XMODEM::update(state.crc, valid_data);
+
+                        // If this is the first block of a multi-part block transfer, we begin
+                        // partial write now. Not all objects support partial write, although
+                        // generally any object large enough to warrant a multi-block transfer
+                        // probably should.
+                        if state.block_counter == 0 {
+                            if let Err(abort_code) = state.object.data.begin_partial(state.sub) {
+                                rx.set_state(ReceiverState::Normal);
+                                return SdoResult::abort(state.object.index, state.sub, abort_code);
+                            }
+                        }
+
+                        // Attempt to write the block. It may fail if, for example, the data exceeds
+                        // the size of the object
                         if let Err(abort_code) =
-                            state.object.data.write(state.sub, write_offset, valid_data)
+                            state.object.data.write_partial(state.sub, valid_data)
                         {
                             rx.set_state(ReceiverState::Normal);
                             return SdoResult::abort(state.object.index, state.sub, abort_code);
@@ -543,10 +640,10 @@ impl SdoState {
 
         match req {
             SdoRequest::EndBlockDownload { n, crc } => {
+                let buf = rx.borrow_buffer();
                 // Safety: If SDO protocol is followed, client cannot be sending
                 // segments after the last segment, so no segments should be received
                 // while we hold this shared ref and therefore no mut refs should exist
-                let buf = unsafe { rx.buffer() };
 
                 let write_len = state.last_segment as usize * 7 - n as usize;
                 let valid_data = &buf[..write_len];
@@ -556,13 +653,22 @@ impl SdoState {
                     return SdoResult::abort(state.object.index, state.sub, AbortCode::CrcError);
                 }
 
-                // Store the data from this block
-                let write_offset = (state.block_counter - 1) * BLKSIZE as usize * 7;
+                let objdata = &state.object.data;
 
-                if let Err(abort_code) =
-                    state.object.data.write(state.sub, write_offset, valid_data)
-                {
-                    return SdoResult::abort(state.object.index, state.sub, abort_code);
+                // Store the data from this block
+                if state.block_counter == 1 {
+                    // We only received a single block, so no partial transfer is required
+                    if let Err(abort_code) = objdata.write(state.sub, valid_data) {
+                        return SdoResult::abort(state.object.index, state.sub, abort_code);
+                    }
+                } else {
+                    // This is the last block of a multi block transfer write it, and finish
+                    if let Err(abort_code) = objdata.write_partial(state.sub, valid_data) {
+                        return SdoResult::abort(state.object.index, state.sub, abort_code);
+                    }
+                    if let Err(abort_code) = objdata.end_partial(state.sub) {
+                        return SdoResult::abort(state.object.index, state.sub, abort_code);
+                    }
                 }
 
                 SdoResult::response_with_update(
@@ -584,6 +690,15 @@ impl SdoState {
             ),
         }
     }
+}
+
+/// Implements an SDO server
+///
+/// A single SDO server can be controlled by a single SDO client (at one time). This struct wraps up
+/// the state and implements handling of SDO requests. A node implementing multiple SDO servers can
+/// instantiate multiple instances of `SdoServer` to track each.
+pub(crate) struct SdoServer {
+    state: SdoState,
 }
 
 impl SdoServer {
@@ -613,26 +728,66 @@ impl SdoServer {
 
 #[cfg(test)]
 mod tests {
-    use zencan_common::{objects::ObjectData, sdo::BlockSegment, AtomicCell};
-    use zencan_macro::record_object;
+    use crate::object_dict::{
+        find_object, ByteField, ConstField, NullTermByteField, ProvidesSubObjects, SubObjectAccess,
+    };
+    use zencan_common::{
+        objects::{AccessType, DataType, ObjectCode},
+        sdo::BlockSegment,
+    };
+
+    use crate::SDO_BUFFER_SIZE;
 
     use super::*;
 
-    /// Name crate zencan_node for record_object macro generated code
-    use crate as zencan_node;
-
-    #[record_object]
+    const SUB2_SIZE: usize = 78;
     struct Object1000 {
-        sub1: [u8; 1200],
+        sub1: NullTermByteField<1200>,
+        sub2: ByteField<SUB2_SIZE>,
+    }
+
+    impl ProvidesSubObjects for Object1000 {
+        fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
+            match sub {
+                0 => Some((
+                    SubInfo::MAX_SUB_NUMBER,
+                    const { &ConstField::new(1u8.to_le_bytes()) },
+                )),
+                1 => Some((
+                    SubInfo {
+                        size: self.sub1.len(),
+                        data_type: DataType::VisibleString,
+                        access_type: AccessType::Rw,
+                        ..Default::default()
+                    },
+                    &self.sub1,
+                )),
+                2 => Some((
+                    SubInfo {
+                        size: self.sub2.len(),
+                        data_type: DataType::OctetString,
+                        access_type: AccessType::Rw,
+                        ..Default::default()
+                    },
+                    &self.sub2,
+                )),
+                _ => None,
+            }
+        }
+
+        fn object_code(&self) -> ObjectCode {
+            ObjectCode::Record
+        }
     }
 
     fn test_od() -> &'static [ODEntry<'static>] {
         let object1000 = Box::leak(Box::new(Object1000 {
-            sub1: AtomicCell::new([0; 1200]),
+            sub1: NullTermByteField::new([0; 1200]),
+            sub2: ByteField::new([0; SUB2_SIZE]),
         }));
         let list = [ODEntry {
             index: 0x1000,
-            data: ObjectData::Storage(object1000),
+            data: object1000,
         }];
 
         Box::leak(Box::new(list))
@@ -731,8 +886,9 @@ mod tests {
 
     #[test]
     fn test_block_download() {
+        let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
         let mut server = SdoServer::new();
-        let rx = SdoReceiver::new();
+        let rx = SdoReceiver::new(buffer);
         let od = test_od();
 
         println!("Running 128 byte download");
@@ -743,8 +899,9 @@ mod tests {
 
     #[test]
     fn test_block_download_missing_block() {
+        let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
         let mut server = SdoServer::new();
-        let rx = SdoReceiver::new();
+        let rx = SdoReceiver::new(buffer);
         let od = test_od();
 
         const INDEX: u16 = 0x1000;
@@ -858,8 +1015,9 @@ mod tests {
 
     #[test]
     fn test_block_download_timeout() {
+        let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
         let mut server = SdoServer::new();
-        let rx = SdoReceiver::new();
+        let rx = SdoReceiver::new(buffer);
         let od = test_od();
 
         const INDEX: u16 = 0x1000;
@@ -911,5 +1069,98 @@ mod tests {
             resp
         );
         assert_eq!(None, index);
+    }
+
+    /// Test uploading a value with a length of 7
+    #[test]
+    fn test_segmented_download() {
+        const SDO_BUFFER_SIZE: usize = 32;
+        let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
+        let mut server = SdoServer::new();
+        let rx = SdoReceiver::new(buffer);
+        let od = test_od();
+
+        const INDEX: u16 = 0x1000;
+        const SUB: u8 = 2;
+
+        let mut round_trip = |msg_data: Option<[u8; 8]>, elapsed| {
+            if let Some(msg_data) = msg_data {
+                rx.handle_req(&msg_data);
+            }
+            server.process(&rx, elapsed, od)
+        };
+
+        let mut do_segmented_download = |size: usize| {
+            let write_data = Vec::from_iter((0..size).map(|x| x as u8));
+            let mut toggle = false;
+            let mut sent_bytes = 0;
+            let (resp, index) = round_trip(
+                Some(SdoRequest::initiate_download(INDEX, SUB, Some(7)).to_bytes()),
+                0,
+            );
+
+            assert_eq!(None, index);
+            assert_eq!(
+                Some(SdoResponse::ConfirmDownload {
+                    index: INDEX,
+                    sub: SUB
+                }),
+                resp
+            );
+
+            while sent_bytes < write_data.len() {
+                let bytes_left = write_data.len() - sent_bytes;
+                let bytes_to_send = bytes_left.min(7);
+                let complete = bytes_left <= bytes_to_send;
+                let (resp, index) = round_trip(
+                    Some(
+                        SdoRequest::download_segment(
+                            toggle,
+                            complete,
+                            &write_data[sent_bytes..sent_bytes + bytes_to_send],
+                        )
+                        .to_bytes(),
+                    ),
+                    0,
+                );
+                assert_eq!(
+                    Some(SdoResponse::ConfirmDownloadSegment { t: toggle }),
+                    resp
+                );
+                if complete {
+                    assert_eq!(
+                        Some(ObjectId {
+                            index: INDEX,
+                            sub: SUB
+                        }),
+                        index
+                    );
+                } else {
+                    assert_eq!(None, index);
+                }
+                toggle = !toggle;
+                sent_bytes += bytes_to_send;
+            }
+
+            // Grab the object and read back the data we just wrote
+            let obj = find_object(od, INDEX).unwrap();
+            let mut read_buf = vec![0; write_data.len()];
+            let read_size = obj.read(SUB, 0, &mut read_buf).unwrap();
+            assert_eq!(write_data.len(), read_size);
+            assert_eq!(write_data, read_buf);
+        };
+
+        // Test downloading a single segment object smaller than segment
+        do_segmented_download(6);
+        // Test downloading a 7 byte, single segment object
+        do_segmented_download(7);
+        // Test downloading a single segment object just bigger than one segment
+        do_segmented_download(8);
+        // Test doing a length equal to the SDO buffer size
+        do_segmented_download(SDO_BUFFER_SIZE);
+        // Test doing a length just larger than the buffer
+        do_segmented_download(SDO_BUFFER_SIZE + 1);
+        // Tests full object write
+        do_segmented_download(SUB2_SIZE);
     }
 }

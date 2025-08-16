@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use assertables::assert_contains;
 use integration_tests::{object_dict1, object_dict2, sim_bus::SimBus};
 use zencan_client::LssMaster;
 use zencan_common::{lss::LssIdentity, NodeId};
@@ -78,14 +79,14 @@ async fn test_fast_scan() {
 
             let exp2 = LssIdentity {
                 vendor_id: 5000,
-                product_code: 1002,
+                product_code: 0x1002,
                 revision: 2,
                 serial: 5432,
             };
 
             println!("Found IDs: {ids:?}");
-            assert!(ids.contains(&exp1));
-            assert!(ids.contains(&exp2));
+            assert_contains!(ids, &exp1);
+            assert_contains!(ids, &exp2);
         },
     )
     .await;

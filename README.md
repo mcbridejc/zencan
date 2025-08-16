@@ -66,15 +66,16 @@ No doubt this is a very incomplete list...
 - Add better validity checking on PDO configuration
   - Don't allow changing things while operating
 - zencan-build should maybe be exported and documented via zencan-node (?)
-- Bootload support
-- Implement domain objects
-- Implement block upload
   - This requires new message sending semantics with pushback to support sending segments as fast as
     possible while prioritizing other messages
 - Support object value range limits: return AbortCode if SDO client attempts to write out of range value
 - SDO buffer size should be configurable
 - SDO segmented downloads should use buffer so object access is atomic
 - Building a node example with a no_std target needs to be part of CI test
+- DeviceConfig and complete object dictionary representations should be separated. They are separate
+  concepts: the device config is an input file for configuring node generation. Separately, there is
+  a dictionary that is more analagous to the EDS which includes all of the auto generated objects as
+  well as the application specific objects defined in the device config.
 
 ## License
 

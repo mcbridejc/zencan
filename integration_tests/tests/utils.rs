@@ -1,12 +1,38 @@
+#![allow(dead_code)]
 use std::{future::Future, time::Instant};
 
 use futures::executor::block_on;
-use integration_tests::sim_bus::{SimBusReceiver, SimBusSender};
+use integration_tests::sim_bus::{SimBus, SimBusReceiver, SimBusSender};
+use zencan_client::SdoClient;
 use zencan_common::{
     messages::ZencanMessage,
     traits::{AsyncCanReceiver, AsyncCanSender},
+    NodeId,
 };
-use zencan_node::Node;
+use zencan_node::object_dict::ODEntry;
+use zencan_node::{Node, NodeMbox, NodeStateAccess};
+
+pub fn setup_single_node<'a, S: NodeStateAccess>(
+    od: &'static [ODEntry],
+    mbox: &'static NodeMbox,
+    state: &'static S,
+) -> (
+    Node,
+    SdoClient<SimBusSender<'a>, SimBusReceiver>,
+    SimBus<'a>,
+) {
+    const SLAVE_NODE_ID: u8 = 1;
+
+    let node = Node::init(NodeId::new(SLAVE_NODE_ID).unwrap(), mbox, state, od).finalize();
+
+    let mut bus = SimBus::new(vec![mbox]);
+
+    let sender = bus.new_sender();
+    let receiver = bus.new_receiver();
+    let client = SdoClient::new_std(SLAVE_NODE_ID, sender, receiver);
+
+    (node, client, bus)
+}
 
 #[allow(dead_code)]
 pub async fn test_with_background_process<'b, T>(

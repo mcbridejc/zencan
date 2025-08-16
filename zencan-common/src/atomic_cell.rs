@@ -11,27 +11,14 @@ use critical_section::Mutex;
 use crate::traits::LoadStore;
 
 /// A container to allow atomic access to the contained object
-#[derive(Debug)]
-pub struct AtomicCell<T: Copy> {
+pub struct AtomicCell<T> {
     inner: Mutex<Cell<T>>,
 }
 
 impl<T: Send + Copy> AtomicCell<T> {
-    /// Create a new AtomicCell with the provided value
-    pub const fn new(value: T) -> Self {
-        Self {
-            inner: Mutex::new(Cell::new(value)),
-        }
-    }
-
     /// Read the value of the AtomicCell
     pub fn load(&self) -> T {
         critical_section::with(|cs| self.inner.borrow(cs).get())
-    }
-
-    /// Replace the value of the AtomicCell
-    pub fn store(&self, value: T) {
-        critical_section::with(|cs| self.inner.borrow(cs).set(value));
     }
 
     /// Borrow a reference to the contained value
@@ -58,7 +45,21 @@ impl<T: Send + Copy> AtomicCell<T> {
     }
 }
 
-impl<T: Send + Copy + Default> AtomicCell<T> {
+impl<T: Send> AtomicCell<T> {
+    /// Create a new AtomicCell with the provided value
+    pub const fn new(value: T) -> Self {
+        Self {
+            inner: Mutex::new(Cell::new(value)),
+        }
+    }
+
+    /// Replace the value of the AtomicCell
+    pub fn store(&self, value: T) {
+        critical_section::with(|cs| self.inner.borrow(cs).set(value));
+    }
+}
+
+impl<T: Send + Default> AtomicCell<T> {
     /// Return the contained value, and replace it with a default value
     pub fn take(&self) -> T {
         critical_section::with(|cs| self.inner.borrow(cs).take())
@@ -76,7 +77,7 @@ impl<T: Copy + Add<Output = T>> AtomicCell<T> {
     }
 }
 
-impl<T: Default + Copy + Send> Default for AtomicCell<T> {
+impl<T: Default> Default for AtomicCell<T> {
     fn default() -> Self {
         Self {
             inner: Mutex::new(Cell::new(T::default())),

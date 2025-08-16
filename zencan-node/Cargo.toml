@@ -19,16 +19,13 @@ zencan-macro.workspace = true
 # External
 crc16.workspace = true
 critical-section.workspace = true
-defmt = {workspace = true, optional = true}
+defmt = { workspace = true, optional = true }
 defmt-or-log.workspace = true
 embedded-io.workspace = true
 futures.workspace = true
 heapless.workspace = true
-log = { version = "0.4", optional = true}
-
-
-[dev-dependencies]
-cargo-husky = {version = "1", features = ["run-for-all", "run-cargo-test", "run-cargo-clippy", "run-cargo-fmt"]}
+log = { version = "0.4", optional = true }
+static_cell = "2.1.1"
 
 [features]
 default = ["log", "std"]
