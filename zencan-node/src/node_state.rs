@@ -29,6 +29,12 @@ pub struct NodeState<const N_RPDO: usize, const N_TPDO: usize> {
     storage_context: StorageContext,
 }
 
+impl<const N_RPDO: usize, const N_TPDO: usize> Default for NodeState<N_RPDO, N_TPDO> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N_RPDO: usize, const N_TPDO: usize> NodeState<N_RPDO, N_TPDO> {
     /// Create a new NodeState object
     pub const fn new() -> Self {

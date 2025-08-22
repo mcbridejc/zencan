@@ -303,7 +303,7 @@ impl SubObjectAccess for PdoTransmissionTypeSubObject {
     }
 
     fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
-        if data.len() < 1 {
+        if data.is_empty() {
             Err(AbortCode::DataTypeMismatchLengthLow)
         } else {
             self.pdo.set_transmission_type(data[0]);
@@ -369,7 +369,7 @@ impl PdoMappingObject {
 impl ObjectAccess for PdoMappingObject {
     fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         if sub == 0 {
-            if offset < 1 && buf.len() > 0 {
+            if offset < 1 && !buf.is_empty() {
                 buf[0] = self.pdo.valid_maps.load();
                 Ok(1)
             } else {

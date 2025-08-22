@@ -210,7 +210,8 @@ impl SdoState {
                     Err(abort_code) => return SdoResult::abort(index, sub, abort_code),
                 };
 
-                let response = if read_size <= 4 {
+                
+                if read_size <= 4 {
                     // Do expedited upload
                     SdoResult::response(
                         SdoResponse::expedited_upload(index, sub, &buf[..read_size]),
@@ -241,8 +242,7 @@ impl SdoState {
                             bytes_in_buffer: ack_size,
                         }),
                     )
-                };
-                response
+                }
             }
             SdoRequest::InitiateBlockDownload {
                 cc,
@@ -362,22 +362,18 @@ impl SdoState {
                             {
                                 return SdoResult::abort(state.object.index, state.sub, abort_code);
                             }
-                        } else {
-                            if let Err(abort_code) =
-                                obj.write_partial(state.sub, &buf[..buffer_offset + segment_size])
-                            {
-                                return SdoResult::abort(state.object.index, state.sub, abort_code);
-                            }
+                        } else if let Err(abort_code) =
+                            obj.write_partial(state.sub, &buf[..buffer_offset + segment_size])
+                        {
+                            return SdoResult::abort(state.object.index, state.sub, abort_code);
                         }
                         if let Err(abort_code) = obj.end_partial(state.sub) {
                             return SdoResult::abort(state.object.index, state.sub, abort_code);
                         }
-                    } else {
-                        if let Err(abort_code) =
-                            obj.write(state.sub, &buf[0..buffer_offset + segment_size])
-                        {
-                            return SdoResult::abort(state.object.index, state.sub, abort_code);
-                        }
+                    } else if let Err(abort_code) =
+                        obj.write(state.sub, &buf[0..buffer_offset + segment_size])
+                    {
+                        return SdoResult::abort(state.object.index, state.sub, abort_code);
                     }
 
                     SdoResult::response_with_update(
@@ -803,7 +799,7 @@ mod tests {
         const SUB: u8 = 1;
         let mut round_trip = |msg_data: [u8; 8], elapsed| {
             rx.handle_req(&msg_data);
-            server.process(&rx, elapsed, od)
+            server.process(rx, elapsed, od)
         };
 
         let msg = SdoRequest::initiate_block_download(INDEX, SUB, true, size as u32).to_bytes();
@@ -827,7 +823,7 @@ mod tests {
         while pos < size {
             let len = (size - pos).min(7);
             let mut chunk = [0; 7];
-            chunk[0..len].copy_from_slice(&data[pos..pos + len as usize]);
+            chunk[0..len].copy_from_slice(&data[pos..pos + len]);
 
             pos += len;
             seqnum += 1;

@@ -478,6 +478,12 @@ pub struct CallbackSubObject {
     handler: AtomicCell<Option<&'static dyn SubObjectAccess>>,
 }
 
+impl Default for CallbackSubObject {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CallbackSubObject {
     /// Create a new object
     pub const fn new() -> Self {

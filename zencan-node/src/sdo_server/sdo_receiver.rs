@@ -158,7 +158,7 @@ impl SdoReceiver {
     ///
     /// This function will panic if the buffer has already been borrowed, or if the buffer was never
     /// set via `store_buffer`.
-    pub(crate) fn borrow_buffer<'a>(&'a self) -> BufferGuard<'a> {
+    pub(crate) fn borrow_buffer(&self) -> BufferGuard<'_> {
         let buf = self.buffer.take();
 
         BufferGuard {

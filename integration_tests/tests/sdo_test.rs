@@ -191,12 +191,12 @@ async fn test_domain_access() {
             .await
             .unwrap();
         assert_eq!([0xa, 0xb, 0xc, 0xd], domain.get_data()[0..4]);
-        assert_eq!(false, domain.end_flag.load(Ordering::Relaxed));
+        assert!(!domain.end_flag.load(Ordering::Relaxed));
 
         // Do a large write
         client.block_download(0x3007, 0, &write_data).await.unwrap();
         assert_eq!(write_data, domain.get_data());
-        assert_eq!(true, domain.end_flag.load(Ordering::Relaxed));
+        assert!(domain.end_flag.load(Ordering::Relaxed));
 
         // Do tooo large a write
         write_data.extend_from_slice(&[0]);

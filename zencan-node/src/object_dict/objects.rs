@@ -407,7 +407,7 @@ pub struct ODEntry<'a> {
 /// Lookup an object from the Object dictionary table
 ///
 /// Note: `table` must be sorted by index
-pub fn find_object<'a, 'b>(table: &'b [ODEntry<'a>], index: u16) -> Option<&'a dyn ObjectAccess> {
+pub fn find_object<'a>(table: &[ODEntry<'a>], index: u16) -> Option<&'a dyn ObjectAccess> {
     find_object_entry(table, index).map(|entry| entry.data)
 }
 

@@ -38,14 +38,14 @@ async fn test_device_info_readback() {
         // Number of sections
         assert_eq!(1, client.read_u8(BOOTLOADER_INFO_INDEX, 2).await.unwrap());
 
-        assert_eq!(false, object_dict2::BOOTLOADER_INFO.reset_flag());
+        assert!(!object_dict2::BOOTLOADER_INFO.reset_flag());
 
         client
             .write_u32(BOOTLOADER_INFO_INDEX, 3, BOOTLOADER_RESET_CMD)
             .await
             .unwrap();
 
-        assert_eq!(true, object_dict2::BOOTLOADER_INFO.reset_flag());
+        assert!(object_dict2::BOOTLOADER_INFO.reset_flag());
     };
 
     test_with_background_process(&mut [&mut node], &mut bus.new_sender(), test_task).await;
@@ -144,9 +144,9 @@ async fn test_program() {
             .await
             .unwrap();
 
-        assert_eq!(true, callbacks.erase_flag());
+        assert!(callbacks.erase_flag());
         assert_eq!(download_data, callbacks.data());
-        assert_eq!(true, callbacks.finalize_flag())
+        assert!(callbacks.finalize_flag())
     };
 
     test_with_background_process(&mut [&mut node], &mut bus.new_sender(), test_task).await;
