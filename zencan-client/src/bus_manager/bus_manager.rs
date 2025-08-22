@@ -108,7 +108,7 @@ async fn scan_node<S: AsyncCanSender + Sync + Send>(
     let identity = match sdo_client.read_identity().await {
         Ok(id) => Some(id),
         Err(SdoClientError::NoResponse) => {
-            log::warn!("No response");
+            log::info!("No response from node {node_id}");
             return None;
         }
         Err(e) => {
