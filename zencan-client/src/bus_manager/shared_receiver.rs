@@ -8,6 +8,7 @@ use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
     task::JoinHandle,
 };
+use tokio::sync::mpsc::error::TrySendError;
 use zencan_common::{traits::AsyncCanReceiver, CanMessage};
 
 #[derive(Clone, Copy, Debug)]
@@ -41,12 +42,22 @@ impl SharedReceiver {
         let task_handle = tokio::spawn(async move {
             loop {
                 if let Ok(msg) = receiver.recv().await {
-                    let inner = inner_clone.lock().unwrap();
-                    for s in &inner.senders {
-                        if let Err(_e) = s.try_send(msg) {
-                            log::warn!("Dropped received message due to overflow");
+                    let mut inner = inner_clone.lock().unwrap();
+                    inner.senders.retain(|sender| {
+                        if let Err(e) = sender.try_send(msg) {
+                            return match e {
+                                TrySendError::Full(_) => {
+                                    log::warn!("Dropped received message due to overflow");
+                                    true
+                                },
+                                TrySendError::Closed(_) => {
+                                    false
+                                }
+                            }
                         }
-                    }
+
+                        true
+                    });
                 };
             }
         });
