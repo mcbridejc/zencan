@@ -287,7 +287,6 @@ impl<const N: usize> SubObjectAccess for ByteField<N> {
     }
 
     fn write_partial(&self, buf: &[u8]) -> Result<(), AbortCode> {
-        println!("Writing bytefield {} bytes", buf.len());
         // Unwrap: fetch_update can only fail if the closure returns None
         let offset = self
             .write_offset
