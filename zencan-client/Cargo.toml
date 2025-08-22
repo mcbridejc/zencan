@@ -21,7 +21,13 @@ futures.workspace = true
 log.workspace = true
 snafu.workspace = true
 socketcan.workspace = true
-tokio = { version = "1.45.0", features = ["net", "time", "sync", "rt-multi-thread"] }
+tokio = { version = "1.45.0", features = [
+    "net",
+    "time",
+    "sync",
+    "rt-multi-thread",
+    "macros",
+] }
 toml = "0.8.22"
 serde = { version = "1.0.219", features = ["derive"] }
 

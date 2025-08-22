@@ -4,11 +4,11 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
     task::JoinHandle,
 };
-use tokio::sync::mpsc::error::TrySendError;
 use zencan_common::{traits::AsyncCanReceiver, CanMessage};
 
 #[derive(Clone, Copy, Debug)]
@@ -49,11 +49,9 @@ impl SharedReceiver {
                                 TrySendError::Full(_) => {
                                     log::warn!("Dropped received message due to overflow");
                                     true
-                                },
-                                TrySendError::Closed(_) => {
-                                    false
                                 }
-                            }
+                                TrySendError::Closed(_) => false,
+                            };
                         }
 
                         true
@@ -74,6 +72,13 @@ impl SharedReceiver {
             inner: self.inner.clone(),
             receiver: rx,
         }
+    }
+
+    /// Get the number of current receiver channels
+    #[allow(dead_code)]
+    pub fn num_channels(&self) -> usize {
+        let inner = self.inner.lock().unwrap();
+        inner.senders.len()
     }
 }
 
@@ -121,5 +126,68 @@ impl AsyncCanReceiver for SharedReceiverChannel {
 
     fn recv(&mut self) -> impl core::future::Future<Output = Result<CanMessage, Self::Error>> {
         self.recv()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+    use zencan_common::CanId;
+
+    use super::*;
+
+    struct MockReceiver {
+        rx: Receiver<CanMessage>,
+    }
+
+    impl MockReceiver {
+        pub fn new(rx: Receiver<CanMessage>) -> Self {
+            Self { rx }
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockReceiveError {}
+
+    impl AsyncCanReceiver for MockReceiver {
+        type Error = MockReceiveError;
+
+        fn try_recv(&mut self) -> Option<CanMessage> {
+            let result = self.rx.try_recv();
+            println!("{result:?}");
+            result.ok()
+        }
+
+        async fn recv(&mut self) -> Result<CanMessage, Self::Error> {
+            self.rx.recv().await.ok_or(MockReceiveError {})
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shared_receiver() {
+        let (chan_tx, chan_rx) = channel(8);
+        let can_receiver = MockReceiver::new(chan_rx);
+        let mut shared_receiver = SharedReceiver::new(can_receiver);
+
+        let mut channel_a = shared_receiver.create_rx();
+        let mut channel_b = shared_receiver.create_rx();
+
+        let msg100 = CanMessage::new(CanId::std(100), &[0, 1, 2, 3]);
+        chan_tx.send(msg100.clone()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert_eq!(Some(msg100), channel_a.try_recv());
+        assert_eq!(Some(msg100), channel_b.try_recv());
+
+        assert_eq!(None, channel_a.try_recv());
+        assert_eq!(None, channel_a.try_recv());
+        // Drop a channel, and make sure the num channels goes down after message is processed
+        drop(channel_a);
+
+        chan_tx.send(msg100.clone()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(msg100, channel_b.recv().await.unwrap());
+
+        assert_eq!(1, shared_receiver.num_channels());
     }
 }
