@@ -2,23 +2,26 @@ name: Rust Checks
 
 on:
   push:
-    branches: [ "main"]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --examples --verbose
-    - name: Clippy
-      run: cargo clippy --examples -- -D warnings
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --examples --verbose
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+      - name: Clippy Examples
+        run: cargo clippy --examples -- -D warnings
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: Run tests
+        run: cargo test --verbose
