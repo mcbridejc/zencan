@@ -49,7 +49,7 @@ impl CanId {
 const MAX_DATA_LENGTH: usize = 8;
 
 /// A struct to contain a CanMessage
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CanMessage {
     /// The data payload of the message
     ///
