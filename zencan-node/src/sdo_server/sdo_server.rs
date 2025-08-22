@@ -210,7 +210,6 @@ impl SdoState {
                     Err(abort_code) => return SdoResult::abort(index, sub, abort_code),
                 };
 
-                
                 if read_size <= 4 {
                     // Do expedited upload
                     SdoResult::response(

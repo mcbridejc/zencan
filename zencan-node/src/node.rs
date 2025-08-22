@@ -82,9 +82,9 @@ pub struct Node {
 
 impl Node {
     /// Create a new [`Node`]
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `node_id` - Initial node ID assignment
     /// * `mbox` - The `NODE_MBOX` object created by `zencan-build`
     /// * `state` - The `NODE_STATE` state object created by `zencan-build`

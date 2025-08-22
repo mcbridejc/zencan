@@ -221,7 +221,7 @@ impl SubInfo {
         }
     }
 
-        /// Convenience function for creating a new sub-info by type
+    /// Convenience function for creating a new sub-info by type
     pub const fn new_i32() -> Self {
         Self {
             size: 4,
