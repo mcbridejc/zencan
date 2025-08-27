@@ -66,6 +66,7 @@ object_type = "var"
 parameter_name = "u32 var"
 data_type = "uint32"
 access_type = "rw"
+pdo_mapping = "tpdo"
 
 [[objects]]
 index = 0x3003
@@ -101,3 +102,30 @@ parameter_name = "Domain"
 object_type = "var"
 data_type = "domain"
 access_type = "rw"
+
+[[objects]]
+index = 0x3008
+parameter_name = "Array of size 7"
+object_type = "array"
+array_size = 7
+data_type = "uint8"
+access_type = "rw"
+pdo_mapping = "both"
+
+[[objects]]
+index = 0x3009
+parameter_name = "Array of size 8"
+object_type = "array"
+array_size = 8
+data_type = "uint8"
+access_type = "rw"
+pdo_mapping = "both"
+
+[[objects]]
+index = 0x300A
+parameter_name = "Array of size 9"
+object_type = "array"
+array_size = 9
+data_type = "uint8"
+access_type = "rw"
+pdo_mapping = "both"

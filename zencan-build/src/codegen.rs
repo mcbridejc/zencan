@@ -185,7 +185,7 @@ fn generate_object_definition(obj: &ObjectDefinition) -> Result<TokenStream, Com
     }
 
     if tpdo_mapping {
-        let n = (highest_sub_index as usize).div_ceil(8);
+        let n = (highest_sub_index as usize + 1).div_ceil(8);
         field_tokens.extend(quote! {
             flags: ObjectFlags<#n>,
         });
