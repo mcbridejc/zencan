@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::Path};
 
 use serde::{de, Deserialize, Deserializer};
 use snafu::{ResultExt, Snafu};
+use zencan_common::CanId;
 
 // Error returned when loading node configuration files
 #[derive(Debug, Snafu)]
@@ -119,9 +120,11 @@ struct NodeConfigSerializer {
 /// Represents the configuration parameters for a single PDO
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PdoConfig {
+struct PdoConfigSerializer {
     /// The COB ID this PDO will use to send/receive
     pub cob: u32,
+    #[serde(default)]
+    pub extended: bool,
     /// The PDO is active
     pub enabled: bool,
     /// List of mapping specifying what sub objects are mapped to this PDO
@@ -133,6 +136,58 @@ pub struct PdoConfig {
     /// - 1 - 240: Sent in response to every Nth sync
     /// - 254: Event driven (application to send it whenever it wants)
     pub transmission_type: u8,
+}
+
+/// Represents the configuration parameters for a single PDO
+#[derive(Clone, Debug, Deserialize)]
+#[serde(try_from = "PdoConfigSerializer")]
+pub struct PdoConfig {
+    /// The COB ID this PDO will use to send/receive
+    pub cob: CanId,
+    /// Indicates if this PDO is enabled
+    pub enabled: bool,
+    /// List of mapping specifying what sub objects are mapped to this PDO
+    pub mappings: Vec<PdoMapping>,
+    /// Specifies when a PDO is sent or latched
+    ///
+    /// - 0: Sent in response to sync, but only after an application specific event (e.g. it may be
+    ///   sent when the value changes, but not when it has not)
+    /// - 1 - 240: Sent in response to every Nth sync
+    /// - 254: Event driven (application to send it whenever it wants)
+    pub transmission_type: u8,
+}
+
+#[derive(Clone, Debug, Snafu)]
+#[snafu(display("{message}"))]
+pub struct PdoConfigParseError {
+    message: String,
+}
+
+impl TryFrom<PdoConfigSerializer> for PdoConfig {
+    type Error = PdoConfigParseError;
+
+    fn try_from(value: PdoConfigSerializer) -> Result<Self, Self::Error> {
+        let cob = if value.extended {
+            CanId::extended(value.cob)
+        } else {
+            if value.cob > 0x7ff {
+                return Err(PdoConfigParseError {
+                    message: format!(
+                        "COB ID 0x{:x} is out of range for standard ID. Set `extended` to true.",
+                        value.cob
+                    ),
+                });
+            }
+            CanId::std(value.cob as u16)
+        };
+
+        Ok(PdoConfig {
+            cob,
+            enabled: value.enabled,
+            mappings: value.mappings,
+            transmission_type: value.transmission_type,
+        })
+    }
 }
 
 /// Represents a PDO mapping
@@ -147,6 +202,21 @@ pub struct PdoMapping {
     pub sub: u8,
     /// The size of the object to map, in **bits**
     pub size: u8,
+}
+
+impl PdoMapping {
+    /// Convert a PdoMapping object to the u32 representation stored in the PdoMapping object
+    pub fn to_object_value(&self) -> u32 {
+        ((self.index as u32) << 16) | ((self.sub as u32) << 8) | (self.size as u32)
+    }
+
+    /// Create a PdoMapping object from the raw u32 representation stored in the PdoMapping object
+    pub fn from_object_value(value: u32) -> Self {
+        let index = (value >> 16) as u16;
+        let sub = ((value >> 8) & 0xff) as u8;
+        let size = (value & 0xff) as u8;
+        Self { index, sub, size }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -310,13 +380,54 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use assertables::assert_contains;
+
+    #[test]
+    fn test_out_of_range_standard_id() {
+        let str = r#"
+        [tpdo.0]
+        enabled = true
+        cob = 0x800
+        transmission_type = 254
+        mappings = [
+            { index=0x1000, sub=1, size=8 },
+        ]
+        "#;
+
+        let result = NodeConfig::load_from_str(str);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_contains!(
+            &err.to_string(),
+            "COB ID 0x800 is out of range for standard ID"
+        );
+    }
+
+    #[test]
+    fn test_extended_cob() {
+        let str = r#"
+        [tpdo.0]
+        enabled = true
+        cob = 0x800
+        extended = true
+        transmission_type = 254
+        mappings = [
+            { index=0x1000, sub=1, size=8 },
+        ]
+        "#;
+
+        let result = NodeConfig::load_from_str(str).unwrap();
+        assert_eq!(1, result.tpdos().len());
+        let tpdo = result.tpdos().get(&0).unwrap();
+        assert_eq!(CanId::extended(0x800), tpdo.cob);
+    }
 
     #[test]
     fn test_node_config_parse() {
         let str = r#"
         [tpdo.0]
         enabled = true
-        cob = 0x810
+        cob = 0x181
         transmission_type = 254
         mappings = [
             { index=0x1000, sub=1, size=8 },

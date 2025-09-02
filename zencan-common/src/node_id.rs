@@ -9,20 +9,20 @@ pub enum NodeId {
     /// A special node ID indicating the node is not configured (255)
     Unconfigured,
     /// A valid node ID for a configured node
-    Configured(ConfiguredId),
+    Configured(ConfiguredNodeId),
 }
 
 /// A newtype on u8 to enforce valid node ID (1-127)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ConfiguredId(u8);
-impl ConfiguredId {
+pub struct ConfiguredNodeId(u8);
+impl ConfiguredNodeId {
     /// Try to create a new ConfiguredId
     ///
     /// It will fail if value is invalid (i.e. <1 or >127)
     pub fn new(value: u8) -> Result<Self, InvalidNodeIdError> {
         if (value > 0 && value < 128) || value == 255 {
-            Ok(ConfiguredId(value))
+            Ok(ConfiguredNodeId(value))
         } else {
             Err(InvalidNodeIdError)
         }
@@ -34,8 +34,14 @@ impl ConfiguredId {
     }
 }
 
-impl From<ConfiguredId> for u8 {
-    fn from(value: ConfiguredId) -> Self {
+impl std::fmt::Display for ConfiguredNodeId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<ConfiguredNodeId> for u8 {
+    fn from(value: ConfiguredNodeId) -> Self {
         value.raw()
     }
 }
@@ -48,7 +54,7 @@ impl NodeId {
         if value == 255 {
             Ok(NodeId::Unconfigured)
         } else {
-            ConfiguredId::new(value).map(NodeId::Configured)
+            ConfiguredNodeId::new(value).map(NodeId::Configured)
         }
     }
 
@@ -57,6 +63,16 @@ impl NodeId {
         match self {
             NodeId::Unconfigured => 255,
             NodeId::Configured(node_id_num) => node_id_num.0,
+        }
+    }
+
+    /// Attempt to get the node ID as a ConfiguredNodeId
+    ///
+    /// Returns none if the value is NodeId::Unconfigured
+    pub fn as_configured(&self) -> Option<ConfiguredNodeId> {
+        match self {
+            NodeId::Unconfigured => None,
+            NodeId::Configured(configured_node_id) => Some(*configured_node_id),
         }
     }
 
@@ -94,7 +110,7 @@ impl TryFrom<u8> for NodeId {
         if value == 255 {
             Ok(NodeId::Unconfigured)
         } else {
-            Ok(NodeId::Configured(ConfiguredId(value)))
+            Ok(NodeId::Configured(ConfiguredNodeId(value)))
         }
     }
 }

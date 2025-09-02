@@ -264,7 +264,7 @@ async fn test_pdo_configuration() {
 
     let test_task = async move {
         let config = PdoConfig {
-            cob: 0x301,
+            cob: CanId::std(0x301),
             enabled: true,
             mappings: vec![
                 PdoMapping {
