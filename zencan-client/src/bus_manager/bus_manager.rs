@@ -120,7 +120,6 @@ async fn scan_node<S: AsyncCanSender + Sync + Send>(
     };
     let device_name = match sdo_client.read_device_name().await {
         Ok(s) => Some(s),
-        Err(SdoClientError::NoResponse) => return None,
         Err(e) => {
             log::error!("SDO Abort Response scanning node {node_id} device name: {e:?}");
             None
