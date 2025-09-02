@@ -5,8 +5,14 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use futures::future::join_all;
 use tokio::task::JoinHandle;
+use zencan_common::constants::object_ids::{
+    RPDO_COMM_BASE, RPDO_MAP_BASE, TPDO_COMM_BASE, TPDO_MAP_BASE,
+};
 use zencan_common::lss::{LssIdentity, LssState};
 use zencan_common::messages::{NmtCommand, NmtCommandSpecifier, NmtState, ZencanMessage};
+use zencan_common::node_id::ConfiguredNodeId;
+use zencan_common::sdo::AbortCode;
+use zencan_common::CanId;
 use zencan_common::{
     traits::{AsyncCanReceiver, AsyncCanSender},
     NodeId,
@@ -14,7 +20,7 @@ use zencan_common::{
 
 use super::shared_sender::SharedSender;
 use crate::sdo_client::{SdoClient, SdoClientError};
-use crate::{LssError, LssMaster};
+use crate::{LssError, LssMaster, PdoConfig, PdoMapping, RawAbortCode};
 
 use super::shared_receiver::{SharedReceiver, SharedReceiverChannel};
 
@@ -148,6 +154,79 @@ async fn scan_node<S: AsyncCanSender + Sync + Send>(
         nmt_state: None,
         last_seen: Instant::now(),
     })
+}
+
+/// Result struct for reading PDO configuration from a single node
+#[derive(Clone, Debug)]
+pub struct PdoScanResult {
+    /// List of TPDO configurations
+    pub tpdos: Vec<PdoConfig>,
+    /// List of RPDO configurations
+    pub rpdos: Vec<PdoConfig>,
+}
+
+async fn read_pdos<S: AsyncCanSender + Sync + Send, R: AsyncCanReceiver>(
+    mut comm_base: u16,
+    mut mapping_base: u16,
+    client: &mut SdoClient<S, R>,
+) -> Result<Vec<PdoConfig>, SdoClientError> {
+    let mut result = Vec::new();
+
+    loop {
+        let _comm_max_sub = match client.read_u8(comm_base, 0).await {
+            Ok(val) => val,
+            // This error is expected; this means there are no more PDOs to read
+            Err(SdoClientError::ServerAbort {
+                index: _,
+                sub: _,
+                abort_code: RawAbortCode::Valid(AbortCode::NoSuchObject),
+            }) => break,
+            // Any other error is unexpected
+            Err(e) => {
+                return Err(e);
+            }
+        };
+
+        let cob_value = client.read_u32(comm_base, 1).await?;
+        let transmission_type = client.read_u8(comm_base, 2).await?;
+
+        let frame = (cob_value & (1 << 29)) != 0;
+        let enabled = (cob_value & (1 << 31)) == 0;
+        let cob_id = cob_value & 0x1FFFFFFF;
+        let cob = if frame {
+            CanId::extended(cob_id)
+        } else {
+            CanId::std((cob_id & 0x7ff) as u16)
+        };
+        let num_mappings = client.read_u8(mapping_base, 0).await?;
+        let mut mappings = Vec::new();
+        for i in 0..num_mappings {
+            let map_param = client.read_u32(mapping_base, i + 1).await?;
+            mappings.push(PdoMapping::from_object_value(map_param));
+        }
+
+        result.push(PdoConfig {
+            cob,
+            enabled,
+            mappings,
+            transmission_type,
+        });
+        comm_base += 1;
+        mapping_base += 1;
+    }
+    Ok(result)
+}
+
+async fn read_rpdo_config<S: AsyncCanSender + Sync + Send, R: AsyncCanReceiver>(
+    client: &mut SdoClient<S, R>,
+) -> Result<Vec<PdoConfig>, SdoClientError> {
+    read_pdos(RPDO_COMM_BASE, RPDO_MAP_BASE, client).await
+}
+
+async fn read_tpdo_config<S: AsyncCanSender + Sync + Send, R: AsyncCanReceiver>(
+    client: &mut SdoClient<S, R>,
+) -> Result<Vec<PdoConfig>, SdoClientError> {
+    read_pdos(TPDO_COMM_BASE, TPDO_MAP_BASE, client).await
 }
 
 #[derive(Debug)]
@@ -469,5 +548,20 @@ impl<S: AsyncCanSender + Sync + Send> BusManager<S> {
     async fn send_nmt_cmd(&mut self, cmd: NmtCommandSpecifier, node: u8) {
         let message = NmtCommand { cs: cmd, node };
         self.sender.send(message.into()).await.ok();
+    }
+
+    /// Read the RPDO and TPDO configuration for the specified node
+    ///
+    /// node - The node ID to read from
+    pub async fn read_pdo_config(
+        &mut self,
+        node: ConfiguredNodeId,
+    ) -> Result<PdoScanResult, SdoClientError> {
+        let mut client = self.sdo_client(node.raw());
+
+        let tpdos = read_tpdo_config(&mut client).await?;
+        let rpdos = read_rpdo_config(&mut client).await?;
+
+        Ok(PdoScanResult { tpdos, rpdos })
     }
 }

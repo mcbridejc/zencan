@@ -686,7 +686,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     ) -> Result<()> {
         assert!(cfg.mappings.len() < 0x40);
         for (i, m) in cfg.mappings.iter().enumerate() {
-            let mapping_value = ((m.index as u32) << 16) | ((m.sub as u32) << 8) | (m.size as u32);
+            let mapping_value = m.to_object_value();
             self.write_u32(mapping_index, (i + 1) as u8, mapping_value)
                 .await?;
         }
@@ -694,12 +694,11 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         let num_mappings = cfg.mappings.len() as u8;
         self.write_u8(mapping_index, 0, num_mappings).await?;
 
-        let extended = cfg.cob > 0x7ff;
-        let mut cob_value = cfg.cob & 0xFFFFFFF;
+        let mut cob_value = cfg.cob.raw() & 0xFFFFFFF;
         if !cfg.enabled {
             cob_value |= 1 << 31;
         }
-        if extended {
+        if cfg.cob.is_extended() {
             cob_value |= 1 << 29;
         }
         self.write_u8(comm_index, 2, cfg.transmission_type).await?;

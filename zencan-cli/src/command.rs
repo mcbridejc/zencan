@@ -17,6 +17,8 @@ pub enum Commands {
     Write(WriteArgs),
     /// Scan all node IDs to find configured devices
     Scan,
+    /// Scan the PDO configuration from a node
+    ScanPdoConfig(ScanPdoConfigArgs),
     /// Print info about nodes
     Info,
     /// Load a configuration from a file to a node
@@ -70,6 +72,11 @@ pub struct WriteArgs {
     pub data_type: SdoDataType,
     /// The value to write
     pub value: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ScanPdoConfigArgs {
+    pub node_id: u8,
 }
 
 #[derive(Debug, Args)]

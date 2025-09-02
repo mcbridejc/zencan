@@ -18,6 +18,15 @@ pub enum CanId {
     Std(u16),
 }
 
+impl core::fmt::Display for CanId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            CanId::Extended(id) => write!(f, "Extended(0x{id:x})"),
+            CanId::Std(id) => write!(f, "Std(0x{id:x})"),
+        }
+    }
+}
+
 impl CanId {
     /// Create a new extended ID
     pub const fn extended(id: u32) -> CanId {

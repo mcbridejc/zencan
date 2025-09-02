@@ -19,7 +19,7 @@ use reedline::{
 use shlex::Shlex;
 use zencan_cli::command::{Cli, Commands, LssCommands, NmtAction, SdoDataType};
 use zencan_client::{
-    common::{lss::LssState, traits::AsyncCanSender, NodeId},
+    common::{lss::LssState, node_id::ConfiguredNodeId, traits::AsyncCanSender, NodeId},
     open_socketcan, BusManager, NodeConfig,
 };
 
@@ -374,7 +374,6 @@ async fn run_command<S: AsyncCanSender + Sync + Send>(cmd: Commands, manager: &m
                 },
                 Err(e) => {
                     println!("Error reading object: {e}");
-                    return;
                 }
             }
         }
@@ -417,11 +416,59 @@ async fn run_command<S: AsyncCanSender + Sync + Send>(cmd: Commands, manager: &m
                 Err(e) => println!("Error: {e}"),
             }
         }
+        Commands::ScanPdoConfig(args) => {
+            let node_id = match ConfiguredNodeId::new(args.node_id) {
+                Ok(id) => id,
+                Err(_) => {
+                    println!("{} is not a valid node ID", args.node_id);
+                    return;
+                }
+            };
+
+            match manager.read_pdo_config(node_id).await {
+                Ok(pdos) => {
+                    println!("Node {node_id}");
+                    for (i, pdo) in pdos.tpdos.iter().enumerate() {
+                        println!("TPDO{i}:");
+                        println!(
+                            "  valid={}, COB={}, transmission_type={}",
+                            pdo.enabled, pdo.cob, pdo.transmission_type
+                        );
+                        if !pdo.mappings.is_empty() {
+                            println!("  mapping: ");
+                            for m in &pdo.mappings {
+                                println!(
+                                    "    - index=0x{:x}, sub={}, size={}",
+                                    m.index, m.sub, m.size
+                                );
+                            }
+                        }
+                    }
+                    for (i, pdo) in pdos.rpdos.iter().enumerate() {
+                        println!("RPDO{i}:");
+                        println!(
+                            "  valid={}, COB={}, transmission_type={}",
+                            pdo.enabled, pdo.cob, pdo.transmission_type
+                        );
+                        if !pdo.mappings.is_empty() {
+                            println!("  mapping: ");
+                            for m in &pdo.mappings {
+                                println!(
+                                    "    - index=0x{:x}, sub={}, size={}",
+                                    m.index, m.sub, m.size
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => println!("Error reading PDO config: {e}"),
+            }
+        }
     }
 }
 
 fn parse_command(line: &str) -> Result<Cli, clap::Error> {
-    match shlex::split(&line) {
+    match shlex::split(line) {
         Some(split) => {
             Cli::try_parse_from(std::iter::once("").chain(split.iter().map(String::as_str)))
         }
