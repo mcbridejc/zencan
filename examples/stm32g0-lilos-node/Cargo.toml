@@ -1,0 +1,40 @@
+[package]
+name = "stm32g0-lilos-node"
+version = "0.1.0"
+edition = "2024"
+
+# Don't include this project in the workspace above it
+[workspace]
+
+[dependencies]
+# Local
+zencan-node = { path = "../../zencan-node", default-features = false, features = ["defmt"]}
+
+# External
+cortex-m = { version = "0.7.4", features=["critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+critical-section = "1.2.0"
+defmt = "1.0.1"
+embedded-io = "0.6.1"
+fdcan = { version = "0.2.1", features = ["fdcan_g0_g4_l5"] }
+stm32-metapac = { version = "15.0.0", features = ["stm32g0b1cb", "rt"] }
+hash32 = "1.0.0"
+lilos = "1.3"
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+rtt-target = { version = "0.6.1", features = ["defmt"] }
+
+[build-dependencies]
+zencan-build = { path = "../../zencan-build" }
+
+[profile.dev]
+codegen-units = 1       # better optimizations
+debug = true
+lto = true              # better optimizations
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1 # better optimizations
+debug = true # symbols are nice and they don't increase the size on Flash
+lto = true # better optimizations
+opt-level = "s"
+overflow-checks = true

@@ -1,0 +1,85 @@
+device_name = "can-io"
+software_version = "v0.0.1"
+hardware_version = "rev1"
+heartbeat_period = 1000
+
+[identity]
+vendor_id = 0xABCD
+product_code = 0xABCD
+revision_number = 1
+
+# The raw 12-bit ADC readings for four AIN channel
+[[objects]]
+index = 0x2000
+parameter_name = "Raw Analog Input"
+object_type = "array"
+data_type = "uint16"
+access_type = "ro"
+array_size = 4
+default_value = [0, 0, 0, 0]
+pdo_mapping = "tpdo"
+
+# Scaled AIN values
+[[objects]]
+index = 0x2001
+parameter_name = "Scaled Analog Input I32"
+object_type = "array"
+data_type = "int32"
+access_type = "ro"
+array_size = 4
+default_value = [0, 0, 0, 0]
+pdo_mapping = "tpdo"
+
+# Scaled AIN values
+[[objects]]
+index = 0x2002
+parameter_name = "Scaled Analog Input I16"
+object_type = "array"
+data_type = "int16"
+access_type = "ro"
+array_size = 4
+default_value = [0, 0, 0, 0]
+pdo_mapping = "tpdo"
+
+# Configures how often to read the analog channels
+[[objects]]
+index = 0x2100
+parameter_name = "Analog Read Period (ms)"
+object_type = "var"
+data_type = "uint32"
+access_type = "rw"
+default_value = 20
+persist = true
+
+# scale multiplier for scaled AIN channels
+[[objects]]
+index = 0x2200
+parameter_name = "AIN Scale Numerators"
+object_type = "array"
+data_type = "int16"
+array_size = 4
+access_type = "rw"
+default_value = [1, 1, 1, 1]
+persist = true
+
+# scale dividers for scaled AIN channels
+[[objects]]
+index = 0x2201
+parameter_name = "AIN Scale Denominators"
+object_type = "array"
+data_type = "int16"
+array_size = 4
+access_type = "rw"
+default_value = [1, 1, 1, 1]
+persist = true
+
+# offset for scaled AIN channels
+[[objects]]
+index = 0x2202
+parameter_name = "AIN Scale Offsets"
+object_type = "array"
+data_type = "int16"
+array_size = 4
+access_type = "rw"
+default_value = [0, 0, 0, 0]
+persist = true

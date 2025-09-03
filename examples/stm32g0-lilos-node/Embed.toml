@@ -1,0 +1,14 @@
+[default.general]
+chip = "STM32G0B1CBTx"
+
+[default.rtt]
+enabled = true
+up_channels = [
+    { channel = 0, name = "Defmt Output", up_mode = "NoBlockTrim", format = "Defmt" },
+]
+
+[connect.flashing]
+enabled = false
+
+[connect.reset]
+enabled = false

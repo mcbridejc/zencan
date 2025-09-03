@@ -28,3 +28,6 @@ jobs:
         run: cargo fmt --check
       - name: Run tests
         run: cargo test --verbose
+      - name: Build stm32g0-lilos-node example
+        working-directory: examples/stm32g0-lilos-node
+        run: cargo build
