@@ -1,0 +1,9 @@
+device_name = "can-esp-poc"
+software_version = "001"
+hardware_version = "1"
+heartbeat_period = 1000
+
+[identity]
+vendor_id = 0xCAFE
+product_code = 1032
+revision_number = 1

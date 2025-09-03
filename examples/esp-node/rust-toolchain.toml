@@ -1,0 +1,4 @@
+[toolchain]
+channel    = "1.88"
+components = ["rust-src"]
+targets = ["riscv32imc-unknown-none-elf"]
