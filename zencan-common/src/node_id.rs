@@ -34,7 +34,7 @@ impl ConfiguredNodeId {
     }
 }
 
-impl std::fmt::Display for ConfiguredNodeId {
+impl core::fmt::Display for ConfiguredNodeId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.0)
     }
