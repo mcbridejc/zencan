@@ -4,11 +4,11 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use tokio::select;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::{
-    sync::mpsc::{channel, Receiver, Sender},
-    task::JoinHandle,
-};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_util::sync::CancellationToken;
+use tokio_util::sync::DropGuard;
 use zencan_common::{traits::AsyncCanReceiver, CanMessage};
 
 #[derive(Clone, Copy, Debug)]
@@ -27,9 +27,9 @@ impl SharedRecieiverInner {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SharedReceiver {
-    _task_handle: JoinHandle<()>,
+    _cancellation_guard: Arc<DropGuard>,
     inner: Arc<Mutex<SharedRecieiverInner>>,
 }
 
@@ -38,34 +38,44 @@ impl SharedReceiver {
         let inner = Arc::new(Mutex::new(SharedRecieiverInner {
             senders: Vec::new(),
         }));
+        let cancellation = CancellationToken::new();
+        let cancellation_guard = Arc::new(cancellation.clone().drop_guard());
         let inner_clone = inner.clone();
-        let task_handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
-                if let Ok(msg) = receiver.recv().await {
-                    let mut inner = inner_clone.lock().unwrap();
-                    inner.senders.retain(|sender| {
-                        if let Err(e) = sender.try_send(msg) {
-                            return match e {
-                                TrySendError::Full(_) => {
-                                    log::warn!("Dropped received message due to overflow");
-                                    true
+                select! {
+                    result = receiver.recv() => {
+                        if let Ok(msg) = result {
+                            let mut inner = inner_clone.lock().unwrap();
+                            inner.senders.retain(|sender| {
+                                if let Err(e) = sender.try_send(msg) {
+                                    return match e {
+                                        TrySendError::Full(_) => {
+                                            log::warn!("Dropped received message due to overflow");
+                                            true
+                                        }
+                                        TrySendError::Closed(_) => false,
+                                    };
                                 }
-                                TrySendError::Closed(_) => false,
-                            };
-                        }
 
-                        true
-                    });
-                };
+                                true
+                            });
+                        }
+                    },
+                    _ = cancellation.cancelled() => {
+                        // End the task
+                        return;
+                    }
+                }
             }
         });
         Self {
-            _task_handle: task_handle,
+            _cancellation_guard: cancellation_guard,
             inner,
         }
     }
 
-    pub fn create_rx(&mut self) -> SharedReceiverChannel {
+    pub fn create_rx(&self) -> SharedReceiverChannel {
         let rx = self.inner.lock().unwrap().create_rx();
 
         SharedReceiverChannel {
@@ -167,7 +177,7 @@ mod tests {
     async fn test_shared_receiver() {
         let (chan_tx, chan_rx) = channel(8);
         let can_receiver = MockReceiver::new(chan_rx);
-        let mut shared_receiver = SharedReceiver::new(can_receiver);
+        let shared_receiver = SharedReceiver::new(can_receiver);
 
         let mut channel_a = shared_receiver.create_rx();
         let mut channel_b = shared_receiver.create_rx();

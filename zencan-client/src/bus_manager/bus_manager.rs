@@ -267,7 +267,7 @@ where
     S: AsyncCanSender + Sync,
 {
     sender: SharedSender<S>,
-    receiver: SharedReceiverChannel,
+    receiver: SharedReceiver,
     clients: HashMap<u8, Mutex<()>>,
 }
 
@@ -275,7 +275,7 @@ impl<S> SdoClientMutex<S>
 where
     S: AsyncCanSender + Sync,
 {
-    pub fn new(sender: SharedSender<S>, receiver: SharedReceiverChannel) -> Self {
+    pub fn new(sender: SharedSender<S>, receiver: SharedReceiver) -> Self {
         let mut clients = HashMap::new();
         for i in 0u8..128 {
             clients.insert(i, Mutex::new(()));
@@ -293,7 +293,7 @@ where
             panic!("ID {} out of range", id);
         }
         let guard = self.clients.get(&id).unwrap().lock().unwrap();
-        let client = SdoClient::new_std(id, self.sender.clone(), self.receiver.clone());
+        let client = SdoClient::new_std(id, self.sender.clone(), self.receiver.create_rx());
         SdoClientGuard {
             _guard: guard,
             client,
@@ -322,9 +322,9 @@ impl<S: AsyncCanSender + Sync + Send> BusManager<S> {
     ///
     /// When using socketcan, these can be created with [`crate::open_socketcan`]
     pub fn new(sender: S, receiver: impl AsyncCanReceiver + Sync + 'static) -> Self {
-        let mut receiver = SharedReceiver::new(receiver);
+        let receiver = SharedReceiver::new(receiver);
         let sender = SharedSender::new(Arc::new(tokio::sync::Mutex::new(sender)));
-        let sdo_clients = SdoClientMutex::new(sender.clone(), receiver.create_rx());
+        let sdo_clients = SdoClientMutex::new(sender.clone(), receiver.clone());
 
         let mut state_rx = receiver.create_rx();
         let nodes = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
