@@ -19,6 +19,7 @@ regex = { version = "1.11.1", optional = true }
 serde = { workspace = true, optional = true }
 snafu.workspace = true
 socketcan = { workspace = true, optional = true }
+tokio = { version = "1.47.1", features = ["net"], optional = true }
 toml = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -27,7 +28,7 @@ assertables = "9.8.0"
 [features]
 default = ["socketcan", "std", "log"]
 std = ["critical-section/std", "snafu/std", "dep:toml", "dep:regex", "dep:serde"]
-socketcan = ["dep:socketcan", "std"]
+socketcan = ["dep:socketcan", "dep:tokio", "std"]
 defmt = ["defmt-or-log/defmt", "dep:defmt"]
 log = ["defmt-or-log/log"]
 
