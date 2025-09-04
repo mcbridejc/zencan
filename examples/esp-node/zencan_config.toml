@@ -1,4 +1,4 @@
-device_name = "can-esp-poc"
+device_name = "esp-node"
 software_version = "001"
 hardware_version = "1"
 heartbeat_period = 1000
