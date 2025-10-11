@@ -11,7 +11,7 @@ use zencan_common::{
 
 use crate::node_configuration::PdoConfig;
 
-const RESPONSE_TIMEOUT: Duration = Duration::from_millis(100);
+const DEFAULT_RESPONSE_TIMEOUT: u64 = 100;
 
 /// A wrapper around the AbortCode enum to allow for unknown values
 ///
@@ -160,13 +160,25 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
 
     /// Write data to a sub-object on the SDO server
     pub async fn download(&mut self, index: u16, sub: u8, data: &[u8]) -> Result<()> {
+        self.download_timeout(index, sub, data, DEFAULT_RESPONSE_TIMEOUT)
+            .await
+    }
+
+    /// Write data to a sub-object on the SDO server with a timeout arg
+    pub async fn download_timeout(
+        &mut self,
+        index: u16,
+        sub: u8,
+        data: &[u8],
+        timeout: u64,
+    ) -> Result<()> {
         if data.len() <= 4 {
             // Do an expedited transfer
             let msg =
                 SdoRequest::expedited_download(index, sub, data).to_can_message(self.req_cob_id);
             self.sender.send(msg).await.unwrap(); // TODO: Expect errors
 
-            let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+            let resp = self.wait_for_response(timeout).await?;
             match_response!(
                 resp,
                 "ConfirmDownload",
@@ -179,7 +191,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                 .to_can_message(self.req_cob_id);
             self.sender.send(msg).await.unwrap();
 
-            let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+            let resp = self.wait_for_response(timeout).await?;
             match_response!(
                 resp,
                 "ConfirmDownload",
@@ -197,12 +209,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                     last_segment,
                     &data[n * 7..n * 7 + segment_size],
                 )
-                .to_can_message(self.req_cob_id);
+                    .to_can_message(self.req_cob_id);
                 self.sender
                     .send(seg_msg)
                     .await
                     .expect("failed sending DL segment");
-                let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+                let resp = self.wait_for_response(timeout).await?;
                 match_response!(
                     resp,
                     "ConfirmDownloadSegment",
@@ -229,12 +241,17 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
 
     /// Read a sub-object on the SDO server
     pub async fn upload(&mut self, index: u16, sub: u8) -> Result<Vec<u8>> {
+        self.upload_timeout(index, sub, DEFAULT_RESPONSE_TIMEOUT)
+            .await
+    }
+    /// Read a sub-object on the SDO server with a timeout arg
+    pub async fn upload_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<Vec<u8>> {
         let mut read_buf = Vec::new();
 
         let msg = SdoRequest::initiate_upload(index, sub).to_can_message(self.req_cob_id);
         self.sender.send(msg).await.unwrap();
 
-        let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+        let resp = self.wait_for_response(timeout).await?;
 
         let expedited = match_response!(
             resp,
@@ -267,7 +284,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
 
                 self.sender.send(msg).await.unwrap();
 
-                let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+                let resp = self.wait_for_response(timeout).await?;
                 match_response!(
                     resp,
                     "UploadSegment",
@@ -299,7 +316,23 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     ///
     /// Block downloads are more efficient for large amounts of data, but may not be supported by
     /// all devices.
+
     pub async fn block_download(&mut self, index: u16, sub: u8, data: &[u8]) -> Result<()> {
+        self.block_download_timeout(index, sub, data, DEFAULT_RESPONSE_TIMEOUT)
+            .await
+    }
+
+    /// Perform a block download to transfer data to an object with a timeout arg
+    ///
+    /// Block downloads are more efficient for large amounts of data, but may not be supported by
+    /// all devices.
+    async fn block_download_timeout(
+        &mut self,
+        index: u16,
+        sub: u8,
+        data: &[u8],
+        timeout: u64,
+    ) -> Result<()> {
         self.sender
             .send(
                 SdoRequest::InitiateBlockDownload {
@@ -309,12 +342,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                     sub,
                     size: data.len() as u32,
                 }
-                .to_can_message(self.req_cob_id),
+                    .to_can_message(self.req_cob_id),
             )
             .await
             .map_err(|_| SocketSendFailedSnafu {}.build())?;
 
-        let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+        let resp = self.wait_for_response(timeout).await?;
 
         let (crc_enabled, mut blksize) = match_response!(
             resp,
@@ -364,7 +397,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             // Expect a confirmation message after blksize segments are sent, or after sending the
             // complete flag
             if c || seqnum == blksize {
-                let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+                let resp = self.wait_for_response(timeout).await?;
                 match_response!(
                     resp,
                     "ConfirmBlock",
@@ -414,7 +447,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             .await
             .map_err(|_| SocketSendFailedSnafu.build())?;
 
-        let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+        let resp = self.wait_for_response(timeout).await?;
         match_response!(
             resp,
             "ConfirmBlockDownloadEnd",
@@ -422,23 +455,61 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         )
     }
 
+    /// Write to a u32 object on the SDO server with a timeout arg
+    pub async fn download_u32_timeout(
+        &mut self,
+        index: u16,
+        sub: u8,
+        data: u32,
+        timeout: u64,
+    ) -> Result<()> {
+        let data = data.to_le_bytes();
+        self.download_timeout(index, sub, &data, timeout).await
+    }
+
     /// Write to a u32 object on the SDO server
     pub async fn download_u32(&mut self, index: u16, sub: u8, data: u32) -> Result<()> {
-        let data = data.to_le_bytes();
-        self.download(index, sub, &data).await
+        self.download_u32_timeout(index, sub, data, DEFAULT_RESPONSE_TIMEOUT)
+            .await
+    }
+
+    /// Alias for `download_u32` with a timeout arg
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn write_u32_timeout(
+        &mut self,
+        index: u16,
+        sub: u8,
+        data: u32,
+        timeout: u64,
+    ) -> Result<()> {
+        self.download_u32_timeout(index, sub, data, timeout).await
     }
 
     /// Alias for `download_u32`
     ///
     /// This is a convenience function to allow for a more intuitive API
     pub async fn write_u32(&mut self, index: u16, sub: u8, data: u32) -> Result<()> {
-        self.download_u32(index, sub, data).await
+        self.write_u32_timeout(index, sub, data, DEFAULT_RESPONSE_TIMEOUT)
+            .await
     }
 
     /// Write to a u16 object on the SDO server
     pub async fn download_u16(&mut self, index: u16, sub: u8, data: u16) -> Result<()> {
         let data = data.to_le_bytes();
         self.download(index, sub, &data).await
+    }
+
+    /// Write to a u16 object on the SDO server with a timeout arg
+    pub async fn download_u16_timeout(
+        &mut self,
+        index: u16,
+        sub: u8,
+        data: u16,
+        timeout: u64,
+    ) -> Result<()> {
+        let data = data.to_le_bytes();
+        self.download_timeout(index, sub, &data, timeout).await
     }
 
     /// Alias for `download_u16`
@@ -448,10 +519,23 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.download_u16(index, sub, data).await
     }
 
+    /// Alias for `download_u16`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn write_u16_timeout(&mut self, index: u16, sub: u8, data: u16, timeout: u64) -> Result<()> {
+        self.download_u16_timeout(index, sub, data, timeout).await
+    }
+
     /// Write to a u16 object on the SDO server
     pub async fn download_u8(&mut self, index: u16, sub: u8, data: u8) -> Result<()> {
         let data = data.to_le_bytes();
         self.download(index, sub, &data).await
+    }
+
+    /// Write to a u16 object on the SDO server with a timeout arg
+    pub async fn download_u8_timeout(&mut self, index: u16, sub: u8, data: u8, timeout: u64) -> Result<()> {
+        let data = data.to_le_bytes();
+        self.download_timeout(index, sub, &data, timeout).await
     }
 
     /// Alias for `download_u8`
@@ -467,6 +551,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.download(index, sub, &data).await
     }
 
+    /// Write to an i32 object on the SDO server with a timeout arg
+    pub async fn download_i32_timeout(&mut self, index: u16, sub: u8, data: i32, timeout: u64) -> Result<()> {
+        let data = data.to_le_bytes();
+        self.download_timeout(index, sub, &data, timeout).await
+    }
+
     /// Alias for `download_i32`
     ///
     /// This is a convenience function to allow for a more intuitive API
@@ -474,10 +564,23 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.download_i32(index, sub, data).await
     }
 
+    /// Alias for `download_i32`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn write_i32_timeout(&mut self, index: u16, sub: u8, data: i32, timeout: u64) -> Result<()> {
+        self.download_i32_timeout(index, sub, data, timeout).await
+    }
+
     /// Write to an i16 object on the SDO server
     pub async fn download_i16(&mut self, index: u16, sub: u8, data: i16) -> Result<()> {
         let data = data.to_le_bytes();
         self.download(index, sub, &data).await
+    }
+
+    /// Write to an i16 object on the SDO server with a timeout arg
+    pub async fn download_i16_timeout(&mut self, index: u16, sub: u8, data: i16, timeout: u64) -> Result<()> {
+        let data = data.to_le_bytes();
+        self.download_timeout(index, sub, &data, timeout).await
     }
 
     /// Alias for `download_i16`
@@ -487,10 +590,23 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.download_i16(index, sub, data).await
     }
 
+    /// Alias for `download_i16`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn write_i16_timeout(&mut self, index: u16, sub: u8, data: i16, timeout: u64) -> Result<()> {
+        self.download_i16_timeout(index, sub, data, timeout).await
+    }
+
     /// Write to an i8 object on the SDO server
     pub async fn download_i8(&mut self, index: u16, sub: u8, data: i8) -> Result<()> {
         let data = data.to_le_bytes();
         self.download(index, sub, &data).await
+    }
+
+    /// Write to an i8 object on the SDO server with a timeout arg
+    pub async fn download_i8_timeout(&mut self, index: u16, sub: u8, data: i8, timeout: u64) -> Result<()> {
+        let data = data.to_le_bytes();
+        self.download_timeout(index, sub, &data, timeout).await
     }
 
     /// Alias for `download_i8`
@@ -500,14 +616,33 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.download_i8(index, sub, data).await
     }
 
+    /// Alias for `download_i8`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn write_i8_timeout(&mut self, index: u16, sub: u8, data: i8, timeout: u64) -> Result<()> {
+        self.download_i8_timeout(index, sub, data, timeout).await
+    }
+
     /// Read a string from the SDO server
     pub async fn upload_utf8(&mut self, index: u16, sub: u8) -> Result<String> {
         let data = self.upload(index, sub).await?;
         Ok(String::from_utf8_lossy(&data).into())
     }
+
+    /// Read a string from the SDO server with a timeout arg
+    pub async fn upload_utf8_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<String> {
+        let data = self.upload_timeout(index, sub, timeout).await?;
+        Ok(String::from_utf8_lossy(&data).into())
+    }
+
     /// Alias for `upload_utf8`
     pub async fn read_utf8(&mut self, index: u16, sub: u8) -> Result<String> {
         self.upload_utf8(index, sub).await
+    }
+
+    /// Alias for `upload_utf8`
+    pub async fn read_utf8_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<String> {
+        self.upload_utf8_timeout(index, sub, timeout).await
     }
 
     /// Read a sub-object from the SDO server, assuming it is an u8
@@ -518,6 +653,16 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         }
         Ok(data[0])
     }
+
+    /// Read a sub-object from the SDO server, assuming it is an u8
+    pub async fn upload_u8_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<u8> {
+        let data = self.upload_timeout(index, sub, timeout).await?;
+        if data.len() != 1 {
+            return UnexpectedSizeSnafu.fail();
+        }
+        Ok(data[0])
+    }
+
     /// Alias for `upload_u8`
     ///
     /// This is a convenience function to allow for a more intuitive API
@@ -525,9 +670,25 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.upload_u8(index, sub).await
     }
 
+    /// Alias for `upload_u8`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn read_u8_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<u8> {
+        self.upload_u8_timeout(index, sub, timeout).await
+    }
+
     /// Read a sub-object from the SDO server, assuming it is an u16
     pub async fn upload_u16(&mut self, index: u16, sub: u8) -> Result<u16> {
         let data = self.upload(index, sub).await?;
+        if data.len() != 2 {
+            return UnexpectedSizeSnafu.fail();
+        }
+        Ok(u16::from_le_bytes(data.try_into().unwrap()))
+    }
+
+    /// Read a sub-object from the SDO server, assuming it is an u16
+    pub async fn upload_u16_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<u16> {
+        let data = self.upload_timeout(index, sub, timeout).await?;
         if data.len() != 2 {
             return UnexpectedSizeSnafu.fail();
         }
@@ -541,9 +702,25 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.upload_u16(index, sub).await
     }
 
+    /// Alias for `upload_u16`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn read_u16_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<u16> {
+        self.upload_u16_timeout(index, sub, timeout).await
+    }
+
     /// Read a sub-object from the SDO server, assuming it is an u32
     pub async fn upload_u32(&mut self, index: u16, sub: u8) -> Result<u32> {
         let data = self.upload(index, sub).await?;
+        if data.len() != 4 {
+            return UnexpectedSizeSnafu.fail();
+        }
+        Ok(u32::from_le_bytes(data.try_into().unwrap()))
+    }
+
+    /// Read a sub-object from the SDO server, assuming it is an u32
+    pub async fn upload_u32_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<u32> {
+        let data = self.upload_timeout(index, sub, timeout).await?;
         if data.len() != 4 {
             return UnexpectedSizeSnafu.fail();
         }
@@ -557,9 +734,25 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.upload_u32(index, sub).await
     }
 
+    /// Alias for `upload_u32`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn read_u32_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<u32> {
+        self.upload_u32_timeout(index, sub, timeout).await
+    }
+
     /// Read a sub-object from the SDO server, assuming it is an i8
     pub async fn upload_i8(&mut self, index: u16, sub: u8) -> Result<i8> {
         let data = self.upload(index, sub).await?;
+        if data.len() != 1 {
+            return UnexpectedSizeSnafu.fail();
+        }
+        Ok(i8::from_le_bytes(data.try_into().unwrap()))
+    }
+
+    /// Read a sub-object from the SDO server, assuming it is an i8
+    pub async fn upload_i8_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<i8> {
+        let data = self.upload_timeout(index, sub, timeout).await?;
         if data.len() != 1 {
             return UnexpectedSizeSnafu.fail();
         }
@@ -573,9 +766,25 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.upload_i8(index, sub).await
     }
 
+    /// Alias for `upload_i8`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn read_i8_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<i8> {
+        self.upload_i8_timeout(index, sub, timeout).await
+    }
+
     /// Read a sub-object from the SDO server, assuming it is an i16
     pub async fn upload_i16(&mut self, index: u16, sub: u8) -> Result<i16> {
         let data = self.upload(index, sub).await?;
+        if data.len() != 2 {
+            return UnexpectedSizeSnafu.fail();
+        }
+        Ok(i16::from_le_bytes(data.try_into().unwrap()))
+    }
+
+    /// Read a sub-object from the SDO server, assuming it is an i16
+    pub async fn upload_i16_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<i16> {
+        let data = self.upload_timeout(index, sub, timeout).await?;
         if data.len() != 2 {
             return UnexpectedSizeSnafu.fail();
         }
@@ -589,9 +798,25 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.upload_i16(index, sub).await
     }
 
+    /// Alias for `upload_i16`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn read_i16_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<i16> {
+        self.upload_i16_timeout(index, sub, timeout).await
+    }
+
     /// Read a sub-object from the SDO server, assuming it is an i32
     pub async fn upload_i32(&mut self, index: u16, sub: u8) -> Result<i32> {
         let data = self.upload(index, sub).await?;
+        if data.len() != 4 {
+            return UnexpectedSizeSnafu.fail();
+        }
+        Ok(i32::from_le_bytes(data.try_into().unwrap()))
+    }
+
+    /// Read a sub-object from the SDO server, assuming it is an i32
+    pub async fn upload_i32_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<i32> {
+        let data = self.upload_timeout(index, sub, timeout).await?;
         if data.len() != 4 {
             return UnexpectedSizeSnafu.fail();
         }
@@ -605,11 +830,26 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.upload_i32(index, sub).await
     }
 
+    /// Alias for `upload_i32`
+    ///
+    /// This is a convenience function to allow for a more intuitive API
+    pub async fn read_i32_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<i32> {
+        self.upload_i32_timeout(index, sub, timeout).await
+    }
+
     /// Read an object as a visible string
     ///
     /// It will be read and assumed to contain valid UTF8 characters
     pub async fn read_visible_string(&mut self, index: u16, sub: u8) -> Result<String> {
         let bytes = self.upload(index, sub).await?;
+        Ok(String::from_utf8_lossy(&bytes).into())
+    }
+
+    /// Read an object as a visible string
+    ///
+    /// It will be read and assumed to contain valid UTF8 characters
+    pub async fn read_visible_string_timeout(&mut self, index: u16, sub: u8, timeout: u64) -> Result<String> {
+        let bytes = self.upload_timeout(index, sub, timeout).await?;
         Ok(String::from_utf8_lossy(&bytes).into())
     }
 
@@ -707,8 +947,8 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         Ok(())
     }
 
-    async fn wait_for_response(&mut self, timeout: Duration) -> Result<SdoResponse> {
-        let wait_until = tokio::time::Instant::now() + timeout;
+    async fn wait_for_response(&mut self, timeout: u64) -> Result<SdoResponse> {
+        let wait_until = tokio::time::Instant::now() + Duration::from_millis(timeout);
         loop {
             match tokio::time::timeout_at(wait_until, self.receiver.recv()).await {
                 // Err indicates the timeout elapsed, so return
