@@ -259,16 +259,13 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             SdoResponse::ConfirmUpload {
                 n,
                 e,
-                s,
+                s: _,
                 index: _,
                 sub: _,
                 data,
             } => {
                 if e {
-                    let mut len = 0;
-                    if s {
-                        len = 4 - n as usize;
-                    }
+                    let len = 4 - n as usize;
                     read_buf.extend_from_slice(&data[0..len]);
                 }
                 e
