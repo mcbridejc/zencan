@@ -31,17 +31,6 @@ impl NodeType {
     }
 }
 
-/// Top-level node configuration which is persisted
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NodeConfig {
-    /// The configured node ID
-    pub node_id: u8,
-    /// The configured baud table
-    pub baud_table: u8,
-    /// The index into the baud table of the configured baud rate
-    pub baud_index: u8,
-}
-
 async fn write_bytes(bytes: &[u8], reg: &RefCell<u8>) {
     for b in bytes {
         *reg.borrow_mut() = *b;
