@@ -1,6 +1,6 @@
 [package]
 name = "socketcan_node"
-version = "0.1.0"
+publish = false
 edition = "2021"
 
 [dependencies]
@@ -18,4 +18,3 @@ rand = "0.9.1"
 
 [build-dependencies]
 zencan-build.workspace = true
-

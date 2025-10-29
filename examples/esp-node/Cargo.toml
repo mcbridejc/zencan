@@ -1,6 +1,6 @@
 [package]
 name         = "esp-node"
-version      = "0.1.0"
+publish      = false
 edition      = "2021"
 
 # Don't include this project in the workspace above it
