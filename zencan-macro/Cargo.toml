@@ -18,8 +18,3 @@ syn = "2.0.102"
 proc-macro2 = "1.0.95"
 quote = "1.0.40"
 darling = "0.20.11"
-
-[dev-dependencies]
-critical-section.workspace = true
-heapless.workspace = true
-zencan-node.workspace = true
