@@ -19,6 +19,7 @@
     missing_debug_implementations,
     missing_copy_implementations
 )]
+#![allow(clippy::single_match)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod bus_manager;

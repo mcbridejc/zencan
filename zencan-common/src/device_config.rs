@@ -944,42 +944,42 @@ impl<'de> serde::Deserialize<'de> for DataType {
         if s == "boolean" {
             Ok(DataType::Boolean)
         } else if s == "int8" {
-            return Ok(DataType::Int8);
+            Ok(DataType::Int8)
         } else if s == "int16" {
-            return Ok(DataType::Int16);
+            Ok(DataType::Int16)
         } else if s == "int32" {
-            return Ok(DataType::Int32);
+            Ok(DataType::Int32)
         } else if s == "uint8" {
-            return Ok(DataType::UInt8);
+            Ok(DataType::UInt8)
         } else if s == "uint16" {
-            return Ok(DataType::UInt16);
+            Ok(DataType::UInt16)
         } else if s == "uint32" {
-            return Ok(DataType::UInt32);
+            Ok(DataType::UInt32)
         } else if s == "real32" {
-            return Ok(DataType::Real32);
+            Ok(DataType::Real32)
         } else if let Some(caps) = re_visiblestring.captures(&s) {
             let size: usize = caps[1].parse().map_err(|_| {
                 D::Error::custom(format!("Invalid size for VisibleString: {}", &caps[1]))
             })?;
-            return Ok(DataType::VisibleString(size));
+            Ok(DataType::VisibleString(size))
         } else if let Some(caps) = re_octetstring.captures(&s) {
             let size: usize = caps[1].parse().map_err(|_| {
                 D::Error::custom(format!("Invalid size for OctetString: {}", &caps[1]))
             })?;
-            return Ok(DataType::OctetString(size));
+            Ok(DataType::OctetString(size))
         } else if let Some(caps) = re_unicodestring.captures(&s) {
             let size: usize = caps[1].parse().map_err(|_| {
                 D::Error::custom(format!("Invalid size for UnicodeString: {}", &caps[1]))
             })?;
-            return Ok(DataType::UnicodeString(size));
+            Ok(DataType::UnicodeString(size))
         } else if s == "timeofday" {
-            return Ok(DataType::TimeOfDay);
+            Ok(DataType::TimeOfDay)
         } else if s == "timedifference" {
-            return Ok(DataType::TimeDifference);
+            Ok(DataType::TimeDifference)
         } else if s == "domain" {
-            return Ok(DataType::Domain);
+            Ok(DataType::Domain)
         } else {
-            return Err(D::Error::custom(format!("Invalid data type: {}", s)));
+            Err(D::Error::custom(format!("Invalid data type: {}", s)))
         }
     }
 }

@@ -398,7 +398,7 @@ fn get_object_impls(
                         const { &ConstField::new((#array_size as u8).to_le_bytes()) },
                     ))
                 } else if sub as usize > #array_size {
-                    return None;
+                    None
                 } else {
                     Some((SubInfo {
                         access_type: #access_type,

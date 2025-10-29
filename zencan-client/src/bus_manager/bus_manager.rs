@@ -288,7 +288,7 @@ where
         }
     }
 
-    pub fn lock(&self, id: u8) -> SdoClientGuard<SharedSender<S>, SharedReceiverChannel> {
+    pub fn lock(&self, id: u8) -> SdoClientGuard<'_, SharedSender<S>, SharedReceiverChannel> {
         if !(1..=127).contains(&id) {
             panic!("ID {} out of range", id);
         }
@@ -374,7 +374,7 @@ impl<S: AsyncCanSender + Sync + Send> BusManager<S> {
     pub fn sdo_client(
         &self,
         node_id: u8,
-    ) -> SdoClientGuard<SharedSender<S>, SharedReceiverChannel> {
+    ) -> SdoClientGuard<'_, SharedSender<S>, SharedReceiverChannel> {
         self.sdo_clients.lock(node_id)
     }
 
