@@ -1,6 +1,6 @@
 [package]
 name = "zencan-common"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Jeff McBride <jeff@jeffmcbride.net>"]
 description = "Shared code for zencan-node and zencan-client"
 

@@ -1,6 +1,6 @@
 [package]
 name = "zencan-macro"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Jeff McBride <jeff@jeffmcbride.net>"]
 description = "Macro crate for zencan"
 
