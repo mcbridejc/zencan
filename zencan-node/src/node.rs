@@ -75,7 +75,6 @@ pub struct Node {
     callbacks: Callbacks,
     next_heartbeat_time_us: u64,
     heartbeat_period_ms: u16,
-    heartbeat_toggle: bool,
     auto_start: bool,
     last_process_time_us: u64,
 }
@@ -107,7 +106,6 @@ impl Node {
 
         let heartbeat_period_ms = read_heartbeat_period(od).expect("Heartbeat object must exist");
         let next_heartbeat_time_us = 0;
-        let heartbeat_toggle = false;
         let auto_start = read_autostart(od).expect("auto start object must exist");
         let last_process_time_us = 0;
         Self {
@@ -122,7 +120,6 @@ impl Node {
             reassigned_node_id,
             next_heartbeat_time_us,
             heartbeat_period_ms,
-            heartbeat_toggle,
             auto_start,
             callbacks: Callbacks::default(),
             last_process_time_us,
@@ -359,10 +356,9 @@ impl Node {
         if let NodeId::Configured(node_id) = self.node_id {
             let heartbeat = Heartbeat {
                 node: node_id.raw(),
-                toggle: self.heartbeat_toggle,
+                toggle: false,
                 state: self.nmt_state,
             };
-            self.heartbeat_toggle = !self.heartbeat_toggle;
             sender(heartbeat.into());
             self.next_heartbeat_time_us += (self.heartbeat_period_ms as u64) * 1000;
         }
