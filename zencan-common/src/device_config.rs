@@ -906,7 +906,10 @@ impl DataType {
     pub fn is_str(&self) -> bool {
         matches!(
             self,
-            DataType::VisibleString(_) | DataType::OctetString(_) | DataType::UnicodeString(_)
+            DataType::VisibleString(_)
+                | DataType::OctetString(_)
+                | DataType::UnicodeString(_)
+                | DataType::TimeOfDay
         )
     }
 
@@ -924,8 +927,8 @@ impl DataType {
             DataType::VisibleString(size) => *size,
             DataType::OctetString(size) => *size,
             DataType::UnicodeString(size) => *size,
-            DataType::TimeOfDay => 4,
-            DataType::TimeDifference => 4,
+            DataType::TimeOfDay => 6,
+            DataType::TimeDifference => 6,
             DataType::Domain => 0, // Domain size is variable
         }
     }
