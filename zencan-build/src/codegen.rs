@@ -42,6 +42,7 @@ fn get_storage_type(data_type: DCDataType) -> (syn::Type, usize) {
         ),
         DCDataType::OctetString(n) => (syn::parse_str(&format!("ByteField::<{}>", n)).unwrap(), n),
         DCDataType::Domain => (syn::parse_quote!(CallbackSubObject), 0),
+        DCDataType::TimeOfDay => (syn::parse_str("ByteField::<6>").unwrap(), 6),
         _ => panic!("Unsupported data type {:?}", data_type),
     }
 }
@@ -60,6 +61,7 @@ fn get_rust_type_and_size(data_type: DCDataType) -> (syn::Type, usize) {
         | DCDataType::OctetString(n)
         | DCDataType::UnicodeString(n) => (syn::parse_str(&format!("[u8; {}]", n)).unwrap(), n),
         DCDataType::Domain => (syn::parse_quote!(None), 0),
+        DCDataType::TimeOfDay => (syn::parse_str("[u8; 6]").unwrap(), 6),
         _ => panic!("Unsupported data type {:?}", data_type),
     }
 }
@@ -238,7 +240,10 @@ fn get_default_tokens(
             }
             let byte_lit = string_to_byte_literal_tokens(s, data_type.size())?;
             // OctetStrings are always the exact length
-            if matches!(data_type, DCDataType::OctetString(_)) {
+            if matches!(
+                data_type,
+                DCDataType::OctetString(_) | DCDataType::TimeOfDay
+            ) {
                 Ok(quote!(ByteField::new(#byte_lit)))
             } else {
                 Ok(quote!(NullTermByteField::new(#byte_lit)))
