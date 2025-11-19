@@ -11,7 +11,7 @@ use zencan_common::{
 
 use crate::node_configuration::PdoConfig;
 
-const RESPONSE_TIMEOUT: Duration = Duration::from_millis(100);
+const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_millis(150);
 
 /// A wrapper around the AbortCode enum to allow for unknown values
 ///
@@ -130,6 +130,7 @@ macro_rules! match_response  {
 pub struct SdoClient<S, R> {
     req_cob_id: CanId,
     resp_cob_id: CanId,
+    timeout: Duration,
     sender: S,
     receiver: R,
 }
@@ -153,9 +154,20 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         Self {
             req_cob_id,
             resp_cob_id,
+            timeout: DEFAULT_RESPONSE_TIMEOUT,
             sender,
             receiver,
         }
+    }
+
+    /// Set the timeout for waiting on SDO server responses
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+    }
+
+    /// Get the current timeout for waiting on SDO server responses
+    pub fn get_timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// Write data to a sub-object on the SDO server
@@ -166,7 +178,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                 SdoRequest::expedited_download(index, sub, data).to_can_message(self.req_cob_id);
             self.sender.send(msg).await.unwrap(); // TODO: Expect errors
 
-            let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+            let resp = self.wait_for_response(self.timeout).await?;
             match_response!(
                 resp,
                 "ConfirmDownload",
@@ -179,7 +191,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                 .to_can_message(self.req_cob_id);
             self.sender.send(msg).await.unwrap();
 
-            let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+            let resp = self.wait_for_response(self.timeout).await?;
             match_response!(
                 resp,
                 "ConfirmDownload",
@@ -202,7 +214,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                     .send(seg_msg)
                     .await
                     .expect("failed sending DL segment");
-                let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+                let resp = self.wait_for_response(self.timeout).await?;
                 match_response!(
                     resp,
                     "ConfirmDownloadSegment",
@@ -234,7 +246,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         let msg = SdoRequest::initiate_upload(index, sub).to_can_message(self.req_cob_id);
         self.sender.send(msg).await.unwrap();
 
-        let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+        let resp = self.wait_for_response(self.timeout).await?;
 
         let expedited = match_response!(
             resp,
@@ -267,7 +279,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
 
                 self.sender.send(msg).await.unwrap();
 
-                let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+                let resp = self.wait_for_response(self.timeout).await?;
                 match_response!(
                     resp,
                     "UploadSegment",
@@ -314,7 +326,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             .await
             .map_err(|_| SocketSendFailedSnafu {}.build())?;
 
-        let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+        let resp = self.wait_for_response(self.timeout).await?;
 
         let (crc_enabled, mut blksize) = match_response!(
             resp,
@@ -364,7 +376,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             // Expect a confirmation message after blksize segments are sent, or after sending the
             // complete flag
             if c || seqnum == blksize {
-                let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+                let resp = self.wait_for_response(self.timeout).await?;
                 match_response!(
                     resp,
                     "ConfirmBlock",
@@ -414,7 +426,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             .await
             .map_err(|_| SocketSendFailedSnafu.build())?;
 
-        let resp = self.wait_for_response(RESPONSE_TIMEOUT).await?;
+        let resp = self.wait_for_response(self.timeout).await?;
         match_response!(
             resp,
             "ConfirmBlockDownloadEnd",
