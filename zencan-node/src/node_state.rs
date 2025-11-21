@@ -11,7 +11,7 @@ pub trait NodeStateAccess: Sync + Send {
     /// Get the transmit PDO objects
     fn get_tpdos(&self) -> &[Pdo];
     /// Get the PDO flag sync object
-    fn get_pdo_sync(&self) -> &ObjectFlagSync;
+    fn object_flag_sync(&self) -> &ObjectFlagSync;
     /// Get the storage context object
     fn storage_context(&self) -> &StorageContext;
 }
@@ -19,52 +19,50 @@ pub trait NodeStateAccess: Sync + Send {
 /// The NodeState provides config-dependent storage to the [`Node`](crate::Node) object
 ///
 /// The node state has to get instantiated (statically) by zencan-build, based on the device config
-/// file. It is then provided to the node by the application when it is instantiated, and accessed
 /// via the [`NodeStateAccess`] trait.
+/// file. It is then provided to the node by the application when it is instantiated, and accessed
 #[allow(missing_debug_implementations)]
-pub struct NodeState<const N_RPDO: usize, const N_TPDO: usize> {
-    rpdos: [Pdo; N_RPDO],
-    tpdos: [Pdo; N_TPDO],
-    pdo_sync: ObjectFlagSync,
+pub struct NodeState<'a> {
+    /// Pdo control objects for receive PDOs
+    rpdos: &'a [Pdo],
+    /// Pdo control objects for transmit PDOs
+    tpdos: &'a [Pdo],
+    /// A global flag used by all objects to synchronize their event flag A/B swapping
+    object_flag_sync: ObjectFlagSync,
+    /// State shared between the [`StorageCommandObject`](crate::storage::StorageCommandObject) and
+    /// [`Node`](crate::node::Node) for indicating when a store objects command has been recieved.
     storage_context: StorageContext,
 }
 
-impl<const N_RPDO: usize, const N_TPDO: usize> Default for NodeState<N_RPDO, N_TPDO> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const N_RPDO: usize, const N_TPDO: usize> NodeState<N_RPDO, N_TPDO> {
+impl<'a> NodeState<'a> {
     /// Create a new NodeState object
-    pub const fn new() -> Self {
-        let rpdos = [const { Pdo::new() }; N_RPDO];
-        let tpdos = [const { Pdo::new() }; N_TPDO];
-        let pdo_sync = ObjectFlagSync::new();
+    pub const fn new(rpdos: &'a [Pdo], tpdos: &'a [Pdo]) -> Self {
+        let object_flag_sync = ObjectFlagSync::new();
         let storage_context = StorageContext::new();
+
         Self {
             rpdos,
             tpdos,
-            pdo_sync,
+            object_flag_sync,
             storage_context,
         }
     }
 
     /// Access the RPDOs as a const function
-    pub const fn rpdos(&'static self) -> &'static [Pdo] {
-        &self.rpdos
+    pub const fn rpdos(&self) -> &'a [Pdo] {
+        self.rpdos
     }
 
     /// Access the TPDOs as a const function
-    pub const fn tpdos(&'static self) -> &'static [Pdo] {
-        &self.tpdos
+    pub const fn tpdos(&self) -> &'a [Pdo] {
+        self.tpdos
     }
 
     /// Access the pdo_sync as a const function
     ///
     /// This is required so that it can be shared with the objects in generated code
-    pub const fn pdo_sync(&'static self) -> &'static ObjectFlagSync {
-        &self.pdo_sync
+    pub const fn object_flag_sync(&'static self) -> &'static ObjectFlagSync {
+        &self.object_flag_sync
     }
 
     /// Access the storage_context as a const function
@@ -73,17 +71,17 @@ impl<const N_RPDO: usize, const N_TPDO: usize> NodeState<N_RPDO, N_TPDO> {
     }
 }
 
-impl<const N_RPDO: usize, const N_TPDO: usize> NodeStateAccess for NodeState<N_RPDO, N_TPDO> {
+impl NodeStateAccess for NodeState<'_> {
     fn get_rpdos(&self) -> &[Pdo] {
-        &self.rpdos
+        self.rpdos
     }
 
     fn get_tpdos(&self) -> &[Pdo] {
-        &self.tpdos
+        self.tpdos
     }
 
-    fn get_pdo_sync(&self) -> &ObjectFlagSync {
-        &self.pdo_sync
+    fn object_flag_sync(&self) -> &ObjectFlagSync {
+        &self.object_flag_sync
     }
 
     fn storage_context(&self) -> &StorageContext {

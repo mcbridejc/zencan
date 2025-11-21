@@ -19,10 +19,20 @@
 //! product_code = 1032
 //! revision_number = 1
 //!
-//! # Defines the number of PDOs the device will support
+//! # Defines the number of PDOs the device will support, and their default configurations
 //! [pdos]
 //! num_rpdo = 4
 //! num_tpdo = 4
+//!
+//! # Configure the first TPDO to transmit object 0x2000sub1 on COB ID (0x200 + NODE_ID)
+//! [pdos.tpdo.0]
+//! enabled = true # Enabled by default
+//! cob_id = 0x200 # The base COB ID
+//! add_node_id = true # Add NODE ID to the base COB ID above
+//! transmission_type = 254 # Send asynchronously whenever the object is written to
+//! mappings = [
+//!     { index=0x2000, sub=1, size=32 },
+//! ]
 //!
 //! # User's can create custom objects to hold application specific data
 //! [[objects]]
@@ -122,7 +132,9 @@
 //!
 use std::collections::HashMap;
 
-use crate::objects::{AccessType, ObjectCode};
+use crate::node_configuration::deserialize_pdo_map;
+use crate::objects::{AccessType, ObjectCode, PdoMappable};
+use crate::pdo::PdoMapping;
 use serde::{de::Error, Deserialize};
 
 use snafu::ResultExt as _;
@@ -169,7 +181,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                 data_type: DataType::UInt32,
                 access_type: AccessType::Const.into(),
                 default_value: Some(DefaultValue::Integer(0x00000000)),
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 ..Default::default()
             }),
         },
@@ -181,7 +193,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                 data_type: DataType::UInt8,
                 access_type: AccessType::Ro.into(),
                 default_value: Some(DefaultValue::Integer(0x00000000)),
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 ..Default::default()
             }),
         },
@@ -193,7 +205,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                 data_type: DataType::VisibleString(config.device_name.len()),
                 access_type: AccessType::Const.into(),
                 default_value: Some(DefaultValue::String(config.device_name.clone())),
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 ..Default::default()
             }),
         },
@@ -205,7 +217,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                 data_type: DataType::VisibleString(config.hardware_version.len()),
                 access_type: AccessType::Const.into(),
                 default_value: Some(DefaultValue::String(config.hardware_version.clone())),
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 ..Default::default()
             }),
         },
@@ -217,7 +229,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                 data_type: DataType::VisibleString(config.software_version.len()),
                 access_type: AccessType::Const.into(),
                 default_value: Some(DefaultValue::String(config.software_version.clone())),
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 ..Default::default()
             }),
         },
@@ -229,7 +241,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                 data_type: DataType::UInt16,
                 access_type: AccessType::Const.into(),
                 default_value: Some(DefaultValue::Integer(config.heartbeat_period as i64)),
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 persist: false,
             }),
         },
@@ -248,7 +260,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                         default_value: Some(DefaultValue::Integer(
                             config.identity.vendor_id as i64,
                         )),
-                        pdo_mapping: PdoMapping::None,
+                        pdo_mapping: PdoMappable::None,
                         ..Default::default()
                     },
                     SubDefinition {
@@ -260,7 +272,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                         default_value: Some(DefaultValue::Integer(
                             config.identity.product_code as i64,
                         )),
-                        pdo_mapping: PdoMapping::None,
+                        pdo_mapping: PdoMappable::None,
                         ..Default::default()
                     },
                     SubDefinition {
@@ -272,7 +284,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                         default_value: Some(DefaultValue::Integer(
                             config.identity.revision_number as i64,
                         )),
-                        pdo_mapping: PdoMapping::None,
+                        pdo_mapping: PdoMappable::None,
                         ..Default::default()
                     },
                     SubDefinition {
@@ -282,7 +294,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                         data_type: DataType::UInt32,
                         access_type: AccessType::Const.into(),
                         default_value: Some(DefaultValue::Integer(0)),
-                        pdo_mapping: PdoMapping::None,
+                        pdo_mapping: PdoMappable::None,
                         ..Default::default()
                     },
                 ],
@@ -296,7 +308,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                 data_type: DataType::UInt8,
                 access_type: AccessType::Rw.into(),
                 default_value: None,
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 persist: true,
             }),
         },
@@ -324,7 +336,7 @@ fn pdo_objects(num_rpdo: usize, num_tpdo: usize) -> Vec<ObjectDefinition> {
                         data_type: DataType::UInt32,
                         access_type: AccessType::Rw.into(),
                         default_value: None,
-                        pdo_mapping: PdoMapping::None,
+                        pdo_mapping: PdoMappable::None,
                         persist: true,
                     },
                     SubDefinition {
@@ -334,7 +346,7 @@ fn pdo_objects(num_rpdo: usize, num_tpdo: usize) -> Vec<ObjectDefinition> {
                         data_type: DataType::UInt8,
                         access_type: AccessType::Rw.into(),
                         default_value: None,
-                        pdo_mapping: PdoMapping::None,
+                        pdo_mapping: PdoMappable::None,
                         persist: true,
                     },
                 ],
@@ -348,7 +360,7 @@ fn pdo_objects(num_rpdo: usize, num_tpdo: usize) -> Vec<ObjectDefinition> {
             data_type: DataType::UInt8,
             access_type: AccessType::Rw.into(),
             default_value: Some(DefaultValue::Integer(0)),
-            pdo_mapping: PdoMapping::None,
+            pdo_mapping: PdoMappable::None,
             persist: true,
         }];
         for sub in 1..65 {
@@ -359,7 +371,7 @@ fn pdo_objects(num_rpdo: usize, num_tpdo: usize) -> Vec<ObjectDefinition> {
                 data_type: DataType::UInt32,
                 access_type: AccessType::Rw.into(),
                 default_value: None,
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 persist: true,
             });
         }
@@ -399,7 +411,7 @@ fn bootloader_objects(cfg: &BootloaderConfig) -> Vec<ObjectDefinition> {
                     data_type: DataType::UInt32,
                     access_type: AccessType::Ro.into(),
                     default_value: Some(0.into()),
-                    pdo_mapping: PdoMapping::None,
+                    pdo_mapping: PdoMappable::None,
                     persist: false,
                 },
                 SubDefinition {
@@ -409,7 +421,7 @@ fn bootloader_objects(cfg: &BootloaderConfig) -> Vec<ObjectDefinition> {
                     data_type: DataType::UInt8,
                     access_type: AccessType::Ro.into(),
                     default_value: Some(cfg.sections.len().into()),
-                    pdo_mapping: PdoMapping::None,
+                    pdo_mapping: PdoMappable::None,
                     persist: false,
                 },
                 SubDefinition {
@@ -419,7 +431,7 @@ fn bootloader_objects(cfg: &BootloaderConfig) -> Vec<ObjectDefinition> {
                     data_type: DataType::UInt32,
                     access_type: AccessType::Wo.into(),
                     default_value: None,
-                    pdo_mapping: PdoMapping::None,
+                    pdo_mapping: PdoMappable::None,
                     persist: false,
                 },
             ],
@@ -507,22 +519,95 @@ fn default_true() -> bool {
     true
 }
 
-/// Configuration options for PDOs
-#[derive(Deserialize, Debug, Clone, Copy)]
-pub struct PdoConfig {
+/// Represents the configuration parameters for a single PDO
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PdoDefaultConfig {
+    /// The COB ID this PDO will use to send/receive
+    pub cob_id: u32,
+    /// The COB ID is an extended 29-bit ID
+    #[serde(default)]
+    pub extended: bool,
+    /// The node ID should be added to `cob_id`` at runtime
+    pub add_node_id: bool,
+    /// Indicates if this PDO is enabled
+    pub enabled: bool,
+    /// If set, this PDO will not respond to requests
+    #[serde(default)]
+    pub rtr_disabled: bool,
+    /// List of mapping specifying what sub objects are mapped to this PDO
+    pub mappings: Vec<PdoMapping>,
+    /// Specifies when a PDO is sent or latched
+    ///
+    /// - 0: Sent in response to sync, but only after an application specific event (e.g. it may be
+    ///   sent when the value changes, but not when it has not)
+    /// - 1 - 240: Sent in response to every Nth sync
+    /// - 254: Event driven (application to send it whenever it wants)
+    pub transmission_type: u8,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct PdoDefaultConfigMapSerializer(
+    #[serde(deserialize_with = "deserialize_pdo_map", default)] pub HashMap<usize, PdoDefaultConfig>,
+);
+
+impl From<PdoDefaultConfigMapSerializer> for HashMap<usize, PdoDefaultConfig> {
+    fn from(value: PdoDefaultConfigMapSerializer) -> Self {
+        value.0
+    }
+}
+
+/// Private struct for deserializing [pdos] section of device config TOML
+#[derive(Debug, Deserialize)]
+struct DevicePdoConfigSerializer {
     #[serde(default = "default_num_rpdo")]
     /// The number of TX PDO slots available in the device. Defaults to 4.
     pub num_tpdo: u8,
     #[serde(default = "default_num_tpdo")]
     /// The number of RX PDO slots available in the device. Defaults to 4.
     pub num_rpdo: u8,
+
+    /// Map of default configurations for individual TPDOs
+    #[serde(default)]
+    pub tpdo: PdoDefaultConfigMapSerializer,
+    #[serde(default)]
+    pub rpdo: PdoDefaultConfigMapSerializer,
 }
 
-impl Default for PdoConfig {
+impl From<DevicePdoConfigSerializer> for DevicePdoConfig {
+    fn from(value: DevicePdoConfigSerializer) -> Self {
+        Self {
+            num_tpdo: value.num_tpdo,
+            num_rpdo: value.num_rpdo,
+            tpdo_defaults: value.tpdo.0,
+            rpdo_defaults: value.rpdo.0,
+        }
+    }
+}
+
+/// Device PDO configuration options
+///
+/// This controls how many TPDO/RPDO slots are created, and how they are configured by default
+#[derive(Clone, Debug, Deserialize)]
+#[serde(try_from = "DevicePdoConfigSerializer")]
+pub struct DevicePdoConfig {
+    /// The number of TX PDO slots available in the device. Defaults to 4.
+    pub num_tpdo: u8,
+    /// The number of RX PDO slots available in the device. Defaults to 4.
+    pub num_rpdo: u8,
+
+    /// Map of default configurations for individual TPDOs
+    pub tpdo_defaults: HashMap<usize, PdoDefaultConfig>,
+    /// Map of default configurations for individual RPDOs
+    pub rpdo_defaults: HashMap<usize, PdoDefaultConfig>,
+}
+
+impl Default for DevicePdoConfig {
     fn default() -> Self {
         Self {
             num_tpdo: default_num_tpdo(),
             num_rpdo: default_num_rpdo(),
+            tpdo_defaults: HashMap::new(),
+            rpdo_defaults: HashMap::new(),
         }
     }
 }
@@ -541,33 +626,6 @@ pub struct IdentityConfig {
     pub product_code: u32,
     /// The 32-bit revision number for this device
     pub revision_number: u32,
-}
-
-/// Enum indicating what PDO mappings a sub object supports
-#[derive(Deserialize, Debug, Default, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-pub enum PdoMapping {
-    /// Cannot be mapped to any PDOs
-    #[default]
-    None,
-    /// Can be mapped only to TPDOs
-    Tpdo,
-    /// Can be mapped only to RPDOs
-    Rpdo,
-    /// Can be mapped to any PDO
-    Both,
-}
-
-impl PdoMapping {
-    /// Can be mapped to a TPDO
-    pub fn supports_tpdo(&self) -> bool {
-        matches!(self, PdoMapping::Tpdo | PdoMapping::Both)
-    }
-
-    /// Can be mapped to an RPDO
-    pub fn supports_rpdo(&self) -> bool {
-        matches!(self, PdoMapping::Rpdo | PdoMapping::Both)
-    }
 }
 
 /// Configuration object to define a programmable bootloader section
@@ -620,7 +678,7 @@ pub struct DeviceConfig {
 
     /// Configure PDO settings
     #[serde(default)]
-    pub pdos: PdoConfig,
+    pub pdos: DevicePdoConfig,
 
     /// Configure bootloader options
     #[serde(default)]
@@ -656,7 +714,7 @@ pub struct SubDefinition {
     pub default_value: Option<DefaultValue>,
     /// Indicates whether this sub object can be mapped to PDOs
     #[serde(default)]
-    pub pdo_mapping: PdoMapping,
+    pub pdo_mapping: PdoMappable,
     /// Indicates if this sub object should be saved when the save command is sent
     #[serde(default)]
     pub persist: bool,
@@ -728,7 +786,7 @@ pub struct VarDefinition {
     pub default_value: Option<DefaultValue>,
     /// Determines which if type of PDO this object can me mapped to
     #[serde(default)]
-    pub pdo_mapping: PdoMapping,
+    pub pdo_mapping: PdoMappable,
     /// Indicates that this object should be saved
     #[serde(default)]
     pub persist: bool,
@@ -748,7 +806,7 @@ pub struct ArrayDefinition {
     pub default_value: Option<Vec<DefaultValue>>,
     #[serde(default)]
     /// Whether fields in this array can be mapped to PDOs
-    pub pdo_mapping: PdoMapping,
+    pub pdo_mapping: PdoMappable,
     #[serde(default)]
     /// Whether this array should be saved to flash on command
     pub persist: bool,

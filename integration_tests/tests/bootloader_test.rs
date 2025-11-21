@@ -1,5 +1,3 @@
-mod utils;
-
 use std::{
     cell::RefCell,
     sync::{
@@ -8,13 +6,10 @@ use std::{
     },
 };
 
-use utils::setup_single_node;
 use zencan_common::constants::values::{BOOTLOADER_ERASE_CMD, BOOTLOADER_RESET_CMD};
 use zencan_node::BootloaderSectionCallbacks;
 
-use crate::utils::{test_with_background_process, BusLogger};
-
-use integration_tests::{object_dict2, object_dict3};
+use integration_tests::{object_dict2, object_dict3, prelude::*};
 
 const BOOTLOADER_INFO_INDEX: u16 = 0x5500;
 const BOOTLOADER_SECTION0_INDEX: u16 = 0x5510;
@@ -22,11 +17,20 @@ const BOOTLOADER_SECTION0_INDEX: u16 = 0x5510;
 #[serial_test::serial]
 #[tokio::test]
 async fn test_device_info_readback() {
-    let (mut node, mut client, mut bus) = setup_single_node(
-        &object_dict2::OD_TABLE,
-        &object_dict2::NODE_MBOX,
-        &object_dict2::NODE_STATE,
+    use object_dict2::*;
+    const NODE_ID: u8 = 1;
+
+    let mut bus = SimBus::new();
+    let mut sender = bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new(&mut sender);
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
     );
+    let mut client = get_sdo_client(&mut bus, NODE_ID);
 
     let _logger = BusLogger::new(bus.new_receiver());
 
@@ -48,25 +52,33 @@ async fn test_device_info_readback() {
         assert!(object_dict2::BOOTLOADER_INFO.reset_flag());
     };
 
-    test_with_background_process(&mut [&mut node], &mut bus.new_sender(), test_task).await;
+    test_with_background_process(&mut [&mut node], test_task).await;
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn test_program() {
-    let (mut node, mut client, mut bus) = setup_single_node(
-        &object_dict3::OD_TABLE,
-        &object_dict3::NODE_MBOX,
-        &object_dict3::NODE_STATE,
+    use object_dict3::*;
+    const NODE_ID: u8 = 1;
+    let mut bus = SimBus::new();
+    let mut sender = bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new(&mut sender);
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
     );
+    let mut client = get_sdo_client(&mut bus, NODE_ID);
 
-    struct Callbacks {
+    struct BootloaderCallbacks {
         erase_flag: AtomicBool,
         data: Mutex<RefCell<Vec<u8>>>,
         finalize_flag: AtomicBool,
     }
 
-    impl Callbacks {
+    impl BootloaderCallbacks {
         fn erase_flag(&self) -> bool {
             self.erase_flag.load(Ordering::Relaxed)
         }
@@ -80,7 +92,7 @@ async fn test_program() {
         }
     }
 
-    impl BootloaderSectionCallbacks for Callbacks {
+    impl BootloaderSectionCallbacks for BootloaderCallbacks {
         fn erase(&self) -> bool {
             self.erase_flag.store(true, Ordering::Relaxed);
             true
@@ -107,7 +119,7 @@ async fn test_program() {
         }
     }
 
-    let callbacks: &Callbacks = Box::leak(Box::new(Callbacks {
+    let callbacks: &BootloaderCallbacks = Box::leak(Box::new(BootloaderCallbacks {
         erase_flag: AtomicBool::new(false),
         data: Mutex::new(RefCell::new(Vec::new())),
         finalize_flag: AtomicBool::new(false),
@@ -149,5 +161,5 @@ async fn test_program() {
         assert!(callbacks.finalize_flag())
     };
 
-    test_with_background_process(&mut [&mut node], &mut bus.new_sender(), test_task).await;
+    test_with_background_process(&mut [&mut node], test_task).await;
 }

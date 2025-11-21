@@ -7,19 +7,21 @@
 )]
 
 use embassy_executor::Spawner;
+use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
-use embassy_futures::select::select;
 use embedded_can::Frame;
 use embedded_can::Id::{Extended, Standard};
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
+use esp_hal::efuse::Efuse;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::twai::{EspTwaiFrame, StandardId, TwaiMode, TwaiRx, TwaiTx};
 use esp_hal::{twai, Async};
-use esp_hal::efuse::Efuse;
 use esp_println::logger;
+use zencan_node::common::CanMessage;
+use zencan_node::Callbacks;
 use zencan_node::{common::NodeId, Node};
 
 mod zencan {
@@ -64,25 +66,14 @@ async fn main(spawner: Spawner) {
     let mac_address = Efuse::read_base_mac_address();
     log::info!("MAC address: {:?}", mac_address);
 
-    let node_id = match *mac_address.last().unwrap() {
-        0 => 1,
-        id => id,
-    };
     let last_mac_bytes: [u8; 4] = mac_address[2..].try_into().unwrap();
     let serial = u32::from_be_bytes(last_mac_bytes);
 
     zencan::OBJECT1018.set_serial(serial);
     zencan::NODE_MBOX.set_process_notify_callback(&notify_canopen_task);
 
-    let node = Node::new(
-        NodeId::new(node_id).unwrap(),
-        &zencan::NODE_MBOX,
-        &zencan::NODE_STATE,
-        &zencan::OD_TABLE,
-    );
-
     spawner.spawn(twai_rx_task(twai_rx)).unwrap();
-    spawner.spawn(canopen_process_task(node, twai_tx)).unwrap();
+    spawner.spawn(canopen_process_task(twai_tx)).unwrap();
 }
 
 fn notify_canopen_task() {
@@ -90,20 +81,42 @@ fn notify_canopen_task() {
 }
 
 #[embassy_executor::task]
-async fn canopen_process_task(mut node: Node, mut twai_tx: TwaiTx<'static, Async>) {
+async fn canopen_process_task(mut twai_tx: TwaiTx<'static, Async>) {
+    // embassy_executor requires task arguments have static lifetime, so create the node here
+    let mut send_message = move |msg: CanMessage| {
+        let frame =
+            EspTwaiFrame::new(StandardId::new(msg.id.raw() as u16).unwrap(), msg.data()).unwrap();
+        if let Err(e) = twai_tx.transmit(&frame) {
+            match e {
+                nb::Error::WouldBlock => log::error!("TX buffer full, CAN bus down?"),
+                _ => (),
+            }
+        }
+
+        Ok(())
+    };
+    let callbacks = Callbacks {
+        send_message: &mut send_message,
+        store_node_config: None,
+        store_objects: None,
+        reset_app: None,
+        reset_comms: None,
+        enter_operational: None,
+        enter_stopped: None,
+        enter_preoperational: None,
+    };
+    let mut node = Node::new(
+        NodeId::Unconfigured,
+        callbacks,
+        &zencan::NODE_MBOX,
+        &zencan::NODE_STATE,
+        &zencan::OD_TABLE,
+    );
     loop {
         select(CANOPEN_PROCESS_SIGNAL.wait(), Timer::after_millis(10)).await;
         let now_us = embassy_time::Instant::now().as_micros();
 
-        node.process(now_us, &mut |msg| {
-            let frame = EspTwaiFrame::new(StandardId::new(msg.id.raw() as u16).unwrap(), msg.data()).unwrap();
-            if let Err(e) = twai_tx.transmit(&frame) {
-                match e {
-                    nb::Error::WouldBlock => log::error!("TX buffer full, CAN bus down?"),
-                    _ => (),
-                }
-            }
-        });
+        node.process(now_us);
     }
 }
 

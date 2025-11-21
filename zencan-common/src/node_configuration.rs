@@ -1,19 +1,27 @@
+//! Node Configuration File Format
 use std::{collections::HashMap, path::Path};
 
+use crate::{pdo::PdoMapping, CanId};
 use serde::{de, Deserialize, Deserializer};
 use snafu::{ResultExt, Snafu};
-use zencan_common::CanId;
 
-// Error returned when loading node configuration files
+/// Error returned when loading node configuration files
 #[derive(Debug, Snafu)]
 pub enum ConfigError {
+    /// An IO error
     #[snafu(display("IO error loading {path}: {source:?}"))]
     Io {
+        /// The path being accessed
         path: String,
+        /// The original error
         source: std::io::Error,
     },
+    /// A TOML error
     #[snafu(display("Error parsing TOML: {source}"))]
-    TomlDeserialization { source: toml::de::Error },
+    TomlDeserialization {
+        /// The original error
+        source: toml::de::Error,
+    },
 }
 
 /// Represents a store command to write a value to an object
@@ -35,6 +43,7 @@ impl Store {
 }
 
 /// Value to be stored by a [Store] command
+#[allow(missing_docs)]
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub enum StoreValue {
     U32(u32),
@@ -48,6 +57,7 @@ pub enum StoreValue {
 }
 
 impl StoreValue {
+    /// Get the value as bytes
     pub fn raw(&self) -> Vec<u8> {
         match self {
             StoreValue::U32(v) => v.to_le_bytes().to_vec(),
@@ -90,12 +100,12 @@ impl NodeConfig {
 
     /// Get the transmit PDO configurations
     pub fn tpdos(&self) -> &HashMap<usize, PdoConfig> {
-        &self.0.tpdo
+        &self.0.tpdo.0
     }
 
     /// Get the receive PDO configurations
     pub fn rpdos(&self) -> &HashMap<usize, PdoConfig> {
-        &self.0.rpdo
+        &self.0.rpdo.0
     }
 
     /// Get the object configurations
@@ -106,13 +116,25 @@ impl NodeConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
+
+pub(crate) struct PdoConfigMapSerializer(
+    #[serde(deserialize_with = "deserialize_pdo_map", default)] pub HashMap<usize, PdoConfig>,
+);
+
+impl From<PdoConfigMapSerializer> for HashMap<usize, PdoConfig> {
+    fn from(value: PdoConfigMapSerializer) -> Self {
+        value.0
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NodeConfigSerializer {
-    #[serde(deserialize_with = "deserialize_pdo_map", default)]
-    pub tpdo: HashMap<usize, PdoConfig>,
-    #[serde(deserialize_with = "deserialize_pdo_map", default)]
-    pub rpdo: HashMap<usize, PdoConfig>,
+    #[serde(default)]
+    pub tpdo: PdoConfigMapSerializer,
+    #[serde(default)]
+    pub rpdo: PdoConfigMapSerializer,
     #[serde(default, deserialize_with = "deserialize_store")]
     pub store: Vec<Store>,
 }
@@ -122,11 +144,16 @@ struct NodeConfigSerializer {
 #[serde(deny_unknown_fields)]
 struct PdoConfigSerializer {
     /// The COB ID this PDO will use to send/receive
-    pub cob: u32,
+    pub cob_id: u32,
+    /// The COB ID for this PDO is an extended 29-bit ID
     #[serde(default)]
     pub extended: bool,
+    /// Add the NODE ID to the `cob` value to get the actual COB ID
     /// The PDO is active
     pub enabled: bool,
+    /// When set, this PDO will be respond to RTR requests
+    #[serde(default)]
+    pub rtr_disabled: bool,
     /// List of mapping specifying what sub objects are mapped to this PDO
     pub mappings: Vec<PdoMapping>,
     /// Specifies when a PDO is sent or latched
@@ -139,13 +166,15 @@ struct PdoConfigSerializer {
 }
 
 /// Represents the configuration parameters for a single PDO
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(try_from = "PdoConfigSerializer")]
 pub struct PdoConfig {
     /// The COB ID this PDO will use to send/receive
-    pub cob: CanId,
+    pub cob_id: CanId,
     /// Indicates if this PDO is enabled
     pub enabled: bool,
+    /// If set, this PDO will not respond to requests
+    pub rtr_disabled: bool,
     /// List of mapping specifying what sub objects are mapped to this PDO
     pub mappings: Vec<PdoMapping>,
     /// Specifies when a PDO is sent or latched
@@ -157,9 +186,10 @@ pub struct PdoConfig {
     pub transmission_type: u8,
 }
 
+/// Error when deserializing a [`PdoConfigSerializer`]
 #[derive(Clone, Debug, Snafu)]
 #[snafu(display("{message}"))]
-pub struct PdoConfigParseError {
+struct PdoConfigParseError {
     message: String,
 }
 
@@ -167,55 +197,27 @@ impl TryFrom<PdoConfigSerializer> for PdoConfig {
     type Error = PdoConfigParseError;
 
     fn try_from(value: PdoConfigSerializer) -> Result<Self, Self::Error> {
-        let cob = if value.extended {
-            CanId::extended(value.cob)
+        let cob_id = if value.extended {
+            CanId::extended(value.cob_id)
         } else {
-            if value.cob > 0x7ff {
+            if value.cob_id > 0x7ff {
                 return Err(PdoConfigParseError {
                     message: format!(
                         "COB ID 0x{:x} is out of range for standard ID. Set `extended` to true.",
-                        value.cob
+                        value.cob_id
                     ),
                 });
             }
-            CanId::std(value.cob as u16)
+            CanId::std(value.cob_id as u16)
         };
 
         Ok(PdoConfig {
-            cob,
+            cob_id,
             enabled: value.enabled,
             mappings: value.mappings,
+            rtr_disabled: value.rtr_disabled,
             transmission_type: value.transmission_type,
         })
-    }
-}
-
-/// Represents a PDO mapping
-///
-/// Each mapping specifies one sub-object to be included in the PDO.
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PdoMapping {
-    /// The object index
-    pub index: u16,
-    /// The object sub index
-    pub sub: u8,
-    /// The size of the object to map, in **bits**
-    pub size: u8,
-}
-
-impl PdoMapping {
-    /// Convert a PdoMapping object to the u32 representation stored in the PdoMapping object
-    pub fn to_object_value(&self) -> u32 {
-        ((self.index as u32) << 16) | ((self.sub as u32) << 8) | (self.size as u32)
-    }
-
-    /// Create a PdoMapping object from the raw u32 representation stored in the PdoMapping object
-    pub fn from_object_value(value: u32) -> Self {
-        let index = (value >> 16) as u16;
-        let sub = ((value >> 8) & 0xff) as u8;
-        let size = (value & 0xff) as u8;
-        Self { index, sub, size }
     }
 }
 
@@ -350,11 +352,12 @@ where
     Ok(store)
 }
 
-fn deserialize_pdo_map<'de, D>(deserializer: D) -> Result<HashMap<usize, PdoConfig>, D::Error>
+pub(crate) fn deserialize_pdo_map<'de, D, T>(deserializer: D) -> Result<HashMap<usize, T>, D::Error>
 where
     D: Deserializer<'de>,
+    T: Deserialize<'de>,
 {
-    let str_map = HashMap::<String, PdoConfig>::deserialize(deserializer)?;
+    let str_map = HashMap::<String, T>::deserialize(deserializer)?;
     let original_len = str_map.len();
     let data = {
         str_map
@@ -387,7 +390,7 @@ mod test {
         let str = r#"
         [tpdo.0]
         enabled = true
-        cob = 0x800
+        cob_id = 0x800
         transmission_type = 254
         mappings = [
             { index=0x1000, sub=1, size=8 },
@@ -408,7 +411,7 @@ mod test {
         let str = r#"
         [tpdo.0]
         enabled = true
-        cob = 0x800
+        cob_id = 0x800
         extended = true
         transmission_type = 254
         mappings = [
@@ -419,7 +422,7 @@ mod test {
         let result = NodeConfig::load_from_str(str).unwrap();
         assert_eq!(1, result.tpdos().len());
         let tpdo = result.tpdos().get(&0).unwrap();
-        assert_eq!(CanId::extended(0x800), tpdo.cob);
+        assert_eq!(CanId::extended(0x800), tpdo.cob_id);
     }
 
     #[test]
@@ -427,7 +430,7 @@ mod test {
         let str = r#"
         [tpdo.0]
         enabled = true
-        cob = 0x181
+        cob_id = 0x181
         transmission_type = 254
         mappings = [
             { index=0x1000, sub=1, size=8 },

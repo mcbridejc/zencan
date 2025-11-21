@@ -2,10 +2,39 @@ use crate::errors::CompileError;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use zencan_common::device_config::{
-    DataType as DCDataType, DefaultValue, DeviceConfig, Object, ObjectDefinition, PdoMapping,
+    DataType as DCDataType, DefaultValue, DeviceConfig, Object, ObjectDefinition, PdoDefaultConfig,
     SubDefinition,
 };
-use zencan_common::objects::{AccessType, ObjectCode};
+use zencan_common::objects::{AccessType, ObjectCode, PdoMappable};
+
+fn pdo_init_tokens(cfg: Option<&PdoDefaultConfig>) -> TokenStream {
+    if let Some(PdoDefaultConfig {
+        cob_id,
+        extended,
+        add_node_id,
+        enabled,
+        rtr_disabled,
+        transmission_type,
+        mappings,
+    }) = cfg
+    {
+        let mappings: Vec<u32> = mappings.iter().map(|m| m.to_object_value()).collect();
+
+        quote! {
+            Pdo::new_with_defaults(&OD_TABLE, &PdoDefaults::new(
+                #cob_id,
+                #extended,
+                #add_node_id,
+                #enabled,
+                #rtr_disabled,
+                #transmission_type,
+                &[#(#mappings),*]
+            ))
+        }
+    } else {
+        quote! { Pdo::new_with_defaults(&OD_TABLE, &PdoDefaults::DEFAULT) }
+    }
+}
 
 fn get_sub_field_name(sub: &SubDefinition) -> Result<syn::Ident, CompileError> {
     match &sub.field_name {
@@ -112,12 +141,12 @@ fn data_type_to_tokens(dt: DCDataType) -> TokenStream {
     }
 }
 
-fn pdo_mapping_to_tokens(p: PdoMapping) -> TokenStream {
+fn pdo_mapping_to_tokens(p: PdoMappable) -> TokenStream {
     match p {
-        PdoMapping::None => quote!(zencan_node::common::objects::PdoMapping::None),
-        PdoMapping::Tpdo => quote!(zencan_node::common::objects::PdoMapping::Tpdo),
-        PdoMapping::Rpdo => quote!(zencan_node::common::objects::PdoMapping::Rpdo),
-        PdoMapping::Both => quote!(zencan_node::common::objects::PdoMapping::Both),
+        PdoMappable::None => quote!(zencan_node::common::objects::PdoMappable::None),
+        PdoMappable::Tpdo => quote!(zencan_node::common::objects::PdoMappable::Tpdo),
+        PdoMappable::Rpdo => quote!(zencan_node::common::objects::PdoMappable::Rpdo),
+        PdoMappable::Both => quote!(zencan_node::common::objects::PdoMappable::Both),
     }
 }
 
@@ -515,7 +544,7 @@ fn get_object_impls(
             }
         });
         flag_default_tokens.extend(quote! {
-            flags: ObjectFlags::<#flag_size>::new(NODE_STATE.pdo_sync()),
+            flags: ObjectFlags::<#flag_size>::new(NODE_STATE.object_flag_sync()),
         });
     }
 
@@ -523,7 +552,7 @@ fn get_object_impls(
         impl #struct_name {
             #accessor_methods
 
-            const fn default() -> Self {
+            pub const fn default() -> Self {
                 #struct_name {
                     #default_init_tokens
                     #flag_default_tokens
@@ -595,7 +624,7 @@ pub fn generate_state_inst(dev: &DeviceConfig) -> TokenStream {
     let tpdo_numbers = 0..n_tpdo;
     tokens.extend(quote! {
         pub static TPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_tpdo] = [
-            #(PdoMappingObject::new(&OD_TABLE, &NODE_STATE.tpdos()[#tpdo_numbers])),*
+            #(PdoMappingObject::new(&NODE_STATE.tpdos()[#tpdo_numbers])),*
         ];
     });
     let rpdo_numbers = 0..n_rpdo;
@@ -607,21 +636,30 @@ pub fn generate_state_inst(dev: &DeviceConfig) -> TokenStream {
     let rpdo_numbers = 0..n_rpdo;
     tokens.extend(quote! {
         pub static RPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_rpdo] = [
-            #(PdoMappingObject::new(&OD_TABLE, &NODE_STATE.rpdos()[#rpdo_numbers])),*
+            #(PdoMappingObject::new(&NODE_STATE.rpdos()[#rpdo_numbers])),*
         ];
     });
 
     if dev.support_storage {
         tokens.extend(quote! {
             pub static STORAGE_COMMAND_OBJECT: StorageCommandObject =
-                StorageCommandObject::new(&OD_TABLE, NODE_STATE.storage_context());
+                StorageCommandObject::new(NODE_STATE.storage_context());
         });
     }
 
+    let rpdo_initializers = (0..n_rpdo).map(|i| pdo_init_tokens(dev.pdos.rpdo_defaults.get(&i)));
+    let tpdo_initializers = (0..n_tpdo).map(|i| pdo_init_tokens(dev.pdos.tpdo_defaults.get(&i)));
+
     tokens.extend(quote! {
+        pub static RPDOS: [Pdo; #n_rpdo] = [
+            #(#rpdo_initializers),*
+        ];
+        pub static TPDOS: [Pdo; #n_tpdo] = [
+            #(#tpdo_initializers),*
+        ];
         #[allow(static_mut_refs)]
         static mut SDO_BUFFER: [u8; SDO_BUFFER_SIZE] = [0; SDO_BUFFER_SIZE];
-        pub static NODE_STATE: NodeState<#n_rpdo, #n_tpdo> = NodeState::new();
+        pub static NODE_STATE: NodeState = NodeState::new(&RPDOS, &TPDOS);
         #[allow(static_mut_refs)]
         pub static NODE_MBOX: NodeMbox = NodeMbox::new(NODE_STATE.rpdos(), unsafe { &mut SDO_BUFFER });
     });
@@ -671,7 +709,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             table_entries.extend(quote! {
                 ODEntry {
                     index: #index,
-                    data: &RPDO_COMM_OBJECTS[#n]
+                    data: &RPDO_COMM_OBJECTS[#n],
                 },
             })
         } else if obj.index >= 0x1600 && obj.index < 0x1800 {
@@ -679,7 +717,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             table_entries.extend(quote! {
                 ODEntry {
                     index: #index,
-                    data: &RPDO_MAPPING_OBJECTS[#n]
+                    data: &RPDO_MAPPING_OBJECTS[#n],
                 },
             })
         } else if obj.index >= 0x1800 && obj.index < 0x1A00 {
@@ -687,7 +725,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             table_entries.extend(quote! {
                 ODEntry {
                     index: #index,
-                    data: &TPDO_COMM_OBJECTS[#n]
+                    data: &TPDO_COMM_OBJECTS[#n],
                 },
             })
         } else if obj.index >= 0x1A00 && obj.index < 0x1C00 {
@@ -695,7 +733,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             table_entries.extend(quote! {
                 ODEntry {
                     index: #index,
-                    data: &TPDO_MAPPING_OBJECTS[#n]
+                    data: &TPDO_MAPPING_OBJECTS[#n],
                 },
             })
         } else if !obj.application_callback {
@@ -757,7 +795,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
         #[allow(unused_imports)]
         use zencan_node::SDO_BUFFER_SIZE;
         #[allow(unused_imports)]
-        use zencan_node::pdo::{PdoCommObject, PdoMappingObject};
+        use zencan_node::pdo::{Pdo, PdoCommObject, PdoDefaults, PdoMappingObject};
         #[allow(unused_imports)]
         use zencan_node::storage::StorageCommandObject;
         #[allow(unused_imports)]

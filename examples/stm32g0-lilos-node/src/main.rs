@@ -4,10 +4,7 @@
 #![no_main]
 
 use core::{
-    convert::Infallible,
-    num::{NonZeroU8, NonZeroU16},
-    pin::pin,
-    time::Duration,
+    cell::RefCell, convert::Infallible, num::{NonZeroU16, NonZeroU8}, pin::pin, time::Duration
 };
 
 use core::hash::Hasher;
@@ -27,7 +24,9 @@ use cortex_m_rt as _;
 use panic_probe as _;
 use rtt_target::{self as _, rtt_init, set_defmt_channel};
 
-use zencan_node::{Node, common::NodeId, object_dict::ObjectAccess, restore_stored_objects};
+use zencan_node::{
+    common::NodeId, object_dict::{ODEntry, ObjectAccess}, restore_stored_comm_objects, restore_stored_objects, Callbacks, Node
+};
 
 /// Create a serial number from the UID register
 fn get_serial() -> u32 {
@@ -62,7 +61,6 @@ unsafe impl fdcan::Instance for FdCan1 {
 static mut CAN_RX: Option<Rx<FdCan1, NormalOperationMode, Fifo0>> = None;
 static mut CAN_CTRL: Option<FdCanControl<FdCan1, NormalOperationMode>> = None;
 static CAN_NOTIFY: Notify = Notify::new();
-static mut FLASH: Option<Stm32g0Flash> = None;
 
 enum FlashSections {
     NodeConfig = 1,
@@ -82,11 +80,9 @@ impl From<u8> for FlashSections {
 
 /// Callback from zencan to store object data to flash
 #[allow(static_mut_refs)]
-fn store_objects(reader: &mut dyn embedded_io::Read<Error = Infallible>, size: usize) {
-    // Safety: No other threads (i.e. IRQs) will use flash)
-    let mut flash = unsafe { FLASH.as_mut().unwrap().unlock() };
+fn store_objects(flash: &mut Stm32g0Flash, reader: &mut dyn embedded_io::Read<Error = Infallible>, size: usize) {
     if persist::update_sections(
-        &mut flash,
+        &mut flash.unlock(),
         &mut [SectionUpdate {
             section_id: FlashSections::Objects as u8,
             data: persist::UpdateSource::Reader((reader, size)),
@@ -100,11 +96,10 @@ fn store_objects(reader: &mut dyn embedded_io::Read<Error = Infallible>, size: u
 
 /// Callback from zencan to store node configuraiton to flash
 #[allow(static_mut_refs)]
-fn store_node_config(id: &NodeId) {
-    let mut flash = unsafe { FLASH.as_mut().unwrap().unlock() };
+fn store_node_config(flash: &mut Stm32g0Flash, id: NodeId) {
     let data = [id.raw()];
     if persist::update_sections(
-        &mut flash,
+        &mut flash.unlock(),
         &mut [SectionUpdate {
             section_id: FlashSections::NodeConfig as u8,
             data: persist::UpdateSource::Slice(&data),
@@ -146,6 +141,26 @@ fn read_saved_node_id(flash: &mut Stm32g0Flash) -> NodeId {
     }
 
     NodeId::Unconfigured
+}
+
+fn read_persisted_objects(flash: &mut Stm32g0Flash, restore_fn: impl Fn(&[u8])) {
+    if let Some(sections) = persist::load_sections(&flash.unlock()) {
+        for s in sections {
+            let section_type = FlashSections::from(s.section_id);
+            match section_type {
+                FlashSections::NodeConfig => (), // Ignore
+                FlashSections::Objects => {
+                    defmt::info!("Loaded objects from flash");
+                    restore_fn(s.data);
+                }
+                FlashSections::Unknown => {
+                    defmt::warn!("Found unrecognized flash section {}", s.section_id);
+                }
+            }
+        }
+    } else {
+        defmt::info!("No data found in flash");
+    }
 }
 
 #[cortex_m_rt::entry]
@@ -236,7 +251,7 @@ fn main() -> ! {
         StandardFilter::accept_all_into_fifo0(),
     );
 
-    let (can_ctrl, can_tx, can_rx0, _can_rx1) = can.split();
+    let (can_ctrl, mut can_tx, can_rx0, _can_rx1) = can.split();
 
     // Store the rx and ctrl handles to statics for the ISR to use
     unsafe {
@@ -251,42 +266,62 @@ fn main() -> ! {
     // Use the UID register to set a unique serial number
     zencan::OBJECT1018.set_serial(get_serial());
 
-    // Load persistent data from flash It's important to do this after calling Node::init,, because
-    // some of the restored objects (e.g. PDO config) require that callbacks be registered before
-    // they can be accessed.
-    if let Some(sections) = persist::load_sections(&flash.unlock()) {
-        for s in sections {
-            let section_type = FlashSections::from(s.section_id);
-            match section_type {
-                FlashSections::NodeConfig => (), // Ignore
-                FlashSections::Objects => {
-                    defmt::info!("Loaded objects from flash");
-                    restore_stored_objects(&zencan::OD_TABLE, s.data);
-                }
-                FlashSections::Unknown => {
-                    defmt::warn!("Found unrecognized flash section {}", s.section_id);
-                }
-            }
+    let flash = RefCell::new(flash);
+
+    let mut store_node_config = |node_id| { store_node_config(&mut flash.borrow_mut(), node_id); };
+    let mut store_objects = |reader: &mut dyn embedded_io::Read<Error = Infallible>, len| { store_objects(&mut flash.borrow_mut(), reader, len) };
+    let mut reset_app = |od: &[ODEntry]| {
+        // On RESET APP transition, we reload object values to their reset value
+
+        // Init defaults for application objects. In a future release, objects should provide a
+        // better API for resetting defaults, but for now, it can be done here by the application if
+        // desired.
+        for i in 0..4 {
+            zencan::OBJECT2000.set(i, 0).ok();
+            zencan::OBJECT2001.set(i, 0).ok();
+            zencan::OBJECT2002.set(i, 0).ok();
+            zencan::OBJECT2200.set(i, 1).ok();
+            zencan::OBJECT2201.set(i, 1).ok();
+            zencan::OBJECT2202.set(i, 0).ok();
         }
-    } else {
-        defmt::info!("No data found in flash");
-    }
+        zencan::OBJECT2100.set_value(20);
 
-    // Store the flash object in static so it can be access by callbacks
-    unsafe {
-        FLASH = Some(flash);
-    }
+        // Restore objects saved to flash
+        read_persisted_objects(&mut flash.borrow_mut(), |stored_data| restore_stored_objects(od, stored_data));
+    };
+    let mut reset_comms = |od: &[ODEntry]| {
+        // On reset COMMS, only the communications objects (0x1000-0x1fff) are restored. The node
+        // library will handle restoring the default values before calling the reset_comms callback.
+        // Then the application may restore objects from persistent storage if it supports that.
+        read_persisted_objects(&mut flash.borrow_mut(), |stored_data| restore_stored_comm_objects(od, stored_data));
+    };
 
-    let mut node = Node::new(
+
+    let callbacks = Callbacks {
+        send_message: &mut move |msg| {
+            let header = zencan_to_fdcan_header(&msg);
+            if let Err(_) = can_tx.transmit(header, msg.data()) {
+                defmt::error!("Error transmitting CAN message");
+            }
+            Ok(())
+        },
+        store_node_config: Some(&mut store_node_config),
+        store_objects: Some(&mut store_objects),
+        reset_app: Some(&mut reset_app),
+        reset_comms: Some(&mut reset_comms),
+        enter_operational: None,
+        enter_stopped: None,
+        enter_preoperational: None,
+    };
+
+    let node = Node::new(
         node_id,
+        callbacks,
         &zencan::NODE_MBOX,
         &zencan::NODE_STATE,
         &zencan::OD_TABLE,
     );
 
-    // Register handlers for saving node data to flash
-    node.register_store_objects(&store_objects);
-    node.register_store_node_config(&store_node_config);
     // Register handler for waking process task
     zencan::NODE_MBOX.set_process_notify_callback(&notify_can_task);
 
@@ -306,7 +341,7 @@ fn main() -> ! {
     unsafe { cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM16_FDCAN_IT0) };
 
     lilos::exec::run_tasks(
-        &mut [pin!(can_task(node, can_tx)), pin!(main_task())],
+        &mut [pin!(can_task(node)), pin!(main_task())],
         lilos::exec::ALL_TASKS,
     )
 }
@@ -332,10 +367,7 @@ fn zencan_to_fdcan_header(msg: &zencan_node::common::CanMessage) -> fdcan::frame
 
 /// A task for running the CAN node processing periodically, or when triggered by the CAN receive
 /// interrupt to run immediately
-async fn can_task(
-    mut node: Node,
-    mut can_tx: fdcan::Tx<FdCan1, NormalOperationMode>,
-) -> Infallible {
+async fn can_task(mut node: Node<'_>) -> Infallible {
     let epoch = lilos::time::TickTime::now();
     let mut timing_pin = gpio::gpios().PB5;
     timing_pin.set_as_output(gpio::Speed::High);
@@ -343,12 +375,7 @@ async fn can_task(
         lilos::time::with_timeout(Duration::from_millis(10), CAN_NOTIFY.until_next()).await;
         timing_pin.set_high();
         let time_us = epoch.elapsed().0 * 1000;
-        node.process(time_us, &mut |msg| {
-            let header = zencan_to_fdcan_header(&msg);
-            if let Err(_) = can_tx.transmit(header, msg.data()) {
-                defmt::error!("Error transmitting CAN message");
-            }
-        });
+        node.process(time_us);
         timing_pin.set_low();
     }
 }

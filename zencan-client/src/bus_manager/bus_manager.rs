@@ -12,15 +12,16 @@ use zencan_common::lss::{LssIdentity, LssState};
 use zencan_common::messages::{NmtCommand, NmtCommandSpecifier, NmtState, ZencanMessage};
 use zencan_common::node_id::ConfiguredNodeId;
 use zencan_common::sdo::AbortCode;
-use zencan_common::CanId;
 use zencan_common::{
+    node_configuration::PdoConfig,
+    pdo::PdoMapping,
     traits::{AsyncCanReceiver, AsyncCanSender},
-    NodeId,
+    CanId, NodeId,
 };
 
 use super::shared_sender::SharedSender;
 use crate::sdo_client::{SdoClient, SdoClientError};
-use crate::{LssError, LssMaster, PdoConfig, PdoMapping, RawAbortCode};
+use crate::{LssError, LssMaster, RawAbortCode};
 
 use super::shared_receiver::{SharedReceiver, SharedReceiverChannel};
 
@@ -191,9 +192,11 @@ async fn read_pdos<S: AsyncCanSender + Sync + Send, R: AsyncCanReceiver>(
         let transmission_type = client.read_u8(comm_base, 2).await?;
 
         let frame = (cob_value & (1 << 29)) != 0;
+        let rtr_disabled = (cob_value & (1 << 30)) != 0;
         let enabled = (cob_value & (1 << 31)) == 0;
+
         let cob_id = cob_value & 0x1FFFFFFF;
-        let cob = if frame {
+        let cob_id = if frame {
             CanId::extended(cob_id)
         } else {
             CanId::std((cob_id & 0x7ff) as u16)
@@ -206,8 +209,9 @@ async fn read_pdos<S: AsyncCanSender + Sync + Send, R: AsyncCanReceiver>(
         }
 
         result.push(PdoConfig {
-            cob,
+            cob_id,
             enabled,
+            rtr_disabled,
             mappings,
             transmission_type,
         });

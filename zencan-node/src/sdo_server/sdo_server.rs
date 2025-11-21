@@ -37,14 +37,14 @@ fn validate_download_size(dl_size: usize, subobj: &SubInfo) -> Result<(), AbortC
     Ok(())
 }
 
-struct SdoResult {
+struct SdoResult<'a> {
     response: Option<SdoResponse>,
     updated_object: Option<ObjectId>,
-    new_state: SdoState,
+    new_state: SdoState<'a>,
 }
 
-impl SdoResult {
-    fn no_response(new_state: SdoState) -> Self {
+impl<'a> SdoResult<'a> {
+    fn no_response(new_state: SdoState<'a>) -> Self {
         Self {
             response: None,
             updated_object: None,
@@ -60,7 +60,7 @@ impl SdoResult {
         }
     }
 
-    fn response(response: SdoResponse, new_state: SdoState) -> Self {
+    fn response(response: SdoResponse, new_state: SdoState<'a>) -> Self {
         Self {
             response: Some(response),
             updated_object: None,
@@ -72,7 +72,7 @@ impl SdoResult {
         response: SdoResponse,
         index: u16,
         sub: u8,
-        new_state: SdoState,
+        new_state: SdoState<'a>,
     ) -> Self {
         Self {
             response: Some(response),
@@ -83,8 +83,8 @@ impl SdoResult {
 }
 
 #[derive(Clone, Copy)]
-struct Segmented {
-    object: &'static ODEntry<'static>,
+struct Segmented<'a> {
+    object: &'a ODEntry<'a>,
     sub: u8,
     toggle_state: bool,
     segment_counter: u32,
@@ -92,30 +92,30 @@ struct Segmented {
 }
 
 #[derive(Clone, Copy)]
-struct DownloadBlock {
+struct DownloadBlock<'a> {
     sub: u8,
     last_segment: u8,
     client_supports_crc: bool,
     crc: u16,
     block_counter: usize,
-    object: &'static ODEntry<'static>,
+    object: &'a ODEntry<'a>,
 }
 
-enum SdoState {
+enum SdoState<'a> {
     Idle,
-    DownloadSegmented(Segmented),
-    UploadSegmented(Segmented),
-    DownloadBlock(DownloadBlock),
-    EndDownloadBlock(DownloadBlock),
+    DownloadSegmented(Segmented<'a>),
+    UploadSegmented(Segmented<'a>),
+    DownloadBlock(DownloadBlock<'a>),
+    EndDownloadBlock(DownloadBlock<'a>),
 }
 
-impl SdoState {
+impl<'a> SdoState<'a> {
     pub fn update(
         &self,
         rx: &SdoReceiver,
         elapsed_us: u32,
-        od: &'static [ODEntry<'static>],
-    ) -> SdoResult {
+        od: &'a [ODEntry<'a>],
+    ) -> SdoResult<'a> {
         match self {
             SdoState::Idle => Self::idle(od, rx),
             SdoState::DownloadSegmented(state) => Self::download_segmented(state, rx, elapsed_us),
@@ -125,7 +125,7 @@ impl SdoState {
         }
     }
 
-    fn idle(od: &'static [ODEntry<'static>], rx: &SdoReceiver) -> SdoResult {
+    fn idle(od: &'a [ODEntry<'a>], rx: &SdoReceiver) -> SdoResult<'a> {
         let req = match rx.take_request() {
             Some(req) => req,
             None => return SdoResult::no_response(SdoState::Idle),
@@ -293,7 +293,11 @@ impl SdoState {
         }
     }
 
-    fn download_segmented(state: &Segmented, rx: &SdoReceiver, elapsed_us: u32) -> SdoResult {
+    fn download_segmented(
+        state: &Segmented<'a>,
+        rx: &SdoReceiver,
+        elapsed_us: u32,
+    ) -> SdoResult<'a> {
         let req = match rx.take_request() {
             Some(req) => req,
             None => {
@@ -412,7 +416,7 @@ impl SdoState {
         }
     }
 
-    fn upload_segmented(state: &Segmented, rx: &SdoReceiver, elapsed_us: u32) -> SdoResult {
+    fn upload_segmented(state: &Segmented<'a>, rx: &SdoReceiver, elapsed_us: u32) -> SdoResult<'a> {
         let req = match rx.take_request() {
             Some(req) => req,
             None => {
@@ -522,7 +526,11 @@ impl SdoState {
         }
     }
 
-    fn download_block(state: &DownloadBlock, rx: &SdoReceiver, elapsed_us: u32) -> SdoResult {
+    fn download_block(
+        state: &DownloadBlock<'a>,
+        rx: &SdoReceiver,
+        elapsed_us: u32,
+    ) -> SdoResult<'a> {
         // During block download, up to 127 block segments are sent out in rapid succession, without
         // any acknowledgement, so the processing of these is handled in the receiver. Here, we wait
         // for the receiver to signal the completion of a block
@@ -620,7 +628,11 @@ impl SdoState {
         }
     }
 
-    fn end_download_block(state: &DownloadBlock, rx: &SdoReceiver, elapsed_us: u32) -> SdoResult {
+    fn end_download_block(
+        state: &DownloadBlock<'a>,
+        rx: &SdoReceiver,
+        elapsed_us: u32,
+    ) -> SdoResult<'a> {
         let req = match rx.take_request() {
             Some(req) => req,
             None => {
@@ -692,11 +704,11 @@ impl SdoState {
 /// A single SDO server can be controlled by a single SDO client (at one time). This struct wraps up
 /// the state and implements handling of SDO requests. A node implementing multiple SDO servers can
 /// instantiate multiple instances of `SdoServer` to track each.
-pub(crate) struct SdoServer {
-    state: SdoState,
+pub(crate) struct SdoServer<'a> {
+    state: SdoState<'a>,
 }
 
-impl SdoServer {
+impl<'a> SdoServer<'a> {
     /// Create a new SDO server
     pub fn new() -> Self {
         Self {
@@ -713,7 +725,7 @@ impl SdoServer {
         &mut self,
         rx: &SdoReceiver,
         elapsed_us: u32,
-        od: &'static [ODEntry<'static>],
+        od: &'a [ODEntry<'a>],
     ) -> (Option<SdoResponse>, Option<ObjectId>) {
         let result = self.state.update(rx, elapsed_us, od);
         self.state = result.new_state;

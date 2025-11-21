@@ -1,6 +1,6 @@
  [tpdo.0]
  enabled = true
- cob = 0x800
+ cob_id = 0x800
  extended = true
  transmission_type = 254
  mappings = [

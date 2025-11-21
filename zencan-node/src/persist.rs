@@ -71,7 +71,7 @@ async fn serialize_object(obj: &ODEntry<'_>, sub: u8, reg: &RefCell<u8>) {
     }
 }
 
-async fn serialize_sm(objects: &[ODEntry<'static>], reg: &RefCell<u8>) {
+async fn serialize_sm(objects: &[ODEntry<'_>], reg: &RefCell<u8>) {
     for obj in objects {
         let max_sub = obj.data.max_sub_number();
 
@@ -154,9 +154,9 @@ impl<F: Future> embedded_io::Read for PersistSerializer<'_, '_, F> {
 }
 
 /// Serialize node data
-pub fn serialize<F: Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize)>(
-    od: &'static [ODEntry],
-    callback: F,
+pub fn serialize(
+    od: &[ODEntry],
+    callback: &dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize),
 ) {
     let reg = RefCell::new(0);
     let fut = pin!(serialize_sm(od, &reg));
@@ -252,16 +252,28 @@ impl<'a> Iterator for PersistNodeReader<'a> {
     }
 }
 
-/// Load values of objects previously persisted in serialized format
+/// Load values of objects previously persisted in serialized format with limited range
+///
+/// All saved objects where `start_index <= saved object index <= end_index` will be restored to the
+/// object dictionary. Saved objects outside this range will be dropped.
 ///
 /// # Arguments
 /// - `od`: The object dictionary where objects will be updated
 /// - `stored_data`: A slice of bytes, as previously provided to the store_objects callback.
-pub fn restore_stored_objects(od: &[ODEntry], stored_data: &[u8]) {
+/// - 'start_index
+pub fn restore_stored_objects_ranged(
+    od: &[ODEntry],
+    stored_data: &[u8],
+    start_index: u16,
+    end_index: u16,
+) {
     let reader = PersistNodeReader::new(stored_data);
     for item in reader {
         match item {
             PersistNodeRef::ObjectValue(restore) => {
+                if restore.index < start_index || restore.index > end_index {
+                    continue;
+                }
                 if let Some(obj) = find_object(od, restore.index) {
                     if let Ok(_sub_info) = obj.sub_info(restore.sub) {
                         debug!(
@@ -287,6 +299,18 @@ pub fn restore_stored_objects(od: &[ODEntry], stored_data: &[u8]) {
             PersistNodeRef::Unknown(id) => warn!("Unknown persisted object read: {}", id[0]),
         }
     }
+}
+
+/// Restore all stored objects in stored data to the object dict
+pub fn restore_stored_objects(od: &[ODEntry], stored_data: &[u8]) {
+    restore_stored_objects_ranged(od, stored_data, 0, u16::MAX);
+}
+
+/// Restore only communications objects from the stored data to the object dict
+///
+/// Communications objects are objects 0x1000-0x1fff.
+pub fn restore_stored_comm_objects(od: &[ODEntry], stored_data: &[u8]) {
+    restore_stored_objects_ranged(od, stored_data, 0x1000, 0x1fff);
 }
 
 #[cfg(test)]
@@ -379,7 +403,7 @@ mod tests {
         inst200.string.set_str("test".as_bytes()).unwrap();
 
         let data = RefCell::new(Vec::new());
-        serialize(od, |reader, _size| {
+        serialize(od, &|reader, _size| {
             const CHUNK_SIZE: usize = 2;
             let mut buf = [0; CHUNK_SIZE];
             loop {

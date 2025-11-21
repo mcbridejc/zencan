@@ -82,7 +82,12 @@ impl AccessType {
 
 /// Possible PDO mapping values for an object
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub enum PdoMapping {
+#[cfg_attr(
+    feature = "std",
+    derive(serde::Deserialize),
+    serde(rename_all = "lowercase")
+)]
+pub enum PdoMappable {
     /// Object cannot be mapped to PDOs
     #[default]
     None,
@@ -92,6 +97,18 @@ pub enum PdoMapping {
     Tpdo,
     /// Object can be mapped to both RPDOs and TPDOs
     Both,
+}
+
+impl PdoMappable {
+    /// Can be mapped to a TPDO
+    pub fn supports_tpdo(&self) -> bool {
+        matches!(self, PdoMappable::Tpdo | PdoMappable::Both)
+    }
+
+    /// Can be mapped to an RPDO
+    pub fn supports_rpdo(&self) -> bool {
+        matches!(self, PdoMappable::Rpdo | PdoMappable::Both)
+    }
 }
 
 /// Indicate the type of data stored in an object
@@ -173,7 +190,7 @@ pub struct SubInfo {
     /// Indicates what accesses (i.e. read/write) are allowed on this sub object
     pub access_type: AccessType,
     /// Indicates whether this sub may be mapped to PDOs
-    pub pdo_mapping: PdoMapping,
+    pub pdo_mapping: PdoMappable,
     /// Indicates whether this sub should be persisted when data is saved
     pub persist: bool,
 }
@@ -184,7 +201,7 @@ impl SubInfo {
         size: 1,
         data_type: DataType::UInt8,
         access_type: AccessType::Const,
-        pdo_mapping: PdoMapping::None,
+        pdo_mapping: PdoMappable::None,
         persist: false,
     };
 
@@ -194,7 +211,7 @@ impl SubInfo {
             size: 4,
             data_type: DataType::UInt32,
             access_type: AccessType::Ro,
-            pdo_mapping: PdoMapping::None,
+            pdo_mapping: PdoMappable::None,
             persist: false,
         }
     }
@@ -205,7 +222,7 @@ impl SubInfo {
             size: 2,
             data_type: DataType::UInt16,
             access_type: AccessType::Ro,
-            pdo_mapping: PdoMapping::None,
+            pdo_mapping: PdoMappable::None,
             persist: false,
         }
     }
@@ -216,7 +233,7 @@ impl SubInfo {
             size: 1,
             data_type: DataType::UInt8,
             access_type: AccessType::Ro,
-            pdo_mapping: PdoMapping::None,
+            pdo_mapping: PdoMappable::None,
             persist: false,
         }
     }
@@ -227,7 +244,7 @@ impl SubInfo {
             size: 4,
             data_type: DataType::Int32,
             access_type: AccessType::Ro,
-            pdo_mapping: PdoMapping::None,
+            pdo_mapping: PdoMappable::None,
             persist: false,
         }
     }
@@ -238,7 +255,7 @@ impl SubInfo {
             size: 2,
             data_type: DataType::Int16,
             access_type: AccessType::Ro,
-            pdo_mapping: PdoMapping::None,
+            pdo_mapping: PdoMappable::None,
             persist: false,
         }
     }
@@ -249,7 +266,7 @@ impl SubInfo {
             size: 1,
             data_type: DataType::Int8,
             access_type: AccessType::Ro,
-            pdo_mapping: PdoMapping::None,
+            pdo_mapping: PdoMappable::None,
             persist: false,
         }
     }
@@ -260,7 +277,7 @@ impl SubInfo {
             size: 4,
             data_type: DataType::Real32,
             access_type: AccessType::Ro,
-            pdo_mapping: PdoMapping::None,
+            pdo_mapping: PdoMappable::None,
             persist: false,
         }
     }
@@ -271,7 +288,7 @@ impl SubInfo {
             size,
             data_type: DataType::VisibleString,
             access_type: AccessType::Ro,
-            pdo_mapping: PdoMapping::None,
+            pdo_mapping: PdoMappable::None,
             persist: false,
         }
     }

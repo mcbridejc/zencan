@@ -1,48 +1,28 @@
 #![allow(dead_code)]
 use std::{future::Future, time::Instant};
 
-use futures::executor::block_on;
-use integration_tests::sim_bus::{SimBus, SimBusReceiver, SimBusSender};
+use crate::sim_bus::{SimBus, SimBusReceiver, SimBusSender};
 use zencan_client::SdoClient;
-use zencan_common::{
-    messages::ZencanMessage,
-    traits::{AsyncCanReceiver, AsyncCanSender},
-    NodeId,
-};
-use zencan_node::object_dict::ODEntry;
-use zencan_node::{Node, NodeMbox, NodeStateAccess};
+use zencan_common::{messages::ZencanMessage, traits::AsyncCanReceiver};
+use zencan_node::Node;
 
-pub fn setup_single_node<'a, S: NodeStateAccess>(
-    od: &'static [ODEntry],
-    mbox: &'static NodeMbox,
-    state: &'static S,
-) -> (
-    Node,
-    SdoClient<SimBusSender<'a>, SimBusReceiver>,
-    SimBus<'a>,
-) {
-    const SLAVE_NODE_ID: u8 = 1;
-
-    let node = Node::new(NodeId::new(SLAVE_NODE_ID).unwrap(), mbox, state, od);
-
-    let mut bus = SimBus::new(vec![mbox]);
-
+pub fn get_sdo_client<'a>(
+    bus: &mut SimBus<'a>,
+    node_id: u8,
+) -> SdoClient<SimBusSender<'a>, SimBusReceiver> {
     let sender = bus.new_sender();
     let receiver = bus.new_receiver();
-    let client = SdoClient::new_std(SLAVE_NODE_ID, sender, receiver);
-
-    (node, client, bus)
+    SdoClient::new_std(node_id, sender, receiver)
 }
 
 #[allow(dead_code)]
-pub async fn test_with_background_process<'b, T>(
-    nodes: &mut [&mut Node],
-    sender: &mut SimBusSender<'b>,
+pub async fn test_with_background_process<T>(
+    nodes: &mut [&mut Node<'_>],
     test_task: impl Future<Output = T> + 'static,
 ) -> T {
     // Call process once, to make sure the node is initialized before SDO requests come in
     for node in nodes.iter_mut() {
-        node.process(0, &mut |tx_msg| block_on(sender.send(tx_msg)).unwrap());
+        node.process(0);
     }
 
     let epoch = Instant::now();
@@ -51,7 +31,7 @@ pub async fn test_with_background_process<'b, T>(
             let now_us = Instant::now().duration_since(epoch).as_micros() as u64;
             tokio::time::sleep(tokio::time::Duration::from_micros(100)).await;
             for node in nodes.iter_mut() {
-                node.process(now_us, &mut |tx_msg| block_on(sender.send(tx_msg)).unwrap());
+                node.process(now_us);
             }
         }
     };

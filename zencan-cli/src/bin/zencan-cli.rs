@@ -19,8 +19,11 @@ use reedline::{
 use shlex::Shlex;
 use zencan_cli::command::{Cli, Commands, LssCommands, NmtAction, SdoDataType};
 use zencan_client::{
-    common::{lss::LssState, node_id::ConfiguredNodeId, traits::AsyncCanSender, NodeId},
-    open_socketcan, BusManager, NodeConfig,
+    common::{
+        lss::LssState, node_configuration::NodeConfig, node_id::ConfiguredNodeId,
+        traits::AsyncCanSender, NodeId,
+    },
+    open_socketcan, BusManager,
 };
 
 #[derive(Parser)]
@@ -432,7 +435,7 @@ async fn run_command<S: AsyncCanSender + Sync + Send>(cmd: Commands, manager: &m
                         println!("TPDO{i}:");
                         println!(
                             "  valid={}, COB={}, transmission_type={}",
-                            pdo.enabled, pdo.cob, pdo.transmission_type
+                            pdo.enabled, pdo.cob_id, pdo.transmission_type
                         );
                         if !pdo.mappings.is_empty() {
                             println!("  mapping: ");
@@ -448,7 +451,7 @@ async fn run_command<S: AsyncCanSender + Sync + Send>(cmd: Commands, manager: &m
                         println!("RPDO{i}:");
                         println!(
                             "  valid={}, COB={}, transmission_type={}",
-                            pdo.enabled, pdo.cob, pdo.transmission_type
+                            pdo.enabled, pdo.cob_id, pdo.transmission_type
                         );
                         if !pdo.mappings.is_empty() {
                             println!("  mapping: ");
