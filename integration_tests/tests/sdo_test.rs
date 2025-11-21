@@ -6,33 +6,28 @@ use std::{
     },
 };
 
-use integration_tests::sim_bus::SimBus;
-use zencan_client::{RawAbortCode, SdoClient, SdoClientError};
-use zencan_common::{sdo::AbortCode, NodeId};
+use integration_tests::{object_dict1, prelude::*};
 use zencan_node::object_dict::SubObjectAccess;
-use zencan_node::Node;
-
-mod utils;
-use utils::{test_with_background_process, BusLogger};
 
 #[tokio::test]
 #[serial_test::serial]
 async fn test_sdo_read() {
-    const SLAVE_NODE_ID: u8 = 1;
+    use object_dict1::*;
+    const NODE_ID: u8 = 1;
 
-    let od = &integration_tests::object_dict1::OD_TABLE;
-    let state = &integration_tests::object_dict1::NODE_STATE;
-    let mbox = &integration_tests::object_dict1::NODE_MBOX;
+    let mut bus = SimBus::new();
+    let mut sender = bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new(&mut sender);
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
+    );
+    let mut client = get_sdo_client(&mut bus, NODE_ID);
 
-    let mut node = Node::new(NodeId::new(SLAVE_NODE_ID).unwrap(), mbox, state, od);
-    let mut bus = SimBus::new(vec![mbox]);
-    let mut sender = bus.new_sender();
-
-    test_with_background_process(&mut [&mut node], &mut sender, async move {
-        let sender = bus.new_sender();
-        let receiver = bus.new_receiver();
-        let mut client = SdoClient::new_std(SLAVE_NODE_ID, sender, receiver);
-
+    let test_task = async move {
         client
             .download(0x3000, 0, &[0xa, 0xb, 0xc, 0xd])
             .await
@@ -40,28 +35,31 @@ async fn test_sdo_read() {
         let read = client.upload(0x3000, 0).await.unwrap();
 
         assert_eq!(vec![0xa, 0xb, 0xc, 0xd], read);
-    })
-    .await;
+    };
+
+    test_with_background_process(&mut [&mut node], test_task).await;
 }
 
 #[tokio::test]
 #[serial_test::serial]
 async fn test_block_download() {
-    const SLAVE_NODE_ID: u8 = 1;
+    use object_dict1::*;
+    const NODE_ID: u8 = 1;
 
-    let od = &integration_tests::object_dict1::OD_TABLE;
-    let state = &integration_tests::object_dict1::NODE_STATE;
-    let mbox = &integration_tests::object_dict1::NODE_MBOX;
-    let mut node = Node::new(NodeId::new(SLAVE_NODE_ID).unwrap(), mbox, state, od);
-    let mut bus = SimBus::new(vec![mbox]);
-    let mut sender = bus.new_sender();
+    let mut bus = SimBus::new();
+    let mut sender = bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new(&mut sender);
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
+    );
+    let mut client = get_sdo_client(&mut bus, NODE_ID);
     let _bus_logger = BusLogger::new(bus.new_receiver());
 
-    test_with_background_process(&mut [&mut node], &mut sender, async move {
-        let sender = bus.new_sender();
-        let receiver = bus.new_receiver();
-        let mut client = SdoClient::new_std(SLAVE_NODE_ID, sender, receiver);
-
+    let test_task = async move {
         let data = Vec::from_iter(0..128);
         client.block_download(0x3006, 0, &data).await.unwrap();
 
@@ -78,8 +76,8 @@ async fn test_block_download() {
             data,
             integration_tests::object_dict1::OBJECT3006.get_value()
         );
-    })
-    .await;
+    };
+    test_with_background_process(&mut [&mut node], test_task).await;
 }
 
 #[derive(Debug)]
@@ -161,14 +159,20 @@ impl SubObjectAccess for MockDomainData {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_domain_access() {
-    const SLAVE_NODE_ID: u8 = 1;
+    use object_dict1::*;
+    const NODE_ID: u8 = 1;
 
-    let od = &integration_tests::object_dict1::OD_TABLE;
-    let state = &integration_tests::object_dict1::NODE_STATE;
-    let mbox = &integration_tests::object_dict1::NODE_MBOX;
-    let mut node = Node::new(NodeId::new(SLAVE_NODE_ID).unwrap(), mbox, state, od);
-    let mut bus = SimBus::new(vec![mbox]);
-    let mut sender = bus.new_sender();
+    let mut bus = SimBus::new();
+    let mut sender = bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new(&mut sender);
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
+    );
+    let mut client = get_sdo_client(&mut bus, NODE_ID);
     let _bus_logger = BusLogger::new(bus.new_receiver());
 
     let domain: &MockDomainData = Box::leak(Box::new(MockDomainData::new(vec![0; 1200])));
@@ -177,11 +181,7 @@ async fn test_domain_access() {
         .value
         .register_handler(domain);
 
-    test_with_background_process(&mut [&mut node], &mut sender, async move {
-        let sender = bus.new_sender();
-        let receiver = bus.new_receiver();
-        let mut client = SdoClient::new_std(SLAVE_NODE_ID, sender, receiver);
-
+    let test_task = async move {
         // Create a long chunk of data
         let mut write_data = Vec::from_iter((0..1200).map(|i| i as u8));
 
@@ -209,6 +209,7 @@ async fn test_domain_access() {
             },
             result.unwrap_err()
         );
-    })
-    .await;
+    };
+
+    test_with_background_process(&mut [&mut node], test_task).await;
 }

@@ -236,7 +236,7 @@ impl ObjectAccess for BootloaderSection {
                 size: self.size as usize,
                 data_type: zencan_common::objects::DataType::Domain,
                 access_type: zencan_common::objects::AccessType::Rw,
-                pdo_mapping: zencan_common::objects::PdoMapping::None,
+                pdo_mapping: zencan_common::objects::PdoMappable::None,
                 persist: false,
             }),
             _ => Err(AbortCode::NoSuchSubIndex),

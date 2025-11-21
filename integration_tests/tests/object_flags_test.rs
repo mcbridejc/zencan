@@ -5,7 +5,7 @@ use zencan_node::object_dict::ObjectAccess;
 fn test_event_flags() {
     fn test_event_flags(obj: &dyn ObjectAccess, n: u8) {
         // No flags set after toggle
-        NODE_STATE.pdo_sync().toggle();
+        NODE_STATE.object_flag_sync().toggle();
         for i in 0..n {
             assert!(!obj.read_event_flag(i));
         }
@@ -15,7 +15,7 @@ fn test_event_flags() {
         }
 
         // Toggle and read back set flags
-        NODE_STATE.pdo_sync().toggle();
+        NODE_STATE.object_flag_sync().toggle();
         for i in 0..n {
             assert!(obj.read_event_flag(i));
         }
@@ -24,7 +24,7 @@ fn test_event_flags() {
         obj.set_event_flag(0).unwrap();
 
         // Toggle and check they are cleared, except the first
-        NODE_STATE.pdo_sync().toggle();
+        NODE_STATE.object_flag_sync().toggle();
 
         for i in 0..n {
             assert_eq!(i == 0, obj.read_event_flag(i));

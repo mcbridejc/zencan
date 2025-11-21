@@ -20,7 +20,7 @@ impl ConfiguredNodeId {
     /// Try to create a new ConfiguredId
     ///
     /// It will fail if value is invalid (i.e. <1 or >127)
-    pub fn new(value: u8) -> Result<Self, InvalidNodeIdError> {
+    pub const fn new(value: u8) -> Result<Self, InvalidNodeIdError> {
         if (value > 0 && value < 128) || value == 255 {
             Ok(ConfiguredNodeId(value))
         } else {
@@ -50,11 +50,14 @@ impl NodeId {
     /// Try to create a new NodeId from a u8
     ///
     /// Will fail if the value is not a valid node ID
-    pub fn new(value: u8) -> Result<Self, InvalidNodeIdError> {
+    pub const fn new(value: u8) -> Result<Self, InvalidNodeIdError> {
         if value == 255 {
             Ok(NodeId::Unconfigured)
         } else {
-            ConfiguredNodeId::new(value).map(NodeId::Configured)
+            match ConfiguredNodeId::new(value) {
+                Ok(id) => Ok(NodeId::Configured(id)),
+                Err(e) => Err(e),
+            }
         }
     }
 

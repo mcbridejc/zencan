@@ -39,7 +39,7 @@ impl CanId {
     }
 
     /// Get the raw ID as a u32
-    pub fn raw(&self) -> u32 {
+    pub const fn raw(&self) -> u32 {
         match self {
             CanId::Extended(id) => *id,
             CanId::Std(id) => *id as u32,
@@ -47,7 +47,7 @@ impl CanId {
     }
 
     /// Returns true if this ID is an extended ID
-    pub fn is_extended(&self) -> bool {
+    pub const fn is_extended(&self) -> bool {
         match self {
             CanId::Extended(_) => true,
             CanId::Std(_) => false,

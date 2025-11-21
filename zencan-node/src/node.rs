@@ -1,6 +1,8 @@
 //! Implements the core Node object
 //!
 
+use core::{convert::Infallible, sync::atomic::Ordering};
+
 use zencan_common::{
     constants::object_ids,
     lss::LssIdentity,
@@ -14,17 +16,81 @@ use crate::{
     lss_slave::{LssConfig, LssSlave},
     node_mbox::NodeMbox,
     object_dict::{find_object, ODEntry},
-    storage::StoreObjectsCallback,
 };
 use crate::{node_state::NodeStateAccess, sdo_server::SdoServer};
 
 use defmt_or_log::{debug, info};
 
-type StoreNodeConfigCallback = dyn Fn(&NodeId) + Sync;
+pub type MessageHandlerFn<'a> = dyn FnMut(CanMessage) -> Result<(), CanMessage> + 'a;
+pub type StoreNodeConfigFn<'a> = dyn FnMut(NodeId) + 'a;
+pub type StoreObjectsFn<'a> = dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize) + 'a;
+pub type StateChangeFn<'a> = dyn FnMut(&'a [ODEntry<'a>]) + 'a;
 
-#[derive(Default)]
-struct Callbacks {
-    store_node_config: Option<&'static StoreNodeConfigCallback>,
+/// Collection of callbacks events which Node object can call.
+///
+/// Most are optional, and may be implemented by the application or not.
+#[allow(missing_debug_implementations)]
+pub struct Callbacks<'a> {
+    /// Send a CAN message to the bus
+    ///
+    /// This method is required to be provided
+    pub send_message: &'a mut MessageHandlerFn<'a>,
+
+    /// Store node config to flash
+    ///
+    /// An application should implement this callback in order to support storing a configured node
+    /// ID persistently. It is triggered when the LSS StoreConfiguration command is received. The
+    /// passed NodeId should be stored, and used when creating the [`Node`] object on the next boot.
+    pub store_node_config: Option<&'a mut StoreNodeConfigFn<'a>>,
+
+    /// Store object data to persistent flash
+    ///
+    /// The bytes read from the provided reader (arg 1) should be stored. The total number of bytes
+    /// in the stream is given in the second arg.
+    pub store_objects: Option<&'a mut StoreObjectsFn<'a>>,
+
+    /// The RESET_APP NMT state has been entered
+    ///
+    /// If the application supported storing persistent object values, it should restore them now
+    /// using the [`restore_stored_objects`](crate::restore_stored_objects) method. The application
+    /// should also do whatever is appropraite to reset its state to it's reset condition.
+    pub reset_app: Option<&'a mut StateChangeFn<'a>>,
+
+    /// The RESET_COMMS NMT state has been entered
+    ///
+    /// During RESET COMMS, communications objects (i.e. 0x1000-0x1fff) are reset to their boot up
+    /// values. Application which store persistent object values should restore ONLY THE COMM
+    /// OBJECTS now, using the [`restore_stored_comm_objects`](crate::restore_stored_comm_objects)
+    /// function.
+    ///
+    /// This event will only be triggered by an NMT RESET_COMMS command -- when a RESET_APP event
+    /// occurs, only the reset_app callback is called.
+    pub reset_comms: Option<&'a mut StateChangeFn<'a>>,
+
+    /// The node is entering OPERATIONAL state
+    pub enter_operational: Option<&'a mut StateChangeFn<'a>>,
+
+    /// The node is entering the STOPPED state
+    pub enter_stopped: Option<&'a mut StateChangeFn<'a>>,
+
+    /// The node is entering the PRE-OPERATIONAL state
+    pub enter_preoperational: Option<&'a mut StateChangeFn<'a>>,
+}
+
+impl<'a> Callbacks<'a> {
+    /// Create a new Callbacks struct with the provided send_message callback
+    pub fn new(send_message: &'a mut MessageHandlerFn<'a>) -> Self {
+        Self {
+            send_message,
+            store_node_config: None,
+            store_objects: None,
+            reset_app: None,
+            reset_comms: None,
+            enter_operational: None,
+            enter_stopped: None,
+            enter_preoperational: None,
+        }
+    }
 }
 
 fn read_identity(od: &[ODEntry]) -> Option<LssIdentity> {
@@ -62,24 +128,24 @@ fn read_autostart(od: &[ODEntry]) -> Option<bool> {
 /// [`NodeMbox::set_process_notify_callback`], and use this callback to trigger an immediate call to
 /// process, e.g. by waking a task or signaling the processing thread.
 #[allow(missing_debug_implementations)]
-pub struct Node {
+pub struct Node<'a> {
     node_id: NodeId,
     nmt_state: NmtState,
-    sdo_server: SdoServer,
+    sdo_server: SdoServer<'a>,
     lss_slave: LssSlave,
     message_count: u32,
-    od: &'static [ODEntry<'static>],
-    mbox: &'static NodeMbox,
-    state: &'static dyn NodeStateAccess,
+    od: &'a [ODEntry<'a>],
+    mbox: &'a NodeMbox,
+    state: &'a dyn NodeStateAccess,
     reassigned_node_id: Option<NodeId>,
-    callbacks: Callbacks,
     next_heartbeat_time_us: u64,
     heartbeat_period_ms: u16,
     auto_start: bool,
     last_process_time_us: u64,
+    callbacks: Callbacks<'a>,
 }
 
-impl Node {
+impl<'a> Node<'a> {
     /// Create a new [`Node`]
     ///
     /// # Arguments
@@ -90,9 +156,10 @@ impl Node {
     /// * `od` - The `OD_TABLE` object containing the object dictionary created by `zencan-build`
     pub fn new(
         node_id: NodeId,
-        mbox: &'static NodeMbox,
-        state: &'static dyn NodeStateAccess,
-        od: &'static [ODEntry<'static>],
+        callbacks: Callbacks<'a>,
+        mbox: &'a NodeMbox,
+        state: &'a dyn NodeStateAccess,
+        od: &'a [ODEntry<'a>],
     ) -> Self {
         let message_count = 0;
         let sdo_server = SdoServer::new();
@@ -104,12 +171,21 @@ impl Node {
         let nmt_state = NmtState::Bootup;
         let reassigned_node_id = None;
 
-        let heartbeat_period_ms = read_heartbeat_period(od).expect("Heartbeat object must exist");
+        // Storage command is supported if the application provides a callback
+        if callbacks.store_objects.is_some() {
+            state
+                .storage_context()
+                .store_supported
+                .store(true, Ordering::Relaxed);
+        }
+
+        let heartbeat_period_ms = read_heartbeat_period(od).unwrap_or(0);
         let next_heartbeat_time_us = 0;
-        let auto_start = read_autostart(od).expect("auto start object must exist");
+        let auto_start = read_autostart(od).unwrap_or(false);
         let last_process_time_us = 0;
-        Self {
+        let mut node = Self {
             node_id,
+            callbacks,
             nmt_state,
             sdo_server,
             lss_slave,
@@ -121,9 +197,11 @@ impl Node {
             next_heartbeat_time_us,
             heartbeat_period_ms,
             auto_start,
-            callbacks: Callbacks::default(),
             last_process_time_us,
-        }
+        };
+
+        node.reset_app();
+        node
     }
 
     /// Manually set the node ID. Changing the node id will cause an NMT comm reset to occur,
@@ -133,16 +211,6 @@ impl Node {
         self.reassigned_node_id = Some(node_id);
     }
 
-    /// Register a callback to store node configuration data persistently
-    pub fn register_store_node_config(&mut self, cb: &'static StoreNodeConfigCallback) {
-        self.callbacks.store_node_config = Some(cb);
-    }
-
-    /// Register a callback to store object data persistently
-    pub fn register_store_objects(&mut self, cb: &'static StoreObjectsCallback) {
-        self.state.storage_context().store_callback.store(Some(cb));
-    }
-
     /// Run periodic processing
     ///
     /// This should be called periodically by the application so that the node can update it's
@@ -150,18 +218,17 @@ impl Node {
     ///
     /// It is sufficient to call this based on a timer, but the [NodeMbox] object also provides a
     /// notification callback, which can be used by an application to accelerate the call to process
-    /// when an action is required
+    /// when an action is required.
     ///
     /// # Arguments
     /// - `now_us`: A monotonic time in microseconds. This is used for measuring time and triggering
     ///   time-based actions such as heartbeat transmission or SDO timeout
-    /// - `send_cb`: A callback function for transmitting can messages
     ///
     /// # Returns
     ///
     /// A boolean indicating if objects were updated. This will be true when an SDO download has
     /// been completed, or when one or more RPDOs have been received.
-    pub fn process(&mut self, now_us: u64, send_cb: &mut dyn FnMut(CanMessage)) -> bool {
+    pub fn process(&mut self, now_us: u64) -> bool {
         let elapsed = (now_us - self.last_process_time_us) as u32;
         self.last_process_time_us = now_us;
 
@@ -173,15 +240,16 @@ impl Node {
 
         if self.nmt_state == NmtState::Bootup {
             // Set state before calling boot_up, so the heartbeat state is correct
-            self.nmt_state = NmtState::PreOperational;
-            self.boot_up(send_cb);
+            self.enter_preoperational();
+            self.boot_up();
         }
 
         // If auto start is set on boot, and we already have an ID, we make the first transition to
         // Operational automatically
         if self.auto_start && self.node_id.is_configured() {
+            // Clear flag so that we will not automatically enter operational again until reboot
             self.auto_start = false;
-            self.nmt_state = NmtState::Operational;
+            self.enter_operational();
         }
 
         // Process SDO server
@@ -189,10 +257,23 @@ impl Node {
             self.sdo_server
                 .process(self.mbox.sdo_receiver(), elapsed, self.od);
         if let Some(resp) = resp {
-            send_cb(resp.to_can_message(self.sdo_tx_cob_id()));
+            self.send_message(resp.to_can_message(self.sdo_tx_cob_id()));
         }
         if updated_index.is_some() {
             update_flag = true;
+        }
+
+        // Read and clear the store command flag
+        if self
+            .state
+            .storage_context()
+            .store_flag
+            .swap(false, Ordering::Relaxed)
+        {
+            // If the flag is set, and the user has provided a callback, call it
+            if let Some(cb) = &mut self.callbacks.store_objects {
+                crate::persist::serialize(self.od, *cb);
+            }
         }
 
         // Process NMT
@@ -211,14 +292,14 @@ impl Node {
         }
 
         if let Ok(Some(resp)) = self.lss_slave.process(self.mbox.lss_receiver()) {
-            send_cb(resp.to_can_message(LSS_RESP_ID));
+            self.send_message(resp.to_can_message(LSS_RESP_ID));
 
             if let Some(event) = self.lss_slave.pending_event() {
                 info!("LSS Slave Event: {:?}", event);
                 match event {
                     crate::lss_slave::LssEvent::StoreConfiguration => {
-                        if let Some(cb) = self.callbacks.store_node_config {
-                            (cb)(&self.node_id)
+                        if let Some(cb) = &mut self.callbacks.store_node_config {
+                            (cb)(self.node_id)
                         }
                     }
                     crate::lss_slave::LssEvent::ActivateBitTiming {
@@ -234,7 +315,7 @@ impl Node {
         }
 
         if self.heartbeat_period_ms != 0 && now_us >= self.next_heartbeat_time_us {
-            self.send_heartbeat(send_cb);
+            self.send_heartbeat();
             // Perform catchup if we are behind, e.g. if we have not send a heartbeat in a long
             // time because we have not been configured
             if self.next_heartbeat_time_us < now_us {
@@ -250,7 +331,7 @@ impl Node {
             // toggle. Tracking the global trigger is a performance boost, at least in the frequent
             // case when no events have been triggered. The goal is for `process` to be as fast as
             // possible when it has nothing to do, so it can be called frequently with little cost.
-            let global_trigger = self.state.get_pdo_sync().toggle();
+            let global_trigger = self.state.object_flag_sync().toggle();
 
             for pdo in self.state.get_tpdos() {
                 if !(pdo.valid()) {
@@ -262,13 +343,13 @@ impl Node {
                         let mut data = [0u8; 8];
                         pdo.read_pdo_data(&mut data);
                         let msg = CanMessage::new(pdo.cob_id(), &data);
-                        send_cb(msg);
+                        self.send_message(msg);
                     }
                 } else if sync && pdo.sync_update() {
                     let mut data = [0u8; 8];
                     pdo.read_pdo_data(&mut data);
                     let msg = CanMessage::new(pdo.cob_id(), &data);
-                    send_cb(msg);
+                    self.send_message(msg);
                 }
             }
 
@@ -294,16 +375,11 @@ impl Node {
         let prev_state = self.nmt_state;
 
         match cmd {
-            NmtCommandSpecifier::Start => self.nmt_state = NmtState::Operational,
-            NmtCommandSpecifier::Stop => self.nmt_state = NmtState::Stopped,
-            NmtCommandSpecifier::EnterPreOp => self.nmt_state = NmtState::PreOperational,
-            NmtCommandSpecifier::ResetApp => {
-                // if let Some(cb) = self.app_reset_callback.as_mut() {
-                //     cb();
-                // }
-                self.nmt_state = NmtState::Bootup;
-            }
-            NmtCommandSpecifier::ResetComm => self.nmt_state = NmtState::Bootup,
+            NmtCommandSpecifier::Start => self.enter_operational(),
+            NmtCommandSpecifier::Stop => self.enter_stopped(),
+            NmtCommandSpecifier::EnterPreOp => self.enter_preoperational(),
+            NmtCommandSpecifier::ResetApp => self.reset_app(),
+            NmtCommandSpecifier::ResetComm => self.reset_comm(),
         }
 
         debug!(
@@ -337,7 +413,55 @@ impl Node {
         CanId::Std(0x600 + node_id as u16)
     }
 
-    fn boot_up(&mut self, sender: &mut dyn FnMut(CanMessage)) {
+    fn send_message(&mut self, msg: CanMessage) {
+        // TODO: return  the error, and then handle it everywhere
+        (*self.callbacks.send_message)(msg).ok();
+    }
+
+    fn enter_operational(&mut self) {
+        self.nmt_state = NmtState::Operational;
+        if let Some(cb) = &mut self.callbacks.enter_operational {
+            (*cb)(self.od);
+        }
+    }
+
+    fn enter_stopped(&mut self) {
+        self.nmt_state = NmtState::Stopped;
+        if let Some(cb) = &mut self.callbacks.enter_stopped {
+            (*cb)(self.od);
+        }
+    }
+
+    fn enter_preoperational(&mut self) {
+        self.nmt_state = NmtState::PreOperational;
+        if let Some(cb) = &mut self.callbacks.enter_preoperational {
+            (*cb)(self.od);
+        }
+    }
+
+    fn reset_app(&mut self) {
+        // TODO: All objects should get reset to their defaults, but that isn't yet supported
+        for pdo in self.state.get_rpdos().iter().chain(self.state.get_tpdos()) {
+            pdo.init_defaults(self.node_id);
+        }
+
+        if let Some(reset_app_cb) = &mut self.callbacks.reset_app {
+            (*reset_app_cb)(self.od);
+        }
+        self.nmt_state = NmtState::Bootup;
+    }
+
+    fn reset_comm(&mut self) {
+        for pdo in self.state.get_rpdos().iter().chain(self.state.get_tpdos()) {
+            pdo.init_defaults(self.node_id);
+        }
+        if let Some(reset_comms_cb) = &mut self.callbacks.reset_comms {
+            (*reset_comms_cb)(self.od);
+        }
+        self.nmt_state = NmtState::Bootup;
+    }
+
+    fn boot_up(&mut self) {
         // Reset the LSS slave with the new ID
         self.lss_slave.update_config(LssConfig {
             identity: read_identity(self.od).unwrap(),
@@ -348,18 +472,18 @@ impl Node {
         if let NodeId::Configured(node_id) = self.node_id {
             info!("Booting node with ID {}", node_id.raw());
             self.mbox.set_sdo_cob_id(Some(self.sdo_rx_cob_id()));
-            self.send_heartbeat(sender);
+            self.send_heartbeat();
         }
     }
 
-    fn send_heartbeat(&mut self, sender: &mut dyn FnMut(CanMessage)) {
+    fn send_heartbeat(&mut self) {
         if let NodeId::Configured(node_id) = self.node_id {
             let heartbeat = Heartbeat {
                 node: node_id.raw(),
                 toggle: false,
                 state: self.nmt_state,
             };
-            sender(heartbeat.into());
+            self.send_message(heartbeat.into());
             self.next_heartbeat_time_us += (self.heartbeat_period_ms as u64) * 1000;
         }
     }

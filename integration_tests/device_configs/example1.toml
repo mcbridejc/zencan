@@ -11,6 +11,25 @@ revision_number = 1
 num_rpdo = 4
 num_tpdo = 4
 
+[pdos.tpdo.1]
+enabled = true
+cob_id = 0x200
+add_node_id = true
+transmission_type = 254
+mappings = [
+    { index=0x2000, sub=1, size=32 },
+]
+
+[pdos.rpdo.0]
+enabled = true
+cob_id = 0x300
+add_node_id = false
+transmission_type = 254
+mappings = [
+    { index = 0x2000, sub=2, size=32 },
+]
+
+
 [[objects]]
 index = 0x2000
 parameter_name = "Array Example"

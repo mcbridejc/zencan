@@ -5,3 +5,6 @@ Cargo.lock
 
 # IDE project dirs
 .idea/
+
+# Syncthing files
+.stfolder

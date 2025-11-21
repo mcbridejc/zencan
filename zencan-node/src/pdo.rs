@@ -1,13 +1,53 @@
 //! Implementation of PDO configuration objects and PDO transmission
 //!
+//! ## PDO Default Configuration
+//!
+//! PDO default configuration can be controlled in the device config, so that PDOs may be mapped to
+//! certain object and enabled by default in a device. This is done in the `[pdos]` section of the
+//! config, which is defined by the
+//! [`PdoDefaultConfig`](crate::common::device_config::PdoDefaultConfig) struct.
+//!
+//! The default PDO COB ID may be specified as an absolute value, or it may be offset by the node ID
+//! at runtime.
+//!
+//! Example default PDO config:
+//!
+//! ```toml
+//! [pdos]
+//! num_rpdo = 4
+//! num_tpdo = 4
+//!
+//! # Enable TPDO1 to send on 0x200 + NODE_ID
+//! [pdos.tpdo.1]
+//! enabled = true
+//! cob_id = 0x200
+//! add_node_id = true
+//! transmission_type = 254
+//! mappings = [
+//!     { index=0x2000, sub=1, size=32 },
+//! ]
+//!
+//! # Configure RPDO0 to receive on extended ID 0x5000
+//! [pdos.rpdo.0]
+//! enabled = true
+//! extended = true
+//! rtr_disabled = false
+//! cob_id = 0x5000
+//! add_node_id = false
+//! transmission_type = 254
+//! mappings = [
+//!     { index = 0x2000, sub=2, size=32 },
+//! ]
+//! ```
 
 use crate::object_dict::{
     find_object_entry, ConstField, ODEntry, ObjectAccess, ProvidesSubObjects, SubObjectAccess,
 };
 use zencan_common::{
-    objects::{AccessType, DataType, ObjectCode, PdoMapping, SubInfo},
+    objects::{AccessType, DataType, ObjectCode, PdoMappable, SubInfo},
+    pdo::PdoMapping,
     sdo::AbortCode,
-    AtomicCell, CanId,
+    AtomicCell, CanId, NodeId,
 };
 
 /// Specifies the number of mapping parameters supported per PDO
@@ -17,17 +57,121 @@ use zencan_common::{
 const N_MAPPING_PARAMS: usize = 8;
 
 #[derive(Clone, Copy)]
+/// Data structure for storing a PDO object mapping
 struct MappingEntry {
-    object: &'static ODEntry<'static>,
-    sub: u8,
-    length: u8,
+    /// A reference to the object which is mapped
+    pub object: &'static ODEntry<'static>,
+    /// The index of the sub object mapped
+    pub sub: u8,
+    /// The length of the mapping in bytes
+    pub length: u8,
+}
+
+#[allow(missing_debug_implementations)]
+/// Initialization values for a PDO
+#[derive(Copy, Clone)]
+pub struct PdoDefaults {
+    cob_id: u32,
+    flags: u8,
+    transmission_type: u8,
+    mappings: &'static [u32],
+}
+
+impl Default for PdoDefaults {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+#[allow(missing_docs)]
+impl PdoDefaults {
+    const ADD_NODE_ID_FLAG: usize = 0;
+    const VALID_FLAG: usize = 1;
+    const RTR_DISABLED_FLAG: usize = 2;
+    const IS_EXTENDED_FLAG: usize = 3;
+
+    /// The PDO defaults used when no other defaults are configured
+    pub const DEFAULT: PdoDefaults = Self {
+        cob_id: 0,
+        flags: 0,
+        transmission_type: 0,
+        mappings: &[],
+    };
+
+    /// Create a new PdoDefaults object
+    pub const fn new(
+        cob_id: u32,
+        extended: bool,
+        add_node_id: bool,
+        valid: bool,
+        rtr_disabled: bool,
+        transmission_type: u8,
+        mappings: &'static [u32],
+    ) -> Self {
+        // Store flags as a single field to save those precious few bytes
+        let mut flags = 0u8;
+        if valid {
+            flags |= 1 << Self::VALID_FLAG;
+        }
+        if rtr_disabled {
+            flags |= 1 << Self::RTR_DISABLED_FLAG;
+        }
+        if add_node_id {
+            flags |= 1 << Self::ADD_NODE_ID_FLAG;
+        }
+        if extended {
+            flags |= 1 << Self::IS_EXTENDED_FLAG;
+        }
+
+        Self {
+            cob_id,
+            flags,
+            transmission_type,
+            mappings,
+        }
+    }
+
+    pub const fn valid(&self) -> bool {
+        self.flags & (1 << Self::VALID_FLAG) != 0
+    }
+
+    pub const fn rtr_disabled(&self) -> bool {
+        self.flags & (1 << Self::RTR_DISABLED_FLAG) != 0
+    }
+
+    pub const fn add_node_id(&self) -> bool {
+        self.flags & (1 << Self::ADD_NODE_ID_FLAG) != 0
+    }
+
+    pub const fn extended(&self) -> bool {
+        self.flags & (1 << Self::IS_EXTENDED_FLAG) != 0
+    }
+
+    pub const fn can_id(&self, node_id: u8) -> CanId {
+        let id = if self.add_node_id() {
+            self.cob_id + node_id as u32
+        } else {
+            self.cob_id
+        };
+        if self.extended() {
+            CanId::Extended(id)
+        } else {
+            CanId::Std(id as u16)
+        }
+    }
 }
 
 /// Represents a single PDO state
 #[allow(missing_debug_implementations)]
 pub struct Pdo {
+    /// The object dictionary
+    ///
+    /// PDOs have to access other objects and use this to do so
+    od: &'static [ODEntry<'static>],
+    /// Configured Node ID for the system
+    node_id: AtomicCell<NodeId>,
     /// The COB-ID used to send or receive this PDO
-    cob_id: AtomicCell<CanId>,
+    cob_id: AtomicCell<Option<CanId>>,
     /// Indicates if the PDO is enabled
     valid: AtomicCell<bool>,
     /// If set, this PDO cannot be requested via RTR
@@ -51,18 +195,15 @@ pub struct Pdo {
     ///
     /// These specify which objects are
     mapping_params: [AtomicCell<Option<MappingEntry>>; N_MAPPING_PARAMS],
-}
-
-impl Default for Pdo {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// System default values for this PDO
+    defaults: Option<&'static PdoDefaults>,
 }
 
 impl Pdo {
     /// Create a new PDO object
-    pub const fn new() -> Self {
-        let cob_id = AtomicCell::new(CanId::Std(0));
+    pub const fn new(od: &'static [ODEntry<'static>]) -> Self {
+        let cob_id = AtomicCell::new(None);
+        let node_id = AtomicCell::new(NodeId::Unconfigured);
         let valid = AtomicCell::new(false);
         let rtr_disabled = AtomicCell::new(false);
         let transmission_type = AtomicCell::new(0);
@@ -70,7 +211,10 @@ impl Pdo {
         let buffered_value = AtomicCell::new(None);
         let valid_maps = AtomicCell::new(0);
         let mapping_params = [const { AtomicCell::new(None) }; N_MAPPING_PARAMS];
+        let defaults = None;
         Self {
+            od,
+            node_id,
             cob_id,
             valid,
             rtr_disabled,
@@ -79,7 +223,18 @@ impl Pdo {
             buffered_value,
             valid_maps,
             mapping_params,
+            defaults,
         }
+    }
+
+    /// Create a new PDO object with provided defaults
+    pub const fn new_with_defaults(
+        od: &'static [ODEntry<'static>],
+        defaults: &'static PdoDefaults,
+    ) -> Self {
+        let mut pdo = Pdo::new(od);
+        pdo.defaults = Some(defaults);
+        pdo
     }
 
     /// Set the valid bit
@@ -102,14 +257,22 @@ impl Pdo {
         self.transmission_type.load()
     }
 
-    /// Set the COB used for transmission of this PDO
-    pub fn set_cob_id(&self, value: CanId) {
-        self.cob_id.store(value)
+    /// Get the COB ID used for transmission of this PDO
+    pub fn cob_id(&self) -> CanId {
+        self.cob_id.load().unwrap_or(self.default_cob_id())
     }
 
-    /// Get the COB used for transmission of this PDO
-    pub fn cob_id(&self) -> CanId {
-        self.cob_id.load()
+    /// Get the default COB ID for transmission of this PDO
+    pub fn default_cob_id(&self) -> CanId {
+        if self.defaults.is_none() {
+            return CanId::std(0);
+        }
+        let defaults = self.defaults.unwrap();
+        let node_id = match self.node_id.load() {
+            NodeId::Unconfigured => 0,
+            NodeId::Configured(node_id) => node_id.raw(),
+        };
+        defaults.can_id(node_id)
     }
 
     /// This function should be called when a SYNC event occurs
@@ -215,6 +378,62 @@ impl Pdo {
             offset += length;
         }
     }
+
+    /// Lookup a PDO mapped object and create a MappingEntry if it is valid
+    ///
+    /// The returned MappingEntry can be stored in the Pdo mappings and includes
+    /// a reference to the mapped object for faster access when
+    /// sending/receiving PDOs.
+    ///
+    /// This function may fail if the mapped object doesn't exist, or if it is
+    /// too short.
+    fn try_create_mapping_entry(&self, mapping: PdoMapping) -> Result<MappingEntry, AbortCode> {
+        let PdoMapping {
+            index,
+            sub,
+            size: length,
+        } = mapping;
+        // length is in bits.
+        if (length % 8) != 0 {
+            // only support byte level access for now
+            return Err(AbortCode::IncompatibleParameter);
+        }
+        let entry = find_object_entry(self.od, index).ok_or(AbortCode::NoSuchObject)?;
+        let sub_info = entry.data.sub_info(sub)?;
+        if sub_info.size < length as usize / 8 {
+            return Err(AbortCode::IncompatibleParameter);
+        }
+        Ok(MappingEntry {
+            object: entry,
+            sub,
+            length: length / 8,
+        })
+    }
+
+    /// Initialize the PDO configuration with its default value
+    pub fn init_defaults(&self, node_id: NodeId) {
+        if self.defaults.is_none() {
+            return;
+        }
+        let defaults = self.defaults.unwrap();
+
+        self.node_id.store(node_id);
+        for (i, m) in defaults.mappings.iter().enumerate() {
+            if i >= self.mapping_params.len() {
+                return;
+            }
+            if let Ok(entry) = self.try_create_mapping_entry(PdoMapping::from_object_value(*m)) {
+                self.mapping_params[i].store(Some(entry));
+            }
+        }
+        self.valid_maps.store(defaults.mappings.len() as u8);
+
+        self.valid.store(defaults.valid());
+        // None means "use the default computed ID"
+        self.cob_id.store(None);
+        self.rtr_disabled.store(defaults.rtr_disabled());
+        self.transmission_type.store(defaults.transmission_type);
+    }
 }
 
 struct PdoCobSubObject {
@@ -225,11 +444,18 @@ impl PdoCobSubObject {
     pub const fn new(pdo: &'static Pdo) -> Self {
         Self { pdo }
     }
+
+    /// Should the COB sub object be persisted
+    ///
+    /// The object is only persisted when a non-default COB ID has been assigned.
+    pub fn should_persist(&self) -> bool {
+        self.pdo.cob_id.load().is_some()
+    }
 }
 
 impl SubObjectAccess for PdoCobSubObject {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
-        let cob_id = self.pdo.cob_id.load();
+        let cob_id = self.pdo.cob_id();
         let mut value = cob_id.raw();
         if cob_id.is_extended() {
             value |= 1 << 29;
@@ -271,7 +497,7 @@ impl SubObjectAccess for PdoCobSubObject {
             } else {
                 CanId::Std((value & 0x7FF) as u16)
             };
-            self.pdo.cob_id.store(can_id);
+            self.pdo.cob_id.store(Some(can_id));
             self.pdo.valid.store(!not_valid);
             self.pdo.rtr_disabled.store(no_rtr);
             Ok(())
@@ -338,7 +564,12 @@ impl ProvidesSubObjects for PdoCommObject {
                 SubInfo::MAX_SUB_NUMBER,
                 const { &ConstField::new(2u8.to_le_bytes()) },
             )),
-            1 => Some((SubInfo::new_u32().rw_access().persist(true), &self.cob)),
+            1 => Some((
+                SubInfo::new_u32()
+                    .rw_access()
+                    .persist(self.cob.should_persist()),
+                &self.cob,
+            )),
             2 => Some((
                 SubInfo::new_u8().rw_access().persist(true),
                 &self.transmission_type,
@@ -355,14 +586,13 @@ impl ProvidesSubObjects for PdoCommObject {
 /// Implements a PDO mapping config object for both TPDOs and RPDOs
 #[allow(missing_debug_implementations)]
 pub struct PdoMappingObject {
-    od: &'static [ODEntry<'static>],
     pdo: &'static Pdo,
 }
 
 impl PdoMappingObject {
     /// Create a new PdoMappingObject
-    pub const fn new(od: &'static [ODEntry<'static>], pdo: &'static Pdo) -> Self {
-        Self { od, pdo }
+    pub const fn new(pdo: &'static Pdo) -> Self {
+        Self { pdo }
     }
 }
 
@@ -412,25 +642,10 @@ impl ObjectAccess for PdoMappingObject {
             }
             let value = u32::from_le_bytes(data.try_into().unwrap());
 
-            let object_id = (value >> 16) as u16;
-            let mapping_sub = ((value & 0xFF00) >> 8) as u8;
-            // Rounding up to BYTES, because we do not currently support bit access
-            let length = (value & 0xFF) as usize;
-            if (length % 8) != 0 {
-                // only support byte level access for now
-                return Err(AbortCode::IncompatibleParameter);
-            }
-            let length = length / 8;
-            let entry = find_object_entry(self.od, object_id).ok_or(AbortCode::NoSuchObject)?;
-            let sub_info = entry.data.sub_info(mapping_sub)?;
-            if sub_info.size < length {
-                return Err(AbortCode::IncompatibleParameter);
-            }
-            self.pdo.mapping_params[(sub - 1) as usize].store(Some(MappingEntry {
-                object: entry,
-                sub: mapping_sub,
-                length: length as u8,
-            }));
+            let mapping = PdoMapping::from_object_value(value);
+
+            self.pdo.mapping_params[(sub - 1) as usize]
+                .store(Some(self.pdo.try_create_mapping_entry(mapping)?));
             Ok(())
         } else {
             Err(AbortCode::NoSuchSubIndex)
@@ -447,7 +662,7 @@ impl ObjectAccess for PdoMappingObject {
                 size: 1,
                 data_type: DataType::UInt8,
                 access_type: AccessType::Rw,
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 persist: true,
             })
         } else if sub <= self.pdo.mapping_params.len() as u8 {
@@ -455,7 +670,7 @@ impl ObjectAccess for PdoMappingObject {
                 size: 4,
                 data_type: DataType::UInt32,
                 access_type: AccessType::Rw,
-                pdo_mapping: PdoMapping::None,
+                pdo_mapping: PdoMappable::None,
                 persist: true,
             })
         } else {

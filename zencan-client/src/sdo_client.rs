@@ -5,11 +5,11 @@ use zencan_common::{
     constants::{object_ids, values::SAVE_CMD},
     lss::LssIdentity,
     messages::CanId,
+    node_configuration::PdoConfig,
+    pdo::PdoMapping,
     sdo::{AbortCode, BlockSegment, SdoRequest, SdoResponse},
     traits::{AsyncCanReceiver, AsyncCanSender},
 };
-
-use crate::node_configuration::PdoConfig;
 
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_millis(150);
 
@@ -706,17 +706,58 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         let num_mappings = cfg.mappings.len() as u8;
         self.write_u8(mapping_index, 0, num_mappings).await?;
 
-        let mut cob_value = cfg.cob.raw() & 0xFFFFFFF;
+        let mut cob_value = cfg.cob_id.raw() & 0x1FFFFFFF;
         if !cfg.enabled {
             cob_value |= 1 << 31;
         }
-        if cfg.cob.is_extended() {
+        if cfg.cob_id.is_extended() {
             cob_value |= 1 << 29;
         }
         self.write_u8(comm_index, 2, cfg.transmission_type).await?;
         self.write_u32(comm_index, 1, cob_value).await?;
 
         Ok(())
+    }
+
+    /// Read the configuration of an RPDO from the node
+    pub async fn read_rpdo_config(&mut self, pdo_num: usize) -> Result<PdoConfig> {
+        let comm_index = 0x1400 + pdo_num as u16;
+        let mapping_index = 0x1600 + pdo_num as u16;
+        self.read_pdo_config(comm_index, mapping_index).await
+    }
+
+    /// Read the configuration of a TPDO from the node
+    pub async fn read_tpdo_config(&mut self, pdo_num: usize) -> Result<PdoConfig> {
+        let comm_index = 0x1800 + pdo_num as u16;
+        let mapping_index = 0x1a00 + pdo_num as u16;
+        self.read_pdo_config(comm_index, mapping_index).await
+    }
+
+    async fn read_pdo_config(&mut self, comm_index: u16, mapping_index: u16) -> Result<PdoConfig> {
+        let cob_word = self.read_u32(comm_index, 1).await?;
+        let transmission_type = self.read_u8(comm_index, 2).await?;
+        let num_mappings = self.read_u8(mapping_index, 0).await?;
+        let mut mappings = Vec::with_capacity(num_mappings as usize);
+        for i in 0..num_mappings {
+            let mapping_raw = self.read_u32(mapping_index, i + 1).await?;
+            mappings.push(PdoMapping::from_object_value(mapping_raw));
+        }
+        let enabled = cob_word & (1 << 31) == 0;
+        let rtr_disabled = cob_word & (1 << 30) != 0;
+        let extended = cob_word & (1 << 29) != 0;
+        let cob_id = cob_word & 0x1FFFFFFF;
+        let cob_id = if extended {
+            CanId::extended(cob_id)
+        } else {
+            CanId::std(cob_id as u16)
+        };
+        Ok(PdoConfig {
+            cob_id,
+            enabled,
+            rtr_disabled,
+            mappings,
+            transmission_type,
+        })
     }
 
     async fn wait_for_response(&mut self, timeout: Duration) -> Result<SdoResponse> {

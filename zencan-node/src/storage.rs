@@ -2,16 +2,16 @@
 //!
 //!
 
-use core::convert::Infallible;
+use core::{convert::Infallible, sync::atomic::Ordering};
 
+use portable_atomic::AtomicBool;
 use zencan_common::{
     constants::values::SAVE_CMD,
     objects::{ObjectCode, SubInfo},
     sdo::AbortCode,
-    AtomicCell,
 };
 
-use crate::object_dict::{ODEntry, ObjectAccess};
+use crate::object_dict::ObjectAccess;
 
 /// A callback function type for handling a store objects event
 pub type StoreObjectsCallback =
@@ -21,14 +21,18 @@ pub type StoreObjectsCallback =
 #[allow(missing_debug_implementations)]
 /// Shared state for supporting object storage
 pub struct StorageContext {
-    pub(crate) store_callback: AtomicCell<Option<&'static StoreObjectsCallback>>,
+    /// A flag set by the storage command object when a store command is received
+    pub(crate) store_flag: AtomicBool,
+    /// Indicates to storage command object if storage is supported by the application
+    pub(crate) store_supported: AtomicBool,
 }
 
 impl StorageContext {
     /// Create a new StorageContext
     pub const fn new() -> Self {
         Self {
-            store_callback: AtomicCell::new(None),
+            store_flag: AtomicBool::new(false),
+            store_supported: AtomicBool::new(false),
         }
     }
 }
@@ -36,20 +40,13 @@ impl StorageContext {
 /// Implements the storage command object (0x1010)
 #[allow(missing_debug_implementations)]
 pub struct StorageCommandObject {
-    od: &'static [ODEntry<'static>],
     storage_context: &'static StorageContext,
 }
 
 impl StorageCommandObject {
     /// Create a new storage context object
-    pub const fn new(
-        od: &'static [ODEntry<'static>],
-        storage_context: &'static StorageContext,
-    ) -> Self {
-        Self {
-            od,
-            storage_context,
-        }
+    pub const fn new(storage_context: &'static StorageContext) -> Self {
+        Self { storage_context }
     }
 }
 
@@ -68,7 +65,7 @@ impl ObjectAccess for StorageCommandObject {
                 // Bit 0 indicates the node is capable of saving objects. Set it if a callback has
                 // been registered.
                 let mut value = 0u32;
-                if self.storage_context.store_callback.load().is_some() {
+                if self.storage_context.store_supported.load(Ordering::Relaxed) {
                     value |= 1;
                 }
                 let value_bytes = value.to_le_bytes();
@@ -102,8 +99,10 @@ impl ObjectAccess for StorageCommandObject {
                     let value = u32::from_le_bytes(data[0..4].try_into().unwrap());
                     // Magic value ('save') triggering a save
                     if value == SAVE_CMD {
-                        if let Some(cb) = self.storage_context.store_callback.load() {
-                            crate::persist::serialize(self.od, cb);
+                        if self.storage_context.store_supported.load(Ordering::Relaxed) {
+                            self.storage_context
+                                .store_flag
+                                .store(true, Ordering::Relaxed);
                             Ok(())
                         } else {
                             Err(AbortCode::ResourceNotAvailable)
