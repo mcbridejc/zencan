@@ -659,9 +659,10 @@ pub fn generate_state_inst(dev: &DeviceConfig) -> TokenStream {
         ];
         #[allow(static_mut_refs)]
         static mut SDO_BUFFER: [u8; SDO_BUFFER_SIZE] = [0; SDO_BUFFER_SIZE];
+        static TX_MESSAGE_QUEUE: PriorityQueue<4, CanMessage> = PriorityQueue::new();
         pub static NODE_STATE: NodeState = NodeState::new(&RPDOS, &TPDOS);
         #[allow(static_mut_refs)]
-        pub static NODE_MBOX: NodeMbox = NodeMbox::new(NODE_STATE.rpdos(), unsafe { &mut SDO_BUFFER });
+        pub static NODE_MBOX: NodeMbox = NodeMbox::new(NODE_STATE.rpdos(), NODE_STATE.tpdos(), &TX_MESSAGE_QUEUE, unsafe { &mut SDO_BUFFER });
     });
 
     tokens
@@ -766,7 +767,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
     let table_len = dev.objects.len();
     Ok(quote! {
         #[allow(unused_imports)]
-        use zencan_node::common::AtomicCell;
+        use zencan_node::common::{AtomicCell, CanMessage};
         #[allow(unused_imports)]
         use core::cell::Cell;
         #[allow(unused_imports)]
@@ -802,6 +803,8 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
         use zencan_node::NodeMbox;
         #[allow(unused_imports)]
         use zencan_node::{NodeState, NodeStateAccess};
+        #[allow(unused_imports)]
+        use zencan_node::priority_queue::PriorityQueue;
         #object_defs
         #object_instantiations
         pub static OD_TABLE: [ODEntry; #table_len] = [

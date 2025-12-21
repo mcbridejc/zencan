@@ -1,7 +1,7 @@
-mod sdo_receiver;
+mod sdo_comms;
 mod sdo_server;
 
-pub(crate) use sdo_receiver::SdoReceiver;
+pub(crate) use sdo_comms::SdoComms;
 pub(crate) use sdo_server::SdoServer;
 
 /// Default size for SDO data buffer

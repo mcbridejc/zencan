@@ -52,7 +52,7 @@ impl DerefMut for BufferGuard<'_> {
 ///
 /// A timer is also reset to 0 on each message received, and this can be used in `process()` to
 /// implement a timeout in case an expected message is never received.
-pub(crate) struct SdoReceiver {
+pub(crate) struct SdoComms {
     request: AtomicCell<Option<SdoRequest>>,
     state: AtomicCell<ReceiverState>,
     buffer: AtomicCell<Option<&'static mut [u8]>>,
@@ -61,9 +61,9 @@ pub(crate) struct SdoReceiver {
     blksize: UnsafeCell<u8>,
 }
 
-unsafe impl Sync for SdoReceiver {}
+unsafe impl Sync for SdoComms {}
 
-impl SdoReceiver {
+impl SdoComms {
     pub const fn new(sdo_buffer: &'static mut [u8]) -> Self {
         Self {
             request: AtomicCell::new(None),

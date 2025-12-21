@@ -23,8 +23,8 @@ async fn test_rpdo_assignment() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -42,7 +42,7 @@ async fn test_rpdo_assignment() {
 
     let mut pdo_sender = bus.new_sender();
 
-    let test_task = async move {
+    let test_task = move |mut ctx: TestContext| async move {
         // Readback the largest sub index
         assert_eq!(2, client.upload_u8(0x1400, 0).await.unwrap());
 
@@ -70,12 +70,12 @@ async fn test_rpdo_assignment() {
             .unwrap();
 
         // Delay a bit, because node process() method has to be called for PDO to apply
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        ctx.wait_for_process(1).await;
         // Readback the mapped object; the PDO message above should have updated it
         assert_eq!(500, client.upload_u32(0x2000, 1).await.unwrap());
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[serial]
@@ -85,8 +85,8 @@ async fn test_tpdo_assignment() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -107,7 +107,7 @@ async fn test_tpdo_assignment() {
     let mut nmt = NmtMaster::new(bus.new_sender(), bus.new_receiver());
 
     let mut sender = bus.new_sender();
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         // Set the TPDO COB ID
         client
             .download(TPDO_COMM1_ID, PDO_COMM_COB_SUBID, &0x181u32.to_le_bytes())
@@ -162,7 +162,7 @@ async fn test_tpdo_assignment() {
         assert_eq!(333, field2);
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[serial]
@@ -172,8 +172,8 @@ async fn test_tpdo_event_flags() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -194,7 +194,7 @@ async fn test_tpdo_event_flags() {
 
     let mut nmt = NmtMaster::new(bus.new_sender(), bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |mut ctx: TestContext| async move {
         // Configure TPDO0 to send data
         client
             .configure_tpdo(
@@ -273,7 +273,7 @@ async fn test_tpdo_event_flags() {
 
         rx.flush();
 
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        ctx.wait_for_process(1).await;
 
         // No messages in queue
         assert!(rx.try_recv().is_none());
@@ -282,13 +282,14 @@ async fn test_tpdo_event_flags() {
         // Set the event flag for sub 1
         obj.set_event_flag(1).expect("Error setting event flag");
 
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        ctx.wait_for_process(1).await;
+
         let _pdomsg = rx.try_recv().expect("No message received after TPDO event");
         // should only have gotten one message
         assert!(rx.try_recv().is_none());
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[serial]
@@ -298,8 +299,8 @@ async fn test_pdo_configuration() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -311,7 +312,7 @@ async fn test_pdo_configuration() {
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         let config = PdoConfig {
             cob_id: CanId::std(0x301),
             enabled: true,
@@ -349,7 +350,7 @@ async fn test_pdo_configuration() {
         Ok::<_, Box<dyn std::error::Error>>(())
     };
 
-    let result = test_with_background_process(&mut [&mut node], test_task).await;
+    let result = test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 
     if let Err(e) = result {
         panic!("{}", e);
@@ -364,8 +365,8 @@ async fn test_pdo_defaults() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -376,7 +377,7 @@ async fn test_pdo_defaults() {
     let mut client = get_sdo_client(&mut bus, NODE_ID);
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         // Check that the initial value matches the one defined in example1.toml
         let tpdo1_cfg = client.read_tpdo_config(1).await.unwrap();
         assert_eq!(true, tpdo1_cfg.enabled);
@@ -397,5 +398,5 @@ async fn test_pdo_defaults() {
         assert_eq!(32, rpdo0_cfg.mappings[0].size);
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }

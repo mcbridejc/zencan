@@ -6,7 +6,7 @@ use zencan_common::{
 
 use crate::object_dict::{find_object_entry, ODEntry};
 
-use crate::sdo_server::{sdo_receiver::ReceiverState, SdoReceiver};
+use crate::sdo_server::{sdo_comms::ReceiverState, SdoComms};
 
 /// Size of block transfers Always support max of 127 segments in block transfers. This may have to
 /// adjust to support configurable buffer size
@@ -110,12 +110,7 @@ enum SdoState<'a> {
 }
 
 impl<'a> SdoState<'a> {
-    pub fn update(
-        &self,
-        rx: &SdoReceiver,
-        elapsed_us: u32,
-        od: &'a [ODEntry<'a>],
-    ) -> SdoResult<'a> {
+    pub fn update(&self, rx: &SdoComms, elapsed_us: u32, od: &'a [ODEntry<'a>]) -> SdoResult<'a> {
         match self {
             SdoState::Idle => Self::idle(od, rx),
             SdoState::DownloadSegmented(state) => Self::download_segmented(state, rx, elapsed_us),
@@ -125,7 +120,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
-    fn idle(od: &'a [ODEntry<'a>], rx: &SdoReceiver) -> SdoResult<'a> {
+    fn idle(od: &'a [ODEntry<'a>], rx: &SdoComms) -> SdoResult<'a> {
         let req = match rx.take_request() {
             Some(req) => req,
             None => return SdoResult::no_response(SdoState::Idle),
@@ -293,11 +288,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
-    fn download_segmented(
-        state: &Segmented<'a>,
-        rx: &SdoReceiver,
-        elapsed_us: u32,
-    ) -> SdoResult<'a> {
+    fn download_segmented(state: &Segmented<'a>, rx: &SdoComms, elapsed_us: u32) -> SdoResult<'a> {
         let req = match rx.take_request() {
             Some(req) => req,
             None => {
@@ -416,7 +407,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
-    fn upload_segmented(state: &Segmented<'a>, rx: &SdoReceiver, elapsed_us: u32) -> SdoResult<'a> {
+    fn upload_segmented(state: &Segmented<'a>, rx: &SdoComms, elapsed_us: u32) -> SdoResult<'a> {
         let req = match rx.take_request() {
             Some(req) => req,
             None => {
@@ -517,11 +508,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
-    fn download_block(
-        state: &DownloadBlock<'a>,
-        rx: &SdoReceiver,
-        elapsed_us: u32,
-    ) -> SdoResult<'a> {
+    fn download_block(state: &DownloadBlock<'a>, rx: &SdoComms, elapsed_us: u32) -> SdoResult<'a> {
         // During block download, up to 127 block segments are sent out in rapid succession, without
         // any acknowledgement, so the processing of these is handled in the receiver. Here, we wait
         // for the receiver to signal the completion of a block
@@ -621,7 +608,7 @@ impl<'a> SdoState<'a> {
 
     fn end_download_block(
         state: &DownloadBlock<'a>,
-        rx: &SdoReceiver,
+        rx: &SdoComms,
         elapsed_us: u32,
     ) -> SdoResult<'a> {
         let req = match rx.take_request() {
@@ -714,7 +701,7 @@ impl<'a> SdoServer<'a> {
     /// object when a download is completed.
     pub fn process(
         &mut self,
-        rx: &SdoReceiver,
+        rx: &SdoComms,
         elapsed_us: u32,
         od: &'a [ODEntry<'a>],
     ) -> (Option<SdoResponse>, Option<ObjectId>) {
@@ -799,7 +786,7 @@ mod tests {
 
     fn do_happy_block_download(
         server: &mut SdoServer,
-        rx: &SdoReceiver,
+        rx: &SdoComms,
         od: &'static [ODEntry<'static>],
         size: usize,
     ) {
@@ -892,7 +879,7 @@ mod tests {
     fn test_block_download() {
         let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
         let mut server = SdoServer::new();
-        let rx = SdoReceiver::new(buffer);
+        let rx = SdoComms::new(buffer);
         let od = test_od();
 
         println!("Running 128 byte download");
@@ -905,7 +892,7 @@ mod tests {
     fn test_block_download_missing_block() {
         let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
         let mut server = SdoServer::new();
-        let rx = SdoReceiver::new(buffer);
+        let rx = SdoComms::new(buffer);
         let od = test_od();
 
         const INDEX: u16 = 0x1000;
@@ -1021,7 +1008,7 @@ mod tests {
     fn test_block_download_timeout() {
         let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
         let mut server = SdoServer::new();
-        let rx = SdoReceiver::new(buffer);
+        let rx = SdoComms::new(buffer);
         let od = test_od();
 
         const INDEX: u16 = 0x1000;
@@ -1081,7 +1068,7 @@ mod tests {
         const SDO_BUFFER_SIZE: usize = 32;
         let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
         let mut server = SdoServer::new();
-        let rx = SdoReceiver::new(buffer);
+        let rx = SdoComms::new(buffer);
         let od = test_od();
 
         const INDEX: u16 = 0x1000;
@@ -1179,7 +1166,7 @@ mod tests {
         const SDO_BUFFER_SIZE: usize = 28;
         let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
         let mut server = SdoServer::new();
-        let rx = SdoReceiver::new(buffer);
+        let rx = SdoComms::new(buffer);
         let od = test_od();
 
         const INDEX: u16 = 0x1000;

@@ -21,27 +21,31 @@ impl<'a> SimBus<'a> {
         }
     }
 
-    pub fn add_node(
-        &mut self,
-        mbox: &'a NodeMbox,
-    ) -> impl Fn(CanMessage) -> Result<(), CanMessage> + 'a {
-        let mut mailboxes = self.mailboxes.lock().unwrap();
-        let node_index = mailboxes.len();
-        mailboxes.push(mbox);
-        let mailboxes = self.mailboxes.clone();
-        let external_channels = self.external_channels.clone();
-        move |msg: CanMessage| {
-            for (i, mbox) in mailboxes.lock().unwrap().iter().enumerate() {
-                // Deliver to all node mailboxes, except for the sender
-                if i != node_index {
-                    mbox.store_message(msg).ok();
+    pub fn flush_mailboxes(&self) {
+        let mailboxes = self.mailboxes.lock().unwrap();
+        let external_channels = self.external_channels.lock().unwrap();
+
+        for (i, sending_mbox) in mailboxes.iter().enumerate() {
+            while let Some(sent_frame) = sending_mbox.next_transmit_message() {
+                for (j, receiving_mbox) in mailboxes.iter().enumerate() {
+                    if i == j {
+                        // Don't send the message back to the node that sent it
+                        continue;
+                    }
+                    receiving_mbox.store_message(sent_frame).ok();
+                }
+
+                // Send to all non-node listeners
+                for ext in external_channels.iter() {
+                    ext.send(sent_frame).unwrap()
                 }
             }
-            for ext in external_channels.lock().unwrap().iter() {
-                ext.send(msg).unwrap()
-            }
-            Ok(())
         }
+    }
+
+    pub fn add_node(&mut self, mbox: &'a NodeMbox) {
+        let mut mailboxes = self.mailboxes.lock().unwrap();
+        mailboxes.push(mbox);
     }
 
     pub fn new_receiver(&mut self) -> SimBusReceiver {

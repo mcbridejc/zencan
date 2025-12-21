@@ -185,6 +185,7 @@ mod node_state;
 pub mod object_dict;
 pub mod pdo;
 mod persist;
+pub mod priority_queue;
 mod sdo_server;
 pub mod storage;
 
