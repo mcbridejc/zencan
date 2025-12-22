@@ -736,7 +736,8 @@ impl<'a> SdoServer<'a> {
 #[cfg(test)]
 mod tests {
     use crate::object_dict::{
-        find_object, ByteField, ConstField, NullTermByteField, ProvidesSubObjects, SubObjectAccess,
+        find_object, ByteField, ConstField, NullTermByteField, ObjectAccess as _,
+        ProvidesSubObjects, SubObjectAccess,
     };
     use zencan_common::{
         objects::{AccessType, DataType, ObjectCode},
@@ -787,17 +788,22 @@ mod tests {
         }
     }
 
-    fn test_od() -> &'static [ODEntry<'static>] {
+    struct TestOd {
+        pub object1000: &'static Object1000,
+        pub table: &'static [ODEntry<'static>; 1],
+    }
+
+    fn test_od() -> TestOd {
         let object1000 = Box::leak(Box::new(Object1000 {
             sub1: NullTermByteField::new([0; 1200]),
             sub2: ByteField::new([0; SUB2_SIZE]),
         }));
-        let list = [ODEntry {
+        let table = Box::leak(Box::new([ODEntry {
             index: 0x1000,
             data: object1000,
-        }];
+        }]));
 
-        Box::leak(Box::new(list))
+        TestOd { object1000, table }
     }
 
     fn do_happy_block_download(
@@ -899,9 +905,9 @@ mod tests {
         let od = test_od();
 
         println!("Running 128 byte download");
-        do_happy_block_download(&mut server, &rx, od, 128);
+        do_happy_block_download(&mut server, &rx, od.table, 128);
         println!("Running 1200 byte download");
-        do_happy_block_download(&mut server, &rx, od, 1200);
+        do_happy_block_download(&mut server, &rx, od.table, 1200);
     }
 
     #[test]
@@ -916,7 +922,7 @@ mod tests {
         const DATA_SIZE: usize = 7 * 3;
         let mut round_trip = |msg_data: [u8; 8], elapsed| {
             rx.handle_req(&msg_data);
-            server.process(&rx, elapsed, od)
+            server.process(&rx, elapsed, od.table)
         };
 
         let mut data = [0; DATA_SIZE];
@@ -1016,7 +1022,7 @@ mod tests {
         );
 
         let mut read_buf = vec![0u8; DATA_SIZE];
-        od[0].data.read(SUB, 0, &mut read_buf).unwrap();
+        od.object1000.read(SUB, 0, &mut read_buf).unwrap();
         assert_eq!(data.as_slice(), read_buf);
     }
 
@@ -1034,7 +1040,7 @@ mod tests {
             if let Some(msg_data) = msg_data {
                 rx.handle_req(&msg_data);
             }
-            server.process(&rx, elapsed, od)
+            server.process(&rx, elapsed, od.table)
         };
 
         let mut data = [0; DATA_SIZE];
@@ -1091,10 +1097,11 @@ mod tests {
         const SUB: u8 = 2;
 
         let mut round_trip = |msg_data: Option<[u8; 8]>, elapsed| {
+            // Extra process call should be no-op
             if let Some(msg_data) = msg_data {
                 rx.handle_req(&msg_data);
             }
-            server.process(&rx, elapsed, od)
+            server.process(&rx, elapsed, od.table)
         };
 
         let mut do_segmented_download = |size: usize| {
@@ -1114,6 +1121,11 @@ mod tests {
                 }),
                 resp
             );
+
+            // Insert an extra process call with no data. This should be a NOOP.
+            let (resp, index) = round_trip(None, 0);
+            assert_eq!(None, resp);
+            assert_eq!(None, index);
 
             while sent_bytes < write_data.len() {
                 let bytes_left = write_data.len() - sent_bytes;
@@ -1150,7 +1162,7 @@ mod tests {
             }
 
             // Grab the object and read back the data we just wrote
-            let obj = find_object(od, INDEX).unwrap();
+            let obj = find_object(od.table, INDEX).unwrap();
             let mut read_buf = vec![0; write_data.len()];
             let read_size = obj.read(SUB, 0, &mut read_buf).unwrap();
             assert_eq!(write_data.len(), read_size);
@@ -1169,5 +1181,109 @@ mod tests {
         do_segmented_download(SDO_BUFFER_SIZE + 1);
         // Tests full object write
         do_segmented_download(SUB2_SIZE);
+    }
+
+    #[test]
+    fn test_segmented_upload() {
+        const SDO_BUFFER_SIZE: usize = 28;
+        let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
+        let mut server = SdoServer::new();
+        let rx = SdoReceiver::new(buffer);
+        let od = test_od();
+
+        const INDEX: u16 = 0x1000;
+        const SUB: u8 = 1;
+
+        let mut round_trip = |msg_data: Option<[u8; 8]>, elapsed| {
+            // Extra process call should be no-op
+            if let Some(msg_data) = msg_data {
+                rx.handle_req(&msg_data);
+            }
+            server.process(&rx, elapsed, od.table)
+        };
+
+        let mut do_segmented_upload = |size: usize| {
+            println!("Performing upload of size {size}");
+            let write_data = Vec::from_iter((0..size).map(|x| (x + 1) as u8));
+            let mut toggle = false;
+            let mut rx_count = 0;
+            // Store the requested size to the object
+            od.object1000.write(SUB, &write_data).unwrap();
+
+            // Initiate read-back
+            let (resp, index) =
+                round_trip(Some(SdoRequest::initiate_upload(INDEX, SUB).to_bytes()), 0);
+
+            // For reads which are smaller than the SDO buffer, an atomic read is performed and size
+            // is known at the start of transfer. For larger reads, it is not.
+            let expected_s = size < SDO_BUFFER_SIZE;
+            let expected_data = if expected_s {
+                (size as u32).to_le_bytes()
+            } else {
+                [0; 4]
+            };
+
+            assert_eq!(None, index);
+            assert_eq!(
+                Some(SdoResponse::ConfirmUpload {
+                    index: INDEX,
+                    sub: SUB,
+                    n: 0,
+                    e: false,
+                    s: expected_s,
+                    data: expected_data,
+                }),
+                resp
+            );
+
+            // Insert an extra process call with no data. This should be a NOOP.
+            let (resp, index) = round_trip(None, 0);
+            assert_eq!(None, resp);
+            assert_eq!(None, index);
+
+            loop {
+                let bytes_left = size - rx_count;
+
+                let (resp, index) = round_trip(
+                    Some(SdoRequest::upload_segment_request(toggle).to_bytes()),
+                    0,
+                );
+
+                let expected_segment_size = bytes_left.min(7);
+                let expected_n = 7 - expected_segment_size as u8;
+                let expected_c = rx_count + expected_segment_size == size;
+
+                let mut expected_data = [0; 7];
+                expected_data[0..expected_segment_size]
+                    .copy_from_slice(&write_data[rx_count..rx_count + expected_segment_size]);
+                rx_count += expected_segment_size;
+                assert_eq!(
+                    Some(SdoResponse::UploadSegment {
+                        t: toggle,
+                        n: expected_n,
+                        c: expected_c,
+                        data: expected_data
+                    }),
+                    resp
+                );
+                assert_eq!(None, index);
+                toggle = !toggle;
+
+                if expected_c {
+                    break;
+                }
+            }
+        };
+
+        // Test downloading a single segment object smaller than segment
+        do_segmented_upload(6);
+        // Test downloading a 7 byte, single segment object
+        do_segmented_upload(7);
+        // Test downloading a single segment object just bigger than one segment
+        do_segmented_upload(8);
+        // Test doing a length equal to the SDO buffer size
+        do_segmented_upload(SDO_BUFFER_SIZE);
+        // Test doing a length just larger than the buffer
+        do_segmented_upload(SDO_BUFFER_SIZE + 1);
     }
 }
