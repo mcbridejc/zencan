@@ -499,19 +499,10 @@ impl<'a> SdoState<'a> {
                     })
                 };
 
-                let response =
-                    SdoResponse::upload_segment(state.toggle_state, c, &msg_buf[0..segment_size]);
-
-                if c {
-                    SdoResult::response_with_update(
-                        response,
-                        state.object.index,
-                        state.sub,
-                        new_state,
-                    )
-                } else {
-                    SdoResult::response(response, new_state)
-                }
+                SdoResult::response(
+                    SdoResponse::upload_segment(state.toggle_state, c, &msg_buf[0..segment_size]),
+                    new_state,
+                )
             }
             SdoRequest::Abort {
                 index: _,
