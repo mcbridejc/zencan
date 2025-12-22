@@ -424,7 +424,7 @@ impl<'a> SdoState<'a> {
                 if time > SDO_TIMEOUT_US {
                     return SdoResult::abort(state.object.index, state.sub, AbortCode::SdoTimeout);
                 } else {
-                    return SdoResult::no_response(SdoState::DownloadSegmented(*state));
+                    return SdoResult::no_response(SdoState::UploadSegmented(*state));
                 }
             }
         };
