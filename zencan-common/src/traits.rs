@@ -33,11 +33,27 @@ pub trait CanReceiver {
 
 /// An async CAN sender trait
 pub trait AsyncCanSender: Send {
+    /// Error type returned by sender
+    type Error: CanSendError;
     /// Send a message to the bus
     fn send(
         &mut self,
         msg: CanMessage,
-    ) -> impl core::future::Future<Output = Result<(), CanMessage>>;
+    ) -> impl core::future::Future<Output = Result<(), Self::Error>>;
+}
+
+/// A trait for CAN errors which may come from different types of interfaces
+///
+/// On no_std, all the error can do is return the unsent frame. With `std`, it can convert any
+/// underlying errors into a String.
+pub trait CanSendError: core::fmt::Debug {
+    /// Convert the error into the undelivered message
+    fn into_can_message(self) -> CanMessage;
+
+    /// Get a string describing the error
+    #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    fn message(&self) -> String;
 }
 
 /// An async CAN receiver trait

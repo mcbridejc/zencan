@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     messages::{CanError, CanId, CanMessage},
-    traits::{AsyncCanReceiver, AsyncCanSender},
+    traits::{AsyncCanReceiver, AsyncCanSender, CanSendError},
 };
 use snafu::{ResultExt, Snafu};
 use socketcan::{CanFrame, CanSocket, EmbeddedFrame, Frame, ShouldRetry, Socket};
@@ -51,6 +51,22 @@ pub struct SocketCanReceiver {
 pub enum ReceiveError {
     Io { source: socketcan::IoError },
     Can { source: CanError },
+}
+
+#[derive(Debug, Snafu)]
+pub struct SendError {
+    source: socketcan::IoError,
+    message: CanMessage,
+}
+
+impl CanSendError for SendError {
+    fn into_can_message(self) -> CanMessage {
+        self.message
+    }
+
+    fn message(&self) -> String {
+        self.source.to_string()
+    }
 }
 
 /// Create an Async socket around a socketcan CanSocket. This is just a reimplemenation of the tokio
@@ -128,15 +144,14 @@ pub struct SocketCanSender {
 }
 
 impl AsyncCanSender for SocketCanSender {
-    async fn send(&mut self, msg: CanMessage) -> Result<(), CanMessage> {
+    type Error = SendError;
+    async fn send(&mut self, msg: CanMessage) -> Result<(), Self::Error> {
         let socketcan_frame = zencan_message_to_socket_frame(msg);
 
-        let result = self.socket.write_frame(&socketcan_frame).await;
-        if result.is_err() {
-            Err(msg)
-        } else {
-            Ok(())
-        }
+        self.socket
+            .write_frame(&socketcan_frame)
+            .await
+            .context(SendSnafu { message: msg })
     }
 }
 
