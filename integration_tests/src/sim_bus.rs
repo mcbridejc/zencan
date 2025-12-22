@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use zencan_common::messages::CanMessage;
-use zencan_common::traits::{AsyncCanReceiver, AsyncCanSender};
+use zencan_common::traits::{AsyncCanReceiver, AsyncCanSender, CanSendError};
 use zencan_node::NodeMbox;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -63,8 +63,25 @@ pub struct SimBusSender<'a> {
     external_channels: Arc<Mutex<Vec<UnboundedSender<CanMessage>>>>,
 }
 
+/// Create an error type for sim bus sender.
+///
+/// The sender can't fail, so this type is never instantiated
+#[derive(Debug)]
+pub struct SimBusSendError(());
+
+impl CanSendError for SimBusSendError {
+    fn into_can_message(self) -> CanMessage {
+        panic!("uninstantiable")
+    }
+
+    fn message(&self) -> String {
+        String::new()
+    }
+}
+
 impl AsyncCanSender for SimBusSender<'_> {
-    async fn send(&mut self, msg: CanMessage) -> Result<(), CanMessage> {
+    type Error = SimBusSendError;
+    async fn send(&mut self, msg: CanMessage) -> Result<(), SimBusSendError> {
         // Send to nodes on the bus
         for ns in self.node_states.lock().unwrap().iter() {
             // It doesn't matter if store message fails; that just means the node did not

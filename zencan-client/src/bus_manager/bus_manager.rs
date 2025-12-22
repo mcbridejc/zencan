@@ -109,21 +109,18 @@ impl NodeInfo {
 async fn scan_node<S: AsyncCanSender + Sync + Send>(
     node_id: u8,
     clients: &SdoClientMutex<S>,
-) -> Option<NodeInfo> {
+) -> Result<Option<NodeInfo>, SdoClientError> {
     let mut sdo_client = clients.lock(node_id);
     log::info!("Scanning Node {node_id}");
+
     let identity = match sdo_client.read_identity().await {
         Ok(id) => Some(id),
+        // A no response here is not really an error, it just indicates the node is not present
         Err(SdoClientError::NoResponse) => {
             log::info!("No response from node {node_id}");
-            return None;
+            return Ok(None);
         }
-        Err(e) => {
-            // A server responded, but we failed to read identity. An unexpected situation, as all
-            // nodes should implement the identity object
-            log::error!("SDO Abort Response scanning node {node_id} identity: {e:?}");
-            None
-        }
+        Err(e) => return Err(e),
     };
     let device_name = match sdo_client.read_device_name().await {
         Ok(s) => Some(s),
@@ -146,7 +143,7 @@ async fn scan_node<S: AsyncCanSender + Sync + Send>(
             None
         }
     };
-    Some(NodeInfo {
+    Ok(Some(NodeInfo {
         node_id,
         identity,
         device_name,
@@ -154,7 +151,7 @@ async fn scan_node<S: AsyncCanSender + Sync + Send>(
         hardware_version,
         nmt_state: None,
         last_seen: Instant::now(),
-    })
+    }))
 }
 
 /// Result struct for reading PDO configuration from a single node
@@ -401,11 +398,11 @@ impl<S: AsyncCanSender + Sync + Send> BusManager<S> {
     /// - Device Name
     /// - Software Version
     /// - Hardware Version
-    pub async fn scan_nodes(&mut self) -> Vec<NodeInfo> {
+    pub async fn scan_nodes(&mut self) -> Result<Vec<NodeInfo>, SdoClientError> {
         const N_PARALLEL: usize = 10;
 
         let ids = Vec::from_iter(1..128u8);
-        let mut nodes = Vec::new();
+        let mut nodes: Vec<NodeInfo> = Vec::new();
 
         let mut chunks = Vec::new();
         for chunk in ids.chunks(128 / N_PARALLEL) {
@@ -424,9 +421,11 @@ impl<S: AsyncCanSender + Sync + Send> BusManager<S> {
             });
         }
 
+        // Collect the results from batches. If any errors occurred, fail.
         let results = join_all(futures).await;
         for r in results {
-            nodes.extend(r.into_iter().flatten());
+            let r: Result<Vec<Option<NodeInfo>>, SdoClientError> = r.into_iter().collect();
+            nodes.extend(r?.into_iter().flatten());
         }
 
         let mut node_map = self.nodes.lock().await;
@@ -443,10 +442,10 @@ impl<S: AsyncCanSender + Sync + Send> BusManager<S> {
         // 1) We only included nodes which responded just now to the scan, but
         // 2) we also display the latest NMT state for that node, which comes from the heartbeat
         //    rather than the scan
-        nodes
+        Ok(nodes
             .iter()
             .map(|n| node_map.get(&n.node_id).unwrap().clone())
-            .collect()
+            .collect())
     }
 
     /// Find all unconfigured devices on the bus

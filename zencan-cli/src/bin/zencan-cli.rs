@@ -218,12 +218,17 @@ fn convert_read_bytes_to_string(
 
 async fn run_command<S: AsyncCanSender + Sync + Send>(cmd: Commands, manager: &mut BusManager<S>) {
     match cmd {
-        Commands::Scan => {
-            let nodes = manager.scan_nodes().await;
-            for n in &nodes {
-                println!("{n}");
+        Commands::Scan => match manager.scan_nodes().await {
+            Ok(nodes) => {
+                for n in &nodes {
+                    println!("{n}");
+                }
             }
-        }
+            Err(e) => {
+                println!("Error during scan: ");
+                println!("{e}");
+            }
+        },
         Commands::Info => {
             let nodes = manager.node_list().await;
             for n in &nodes {

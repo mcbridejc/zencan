@@ -8,7 +8,7 @@ use zencan_common::{
     node_configuration::PdoConfig,
     pdo::PdoMapping,
     sdo::{AbortCode, BlockSegment, SdoRequest, SdoResponse},
-    traits::{AsyncCanReceiver, AsyncCanSender},
+    traits::{AsyncCanReceiver, AsyncCanSender, CanSendError as _},
 };
 
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_millis(150);
@@ -82,8 +82,11 @@ pub enum SdoClientError {
     /// An SDO upload response had a size that did not match the expected size
     UnexpectedSize,
     /// Failed to write a message to the socket
-    #[snafu(display("Error sending CAN message"))]
-    SocketSendFailed,
+    #[snafu(display("Failed to send CAN message: {message}"))]
+    SocketSendFailed {
+        /// A string describing the error reason
+        message: String,
+    },
     /// An SDO server shrunk the block size while requesting retransmission
     ///
     /// Hopefully no node will ever do this, but it's a possible corner case, since servers are
@@ -176,7 +179,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             // Do an expedited transfer
             let msg =
                 SdoRequest::expedited_download(index, sub, data).to_can_message(self.req_cob_id);
-            self.sender.send(msg).await.unwrap(); // TODO: Expect errors
+            self.sender.send(msg).await.map_err(|e| {
+                SocketSendFailedSnafu {
+                    message: e.message(),
+                }
+                .build()
+            })?;
 
             let resp = self.wait_for_response(self.timeout).await?;
             match_response!(
@@ -189,7 +197,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         } else {
             let msg = SdoRequest::initiate_download(index, sub, Some(data.len() as u32))
                 .to_can_message(self.req_cob_id);
-            self.sender.send(msg).await.unwrap();
+            self.sender.send(msg).await.map_err(|e| {
+                SocketSendFailedSnafu {
+                    message: e.message(),
+                }
+                .build()
+            })?;
 
             let resp = self.wait_for_response(self.timeout).await?;
             match_response!(
@@ -244,7 +257,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         let mut read_buf = Vec::new();
 
         let msg = SdoRequest::initiate_upload(index, sub).to_can_message(self.req_cob_id);
-        self.sender.send(msg).await.unwrap();
+        self.sender.send(msg).await.map_err(|e| {
+            SocketSendFailedSnafu {
+                message: e.message(),
+            }
+            .build()
+        })?;
 
         let resp = self.wait_for_response(self.timeout).await?;
 
@@ -277,7 +295,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                 let msg =
                     SdoRequest::upload_segment_request(toggle).to_can_message(self.req_cob_id);
 
-                self.sender.send(msg).await.unwrap();
+                self.sender.send(msg).await.map_err(|e| {
+                    SocketSendFailedSnafu {
+                        message: e.message(),
+                    }
+                    .build()
+                })?;
 
                 let resp = self.wait_for_response(self.timeout).await?;
                 match_response!(
@@ -324,7 +347,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                 .to_can_message(self.req_cob_id),
             )
             .await
-            .map_err(|_| SocketSendFailedSnafu {}.build())?;
+            .map_err(|e| {
+                SocketSendFailedSnafu {
+                    message: e.message(),
+                }
+                .build()
+            })?;
 
         let resp = self.wait_for_response(self.timeout).await?;
 
@@ -371,7 +399,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             self.sender
                 .send(segment.to_can_message(self.req_cob_id))
                 .await
-                .map_err(|_| SocketSendFailedSnafu.build())?;
+                .map_err(|e| {
+                    SocketSendFailedSnafu {
+                        message: e.message(),
+                    }
+                    .build()
+                })?;
 
             // Expect a confirmation message after blksize segments are sent, or after sending the
             // complete flag
@@ -424,7 +457,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.sender
             .send(SdoRequest::EndBlockDownload { n, crc }.to_can_message(self.req_cob_id))
             .await
-            .map_err(|_| SocketSendFailedSnafu.build())?;
+            .map_err(|e| {
+                SocketSendFailedSnafu {
+                    message: e.message(),
+                }
+                .build()
+            })?;
 
         let resp = self.wait_for_response(self.timeout).await?;
         match_response!(
