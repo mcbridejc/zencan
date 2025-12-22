@@ -15,6 +15,7 @@ Human-friendly documentation of releases and what's changed in them for the zenc
 - Default SDO client timeout changed from 100ms to 150ms
 - NodeConfiguration is moved into `common`
 - The `cob` attribute on `node_configuration::PdoConfig` is renamed to `cob_id`.
+- Better error handling on CAN send errors and `BusManager::scan`.
 
 ### Fixed
 
