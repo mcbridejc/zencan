@@ -131,7 +131,7 @@ impl TryFrom<u8> for ClientCommand {
 }
 
 /// Represents the CAN message used to send a segment during a block upload or download
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BlockSegment {
     /// Complete flag
     ///
@@ -329,6 +329,8 @@ pub enum SdoRequest {
     },
     /// Initiate a block upload
     InitiateBlockUpload {
+        /// Client supports CRC
+        cc: bool,
         /// Index of the object to upload
         index: u16,
         /// Sub index of the object to upload
@@ -442,6 +444,17 @@ impl SdoRequest {
         SdoRequest::InitiateUpload { index, sub }
     }
 
+    /// Create an InitiateBlockUpload request
+    pub fn initiate_block_upload(index: u16, sub: u8, cc: bool, blksize: u8, pst: u8) -> Self {
+        SdoRequest::InitiateBlockUpload {
+            index,
+            sub,
+            cc,
+            blksize,
+            pst,
+        }
+    }
+
     /// Create a `ReqUploadSegment` request
     pub fn upload_segment_request(toggle: bool) -> Self {
         SdoRequest::ReqUploadSegment { t: toggle }
@@ -519,17 +532,35 @@ impl SdoRequest {
                 payload[1..3].copy_from_slice(&crc.to_le_bytes());
             }
             SdoRequest::InitiateBlockUpload {
-                index: _,
-                sub: _,
-                blksize: _,
-                pst: _,
-            } => todo!(),
-            SdoRequest::EndBlockUpload => todo!(),
-            SdoRequest::StartBlockUpload => todo!(),
-            SdoRequest::ConfirmBlock {
-                ackseq: _,
-                blksize: _,
-            } => todo!(),
+                index,
+                sub,
+                cc,
+                blksize,
+                pst,
+            } => {
+                payload[0] = ((ClientCommand::BlockUpload as u8) << 5)
+                    | ((cc as u8) << 2)
+                    | (BlockUploadClientSubcommand::InitiateUpload as u8);
+                payload[1] = (index & 0xff) as u8;
+                payload[2] = (index >> 8) as u8;
+                payload[3] = sub;
+                payload[4] = blksize;
+                payload[5] = pst;
+            }
+            SdoRequest::EndBlockUpload => {
+                payload[0] = ((ClientCommand::BlockUpload as u8) << 5)
+                    | (BlockUploadClientSubcommand::EndUpload as u8);
+            }
+            SdoRequest::StartBlockUpload => {
+                payload[0] = ((ClientCommand::BlockUpload as u8) << 5)
+                    | (BlockUploadClientSubcommand::StartUpload as u8);
+            }
+            SdoRequest::ConfirmBlock { ackseq, blksize } => {
+                payload[0] = ((ClientCommand::BlockUpload as u8) << 5)
+                    | (BlockUploadClientSubcommand::ConfirmBlock as u8);
+                payload[1] = ackseq;
+                payload[2] = blksize;
+            }
         }
         payload
     }
@@ -605,6 +636,7 @@ impl TryFrom<&[u8]> for SdoRequest {
                 };
                 match subcommand {
                     BlockUploadClientSubcommand::InitiateUpload => {
+                        let cc = value[0] & (1 << 2) != 0;
                         let index = value[1] as u16 | ((value[2] as u16) << 8);
                         let sub = value[3];
                         let blksize = value[4];
@@ -612,6 +644,7 @@ impl TryFrom<&[u8]> for SdoRequest {
                         Ok(SdoRequest::InitiateBlockUpload {
                             index,
                             sub,
+                            cc,
                             blksize,
                             pst,
                         })
@@ -752,31 +785,32 @@ pub enum SdoResponse {
     },
 }
 
-impl TryFrom<CanMessage> for SdoResponse {
+impl TryFrom<[u8; 8]> for SdoResponse {
     type Error = ();
-    fn try_from(msg: CanMessage) -> Result<Self, Self::Error> {
-        let scs = msg.data[0] >> 5;
+
+    fn try_from(value: [u8; 8]) -> Result<Self, Self::Error> {
+        let scs = value[0] >> 5;
         let command: ServerCommand = scs.try_into()?;
         match command {
             ServerCommand::SegmentUpload => {
-                let t = (msg.data[0] & (1 << 4)) != 0;
-                let n = (msg.data[0] >> 1) & 7;
-                let c = (msg.data[0] & (1 << 0)) != 0;
-                let data: [u8; 7] = msg.data[1..8].try_into().unwrap();
+                let t = (value[0] & (1 << 4)) != 0;
+                let n = (value[0] >> 1) & 7;
+                let c = (value[0] & (1 << 0)) != 0;
+                let data: [u8; 7] = value[1..8].try_into().unwrap();
 
                 Ok(SdoResponse::UploadSegment { t, n, c, data })
             }
             ServerCommand::SegmentDownload => {
-                let t = (msg.data[0] & (1 << 4)) != 0;
+                let t = (value[0] & (1 << 4)) != 0;
                 Ok(SdoResponse::ConfirmDownloadSegment { t })
             }
             ServerCommand::Upload => {
-                let n = (msg.data[0] >> 2) & 0x3;
-                let e = (msg.data[0] & (1 << 1)) != 0;
-                let s = (msg.data[0] & (1 << 0)) != 0;
-                let index = u16::from_le_bytes(msg.data[1..3].try_into().unwrap());
-                let sub = msg.data[3];
-                let data: [u8; 4] = msg.data[4..8].try_into().unwrap();
+                let n = (value[0] >> 2) & 0x3;
+                let e = (value[0] & (1 << 1)) != 0;
+                let s = (value[0] & (1 << 0)) != 0;
+                let index = u16::from_le_bytes(value[1..3].try_into().unwrap());
+                let sub = value[3];
+                let data: [u8; 4] = value[4..8].try_into().unwrap();
                 Ok(SdoResponse::ConfirmUpload {
                     n,
                     e,
@@ -787,22 +821,22 @@ impl TryFrom<CanMessage> for SdoResponse {
                 })
             }
             ServerCommand::Download => {
-                let index = u16::from_le_bytes(msg.data[1..3].try_into().unwrap());
-                let sub = msg.data[3];
+                let index = u16::from_le_bytes(value[1..3].try_into().unwrap());
+                let sub = value[3];
                 Ok(SdoResponse::ConfirmDownload { index, sub })
             }
             ServerCommand::BlockDownload => {
-                match BlockDownloadServerSubcommand::try_from(msg.data[0] & 0x3)? {
+                match BlockDownloadServerSubcommand::try_from(value[0] & 0x3)? {
                     BlockDownloadServerSubcommand::ConfirmBlock => {
-                        let ackseq = msg.data[1];
-                        let blksize = msg.data[2];
+                        let ackseq = value[1];
+                        let blksize = value[2];
                         Ok(SdoResponse::ConfirmBlock { ackseq, blksize })
                     }
                     BlockDownloadServerSubcommand::InitiateDownloadAck => {
-                        let sc = (msg.data[0] & (1 << 2)) != 0;
-                        let index = u16::from_le_bytes(msg.data[1..3].try_into().unwrap());
-                        let sub = msg.data[3];
-                        let blksize = msg.data[4];
+                        let sc = (value[0] & (1 << 2)) != 0;
+                        let index = u16::from_le_bytes(value[1..3].try_into().unwrap());
+                        let sub = value[3];
+                        let blksize = value[4];
                         Ok(SdoResponse::ConfirmBlockDownload {
                             sc,
                             index,
@@ -816,13 +850,13 @@ impl TryFrom<CanMessage> for SdoResponse {
                 }
             }
             ServerCommand::BlockUpload => {
-                match BlockUploadServerSubcommand::try_from(msg.data[0] & 0x3)? {
+                match BlockUploadServerSubcommand::try_from(value[0] & 0x3)? {
                     BlockUploadServerSubcommand::InitiateUpload => {
-                        let s = (msg.data[0] & (1 << 1)) != 0;
-                        let sc = (msg.data[0] & (1 << 2)) != 0;
-                        let index = u16::from_le_bytes(msg.data[1..3].try_into().unwrap());
-                        let sub = msg.data[3];
-                        let size = u32::from_le_bytes(msg.data[4..8].try_into().unwrap());
+                        let s = (value[0] & (1 << 1)) != 0;
+                        let sc = (value[0] & (1 << 2)) != 0;
+                        let index = u16::from_le_bytes(value[1..3].try_into().unwrap());
+                        let sub = value[3];
+                        let size = u32::from_le_bytes(value[4..8].try_into().unwrap());
                         Ok(SdoResponse::ConfirmBlockUpload {
                             sc,
                             s,
@@ -832,16 +866,16 @@ impl TryFrom<CanMessage> for SdoResponse {
                         })
                     }
                     BlockUploadServerSubcommand::EndUpload => {
-                        let n = (msg.data[0] >> 2) & 7;
-                        let crc = u16::from_le_bytes(msg.data[1..3].try_into().unwrap());
+                        let n = (value[0] >> 2) & 7;
+                        let crc = u16::from_le_bytes(value[1..3].try_into().unwrap());
                         Ok(SdoResponse::BlockUploadEnd { n, crc })
                     }
                 }
             }
             ServerCommand::Abort => {
-                let index = u16::from_le_bytes(msg.data[1..3].try_into().unwrap());
-                let sub = msg.data[3];
-                let abort_code = u32::from_le_bytes(msg.data[4..8].try_into().unwrap());
+                let index = u16::from_le_bytes(value[1..3].try_into().unwrap());
+                let sub = value[3];
+                let abort_code = u32::from_le_bytes(value[4..8].try_into().unwrap());
                 Ok(SdoResponse::Abort {
                     index,
                     sub,
@@ -849,6 +883,13 @@ impl TryFrom<CanMessage> for SdoResponse {
                 })
             }
         }
+    }
+}
+
+impl TryFrom<CanMessage> for SdoResponse {
+    type Error = ();
+    fn try_from(msg: CanMessage) -> Result<Self, Self::Error> {
+        msg.data.try_into()
     }
 }
 impl SdoResponse {
@@ -891,6 +932,22 @@ impl SdoResponse {
             index,
             sub,
             data: size.unwrap_or(0).to_le_bytes(),
+        }
+    }
+
+    /// Create a ConfirmBlockUpload reponse
+    pub fn block_upload_acknowledge(
+        index: u16,
+        sc: bool,
+        sub: u8,
+        size: Option<u32>,
+    ) -> SdoResponse {
+        SdoResponse::ConfirmBlockUpload {
+            sc,
+            s: size.is_some(),
+            index,
+            sub,
+            size: size.unwrap_or(0),
         }
     }
 
@@ -937,8 +994,8 @@ impl SdoResponse {
         }
     }
 
-    /// Convert the response to a [CanMessage] using the provided COB ID
-    pub fn to_can_message(self, id: CanId) -> CanMessage {
+    /// Convert to message payload bytes
+    pub fn to_bytes(&self) -> [u8; 8] {
         let mut payload = [0; 8];
 
         match self {
@@ -952,25 +1009,25 @@ impl SdoResponse {
             } => {
                 payload[0] = ((ServerCommand::Upload as u8) << 5)
                     | ((n & 0x3) << 2)
-                    | ((e as u8) << 1)
-                    | (s as u8);
+                    | ((*e as u8) << 1)
+                    | (*s as u8);
                 payload[1] = (index & 0xff) as u8;
                 payload[2] = (index >> 8) as u8;
-                payload[3] = sub;
-                payload[4..8].copy_from_slice(&data);
+                payload[3] = *sub;
+                payload[4..8].copy_from_slice(data);
             }
             SdoResponse::ConfirmDownload { index, sub } => {
                 payload[0] = (ServerCommand::Download as u8) << 5;
                 payload[1] = (index & 0xff) as u8;
                 payload[2] = (index >> 8) as u8;
-                payload[3] = sub;
+                payload[3] = *sub;
             }
             SdoResponse::UploadSegment { t, n, c, data } => {
                 payload[0] = ((ServerCommand::SegmentUpload as u8) << 5)
-                    | ((t as u8) << 4)
+                    | ((*t as u8) << 4)
                     | (n << 1)
-                    | c as u8;
-                payload[1..8].copy_from_slice(&data);
+                    | *c as u8;
+                payload[1..8].copy_from_slice(data);
             }
             SdoResponse::ConfirmBlockDownload {
                 sc,
@@ -979,25 +1036,25 @@ impl SdoResponse {
                 blksize,
             } => {
                 payload[0] = ((ServerCommand::BlockDownload as u8) << 5)
-                    | ((sc as u8) << 2)
+                    | ((*sc as u8) << 2)
                     | (BlockDownloadServerSubcommand::InitiateDownloadAck as u8);
                 payload[1] = (index & 0xff) as u8;
                 payload[2] = (index >> 8) as u8;
-                payload[3] = sub;
-                payload[4] = blksize;
+                payload[3] = *sub;
+                payload[4] = *blksize;
             }
             SdoResponse::ConfirmBlock { ackseq, blksize } => {
                 payload[0] = ((ServerCommand::BlockDownload as u8) << 5)
                     | (BlockDownloadServerSubcommand::ConfirmBlock as u8);
-                payload[1] = ackseq;
-                payload[2] = blksize;
+                payload[1] = *ackseq;
+                payload[2] = *blksize;
             }
             SdoResponse::ConfirmBlockDownloadEnd => {
                 payload[0] = ((ServerCommand::BlockDownload as u8) << 5)
                     | (BlockDownloadServerSubcommand::EndDownloadAck as u8);
             }
             SdoResponse::ConfirmDownloadSegment { t } => {
-                payload[0] = ((ServerCommand::SegmentDownload as u8) << 5) | ((t as u8) << 4);
+                payload[0] = ((ServerCommand::SegmentDownload as u8) << 5) | ((*t as u8) << 4);
             }
             SdoResponse::Abort {
                 index,
@@ -1007,18 +1064,36 @@ impl SdoResponse {
                 payload[0] = (ServerCommand::Abort as u8) << 5;
                 payload[1] = (index & 0xff) as u8;
                 payload[2] = (index >> 8) as u8;
-                payload[3] = sub;
+                payload[3] = *sub;
                 payload[4..8].copy_from_slice(&abort_code.to_le_bytes());
             }
             SdoResponse::ConfirmBlockUpload {
-                sc: _,
-                s: _,
-                index: _,
-                sub: _,
-                size: _,
-            } => todo!(),
-            SdoResponse::BlockUploadEnd { n: _, crc: _ } => todo!(),
+                sc,
+                s,
+                index,
+                sub,
+                size,
+            } => {
+                payload[0] = ((ServerCommand::BlockUpload as u8) << 5)
+                    | ((*sc as u8) << 2)
+                    | ((*s as u8) << 1)
+                    | (BlockUploadServerSubcommand::InitiateUpload as u8);
+                payload[1] = (index & 0xff) as u8;
+                payload[2] = (index >> 8) as u8;
+                payload[3] = *sub;
+                payload[4..8].copy_from_slice(&size.to_le_bytes());
+            }
+            SdoResponse::BlockUploadEnd { n, crc } => {
+                payload[0] = ((ServerCommand::BlockUpload as u8) << 5)
+                    | ((*n as u8) << 2)
+                    | (BlockUploadServerSubcommand::EndUpload as u8);
+                payload[1..3].copy_from_slice(&crc.to_le_bytes());
+            }
         }
-        CanMessage::new(id, &payload)
+        payload
+    }
+    /// Convert the response to a [CanMessage] using the provided COB ID
+    pub fn to_can_message(self, id: CanId) -> CanMessage {
+        CanMessage::new(id, &self.to_bytes())
     }
 }

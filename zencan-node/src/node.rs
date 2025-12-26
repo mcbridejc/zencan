@@ -253,12 +253,11 @@ impl<'a> Node<'a> {
         }
 
         // Process SDO server
-        let (resp, updated_index) =
+        let (message_sent, updated_index) =
             self.sdo_server
-                .process(self.mbox.sdo_receiver(), elapsed, self.od);
-        if let Some(resp) = resp {
-            self.send_message(resp.to_can_message(self.sdo_tx_cob_id()));
-        }
+                .process(self.mbox.sdo_comms(), elapsed, self.od);
+
+        self.transmit_flag |= message_sent;
         if updated_index.is_some() {
             update_flag = true;
         }
@@ -472,7 +471,8 @@ impl<'a> Node<'a> {
 
         if let NodeId::Configured(node_id) = self.node_id {
             info!("Booting node with ID {}", node_id.raw());
-            self.mbox.set_sdo_cob_id(Some(self.sdo_rx_cob_id()));
+            self.mbox.set_sdo_rx_cob_id(Some(self.sdo_rx_cob_id()));
+            self.mbox.set_sdo_tx_cob_id(Some(self.sdo_tx_cob_id()));
             self.send_heartbeat();
         }
     }

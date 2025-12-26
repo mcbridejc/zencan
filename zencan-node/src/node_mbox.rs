@@ -34,7 +34,10 @@ impl<const N: usize> CanMessageQueue for PriorityQueue<N, CanMessage> {
 pub struct NodeMbox {
     rx_pdos: &'static [Pdo],
     tx_pdos: &'static [Pdo],
-    sdo_cob_id: AtomicCell<Option<CanId>>,
+    /// ID used for transmitting SDO server responses
+    sdo_tx_cob_id: AtomicCell<Option<CanId>>,
+    /// ID used for receiving SDO server requests
+    sdo_rx_cob_id: AtomicCell<Option<CanId>>,
     sdo_comms: SdoComms,
     nmt_mbox: AtomicCell<Option<CanMessage>>,
     lss_receiver: LssReceiver,
@@ -56,7 +59,8 @@ impl NodeMbox {
         tx_queue: &'static dyn CanMessageQueue,
         sdo_buffer: &'static mut [u8],
     ) -> Self {
-        let sdo_cob_id = AtomicCell::new(None);
+        let sdo_rx_cob_id = AtomicCell::new(None);
+        let sdo_tx_cob_id = AtomicCell::new(None);
         let sdo_comms = SdoComms::new(sdo_buffer);
         let nmt_mbox = AtomicCell::new(None);
         let lss_receiver = LssReceiver::new();
@@ -66,7 +70,8 @@ impl NodeMbox {
         Self {
             rx_pdos,
             tx_pdos,
-            sdo_cob_id,
+            sdo_rx_cob_id,
+            sdo_tx_cob_id,
             sdo_comms,
             nmt_mbox,
             lss_receiver,
@@ -104,11 +109,15 @@ impl NodeMbox {
         }
     }
 
-    pub(crate) fn set_sdo_cob_id(&self, cob_id: Option<CanId>) {
-        self.sdo_cob_id.store(cob_id);
+    pub(crate) fn set_sdo_rx_cob_id(&self, cob_id: Option<CanId>) {
+        self.sdo_rx_cob_id.store(cob_id);
     }
 
-    pub(crate) fn sdo_receiver(&self) -> &SdoComms {
+    pub(crate) fn set_sdo_tx_cob_id(&self, cob_id: Option<CanId>) {
+        self.sdo_tx_cob_id.store(cob_id);
+    }
+
+    pub(crate) fn sdo_comms(&self) -> &SdoComms {
         &self.sdo_comms
     }
 
@@ -163,7 +172,7 @@ impl NodeMbox {
             }
         }
 
-        if let Some(cob_id) = self.sdo_cob_id.load() {
+        if let Some(cob_id) = self.sdo_rx_cob_id.load() {
             if id == cob_id {
                 self.sdo_comms.handle_req(msg.data());
             }
@@ -190,7 +199,11 @@ impl NodeMbox {
             return Some(msg);
         }
 
-        // TODO: Handle SDO sending
+        if let Some(msg) = self.sdo_comms.next_transmit_message() {
+            if let Some(id) = self.sdo_tx_cob_id.load() {
+                return Some(CanMessage::new(id, &msg));
+            }
+        }
 
         None
     }
