@@ -4,10 +4,15 @@
 #![no_main]
 
 use core::{
-    cell::RefCell, convert::Infallible, num::{NonZeroU16, NonZeroU8}, pin::pin, time::Duration
+    cell::RefCell,
+    convert::Infallible,
+    num::{NonZeroU8, NonZeroU16},
+    pin::pin,
+    time::Duration,
 };
 
 use core::hash::Hasher;
+use critical_section::Mutex;
 use hash32::{FnvHasher, Hasher as _};
 
 use lilos::{exec::Notify, time::Millis};
@@ -15,7 +20,7 @@ use persist::SectionUpdate;
 use stm32_metapac::{self as pac, RCC, interrupt};
 
 use fdcan::{
-    FdCan, FdCanControl, Fifo0, NormalOperationMode, Rx,
+    FdCan, NormalOperationMode,
     config::{DataBitTiming, FdCanConfig, GlobalFilter},
     filter::{StandardFilter, StandardFilterSlot},
 };
@@ -25,7 +30,10 @@ use panic_probe as _;
 use rtt_target::{self as _, rtt_init, set_defmt_channel};
 
 use zencan_node::{
-    common::NodeId, object_dict::{ODEntry, ObjectAccess}, restore_stored_comm_objects, restore_stored_objects, Callbacks, Node
+    Callbacks, Node,
+    common::NodeId,
+    object_dict::{ODEntry, ObjectAccess},
+    restore_stored_comm_objects, restore_stored_objects,
 };
 
 /// Create a serial number from the UID register
@@ -58,8 +66,9 @@ unsafe impl fdcan::Instance for FdCan1 {
     const REGISTERS: *mut fdcan::RegisterBlock = pac::FDCAN1.as_ptr() as _;
 }
 
-static mut CAN_RX: Option<Rx<FdCan1, NormalOperationMode, Fifo0>> = None;
-static mut CAN_CTRL: Option<FdCanControl<FdCan1, NormalOperationMode>> = None;
+static CAN: Mutex<RefCell<Option<FdCan<FdCan1, NormalOperationMode>>>> =
+    Mutex::new(RefCell::new(None));
+
 static CAN_NOTIFY: Notify = Notify::new();
 
 enum FlashSections {
@@ -80,7 +89,11 @@ impl From<u8> for FlashSections {
 
 /// Callback from zencan to store object data to flash
 #[allow(static_mut_refs)]
-fn store_objects(flash: &mut Stm32g0Flash, reader: &mut dyn embedded_io::Read<Error = Infallible>, size: usize) {
+fn store_objects(
+    flash: &mut Stm32g0Flash,
+    reader: &mut dyn embedded_io::Read<Error = Infallible>,
+    size: usize,
+) {
     if persist::update_sections(
         &mut flash.unlock(),
         &mut [SectionUpdate {
@@ -161,6 +174,35 @@ fn read_persisted_objects(flash: &mut Stm32g0Flash, restore_fn: impl Fn(&[u8])) 
     } else {
         defmt::info!("No data found in flash");
     }
+}
+
+/// Move outgoing CAN messages from NODE_MBOX to the CAN controller
+///
+/// Will move messages until either the hardware FIFO is full, or NODE_MBOX is out of messages.
+fn transmit_can_messages(can: &mut FdCan<FdCan1, NormalOperationMode>) {
+    loop {
+        // Check if queue is full
+        // Driver lacks API for this so go straight to register
+        if pac::FDCAN1.txfqs().read().tfqf() {
+            break;
+        }
+        if let Some(msg) = zencan::NODE_MBOX.next_transmit_message() {
+            let header = zencan_to_fdcan_header(&msg);
+            if let Err(_) = can.transmit(header, msg.data()) {
+                defmt::error!("Error transmitting CAN message");
+            }
+        } else {
+            break;
+        }
+    }
+}
+
+fn transmit_notify_handler() {
+    critical_section::with(|cs| {
+        let mut borrow = CAN.borrow_ref_mut(cs);
+        let can = borrow.as_mut().unwrap();
+        transmit_can_messages(can);
+    })
 }
 
 #[cortex_m_rt::entry]
@@ -244,20 +286,21 @@ fn main() -> ! {
     can.apply_config(can_config);
     let mut can = can.into_normal();
 
+    // Set the per-mailbox TX interrupt to enable TXComplete IRQ
+    // Works around a bug in fdcan driver: see https://github.com/stm32-rs/fdcan/issues/42
+    pac::FDCAN1.txbtie().write(|w| w.0 = 7);
     can.enable_interrupt(fdcan::interrupt::Interrupt::RxFifo0NewMsg);
+    can.enable_interrupt(fdcan::interrupt::Interrupt::TxComplete);
     can.enable_interrupt_line(fdcan::config::InterruptLine::_1, true);
     can.set_standard_filter(
         StandardFilterSlot::_0,
         StandardFilter::accept_all_into_fifo0(),
     );
 
-    let (can_ctrl, mut can_tx, can_rx0, _can_rx1) = can.split();
-
-    // Store the rx and ctrl handles to statics for the ISR to use
-    unsafe {
-        CAN_RX = Some(can_rx0);
-        CAN_CTRL = Some(can_ctrl);
-    }
+    // Store the CAN periph statically for the IRQ handler
+    critical_section::with(|cs| {
+        CAN.borrow_ref_mut(cs).replace(can);
+    });
 
     configure_adc();
 
@@ -268,8 +311,12 @@ fn main() -> ! {
 
     let flash = RefCell::new(flash);
 
-    let mut store_node_config = |node_id| { store_node_config(&mut flash.borrow_mut(), node_id); };
-    let mut store_objects = |reader: &mut dyn embedded_io::Read<Error = Infallible>, len| { store_objects(&mut flash.borrow_mut(), reader, len) };
+    let mut store_node_config = |node_id| {
+        store_node_config(&mut flash.borrow_mut(), node_id);
+    };
+    let mut store_objects = |reader: &mut dyn embedded_io::Read<Error = Infallible>, len| {
+        store_objects(&mut flash.borrow_mut(), reader, len)
+    };
     let mut reset_app = |od: &[ODEntry]| {
         // On RESET APP transition, we reload object values to their reset value
 
@@ -287,24 +334,20 @@ fn main() -> ! {
         zencan::OBJECT2100.set_value(20);
 
         // Restore objects saved to flash
-        read_persisted_objects(&mut flash.borrow_mut(), |stored_data| restore_stored_objects(od, stored_data));
+        read_persisted_objects(&mut flash.borrow_mut(), |stored_data| {
+            restore_stored_objects(od, stored_data)
+        });
     };
     let mut reset_comms = |od: &[ODEntry]| {
         // On reset COMMS, only the communications objects (0x1000-0x1fff) are restored. The node
         // library will handle restoring the default values before calling the reset_comms callback.
         // Then the application may restore objects from persistent storage if it supports that.
-        read_persisted_objects(&mut flash.borrow_mut(), |stored_data| restore_stored_comm_objects(od, stored_data));
+        read_persisted_objects(&mut flash.borrow_mut(), |stored_data| {
+            restore_stored_comm_objects(od, stored_data)
+        });
     };
 
-
     let callbacks = Callbacks {
-        send_message: &mut move |msg| {
-            let header = zencan_to_fdcan_header(&msg);
-            if let Err(_) = can_tx.transmit(header, msg.data()) {
-                defmt::error!("Error transmitting CAN message");
-            }
-            Ok(())
-        },
         store_node_config: Some(&mut store_node_config),
         store_objects: Some(&mut store_objects),
         reset_app: Some(&mut reset_app),
@@ -324,6 +367,9 @@ fn main() -> ! {
 
     // Register handler for waking process task
     zencan::NODE_MBOX.set_process_notify_callback(&notify_can_task);
+
+    // Register handler for CAN frame transmit notice
+    zencan::NODE_MBOX.set_transmit_notify_callback(&transmit_notify_handler);
 
     // Enable debugger access while sleeping
     pac::DBGMCU.cr().modify(|w| {
@@ -441,29 +487,38 @@ async fn main_task() -> Infallible {
 #[allow(static_mut_refs)]
 #[interrupt]
 fn TIM16_FDCAN_IT0() {
-    // safety: Accept for during boot-up when we set it, we only access in this interrupt
-    let ctrl = unsafe { CAN_CTRL.as_mut().unwrap() };
-    let rx = unsafe { CAN_RX.as_mut().unwrap() };
+    // Safety: No other IRQs access CAN, so no critical section is required in the IRQ
+    let cs = unsafe { critical_section::CriticalSection::new() };
 
-    ctrl.clear_interrupt(fdcan::interrupt::Interrupt::RxFifo0NewMsg);
+    let mut cell = CAN.borrow_ref_mut(cs);
+    let can = cell.as_mut().unwrap();
 
-    let mut buffer = [0u8; 8];
+    if can.has_interrupt(fdcan::interrupt::Interrupt::RxFifo0NewMsg) {
+        can.clear_interrupt(fdcan::interrupt::Interrupt::RxFifo0NewMsg);
+        let mut buffer = [0u8; 8];
 
-    while let Ok(msg) = rx.receive(&mut buffer) {
-        // ReceiveOverrun::unwrap() cannot fail
-        let msg = msg.unwrap();
+        while let Ok(msg) = can.receive0(&mut buffer) {
+            // ReceiveOverrun::unwrap() cannot fail
+            let msg = msg.unwrap();
 
-        let id = match msg.id {
-            fdcan::id::Id::Standard(standard_id) => {
-                zencan_node::common::messages::CanId::std(standard_id.as_raw())
-            }
-            fdcan::id::Id::Extended(extended_id) => {
-                zencan_node::common::messages::CanId::extended(extended_id.as_raw())
-            }
-        };
-        let msg = zencan_node::common::messages::CanMessage::new(id, &buffer[..msg.len as usize]);
-        // Ignore error -- as an Err is returned for messages that are not consumed by the node
-        // stack
-        zencan::NODE_MBOX.store_message(msg).ok();
+            let id = match msg.id {
+                fdcan::id::Id::Standard(standard_id) => {
+                    zencan_node::common::messages::CanId::std(standard_id.as_raw())
+                }
+                fdcan::id::Id::Extended(extended_id) => {
+                    zencan_node::common::messages::CanId::extended(extended_id.as_raw())
+                }
+            };
+            let msg =
+                zencan_node::common::messages::CanMessage::new(id, &buffer[..msg.len as usize]);
+            // Ignore error -- as an Err is returned for messages that are not consumed by the node
+            // stack
+            zencan::NODE_MBOX.store_message(msg).ok();
+        }
+    }
+
+    if can.has_interrupt(fdcan::interrupt::Interrupt::TxComplete) {
+        can.clear_interrupt(fdcan::interrupt::Interrupt::TxComplete);
+        transmit_can_messages(can);
     }
 }

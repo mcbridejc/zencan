@@ -9,6 +9,7 @@ use zencan_common::{
     pdo::PdoMapping,
     sdo::{AbortCode, BlockSegment, SdoRequest, SdoResponse},
     traits::{AsyncCanReceiver, AsyncCanSender, CanSendError as _},
+    CanMessage,
 };
 
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_millis(150);
@@ -93,6 +94,8 @@ pub enum SdoClientError {
     /// allowed to change the block size between each block, and can request resend of part of a
     /// block by not acknowledging all segments.
     BlockSizeChangedTooSmall,
+    /// The CRC on a block upload did not match
+    CrcMismatch,
 }
 
 type Result<T> = std::result::Result<T, SdoClientError>;
@@ -173,20 +176,34 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.timeout
     }
 
+    async fn send(&mut self, data: [u8; 8]) -> Result<()> {
+        let frame = CanMessage::new(self.req_cob_id, &data);
+        let mut tries = 3;
+        loop {
+            match self.sender.send(frame).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    tries -= 1;
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    if tries == 0 {
+                        return SocketSendFailedSnafu {
+                            message: e.message(),
+                        }
+                        .fail();
+                    }
+                }
+            }
+        }
+    }
+
     /// Write data to a sub-object on the SDO server
     pub async fn download(&mut self, index: u16, sub: u8, data: &[u8]) -> Result<()> {
         if data.len() <= 4 {
             // Do an expedited transfer
-            let msg =
-                SdoRequest::expedited_download(index, sub, data).to_can_message(self.req_cob_id);
-            self.sender.send(msg).await.map_err(|e| {
-                SocketSendFailedSnafu {
-                    message: e.message(),
-                }
-                .build()
-            })?;
+            self.send(SdoRequest::expedited_download(index, sub, data).to_bytes())
+                .await?;
 
-            let resp = self.wait_for_response(self.timeout).await?;
+            let resp = self.wait_for_response().await?;
             match_response!(
                 resp,
                 "ConfirmDownload",
@@ -195,16 +212,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                 }
             )
         } else {
-            let msg = SdoRequest::initiate_download(index, sub, Some(data.len() as u32))
-                .to_can_message(self.req_cob_id);
-            self.sender.send(msg).await.map_err(|e| {
-                SocketSendFailedSnafu {
-                    message: e.message(),
-                }
-                .build()
-            })?;
+            self.send(
+                SdoRequest::initiate_download(index, sub, Some(data.len() as u32)).to_bytes(),
+            )
+            .await?;
 
-            let resp = self.wait_for_response(self.timeout).await?;
+            let resp = self.wait_for_response().await?;
             match_response!(
                 resp,
                 "ConfirmDownload",
@@ -221,13 +234,9 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                     toggle,
                     last_segment,
                     &data[n * 7..n * 7 + segment_size],
-                )
-                .to_can_message(self.req_cob_id);
-                self.sender
-                    .send(seg_msg)
-                    .await
-                    .expect("failed sending DL segment");
-                let resp = self.wait_for_response(self.timeout).await?;
+                );
+                self.send(seg_msg.to_bytes()).await?;
+                let resp = self.wait_for_response().await?;
                 match_response!(
                     resp,
                     "ConfirmDownloadSegment",
@@ -235,12 +244,10 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                         // Fail if toggle value doesn't match
                         if t != toggle {
                             let abort_msg =
-                                SdoRequest::abort(index, sub, AbortCode::ToggleNotAlternated)
-                                    .to_can_message(self.req_cob_id);
-                            self.sender
-                                .send(abort_msg)
-                                .await
-                                .expect("Error sending abort");
+                                SdoRequest::abort(index, sub, AbortCode::ToggleNotAlternated);
+
+                            self.send(abort_msg.to_bytes())
+                                .await?;
                             return ToggleNotAlternatedSnafu.fail();
                         }
                         // Otherwise, carry on
@@ -256,15 +263,10 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     pub async fn upload(&mut self, index: u16, sub: u8) -> Result<Vec<u8>> {
         let mut read_buf = Vec::new();
 
-        let msg = SdoRequest::initiate_upload(index, sub).to_can_message(self.req_cob_id);
-        self.sender.send(msg).await.map_err(|e| {
-            SocketSendFailedSnafu {
-                message: e.message(),
-            }
-            .build()
-        })?;
+        self.send(SdoRequest::initiate_upload(index, sub).to_bytes())
+            .await?;
 
-        let resp = self.wait_for_response(self.timeout).await?;
+        let resp = self.wait_for_response().await?;
 
         let expedited = match_response!(
             resp,
@@ -292,29 +294,20 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             // Read segments
             let mut toggle = false;
             loop {
-                let msg =
-                    SdoRequest::upload_segment_request(toggle).to_can_message(self.req_cob_id);
+                self.send(SdoRequest::upload_segment_request(toggle).to_bytes())
+                    .await?;
 
-                self.sender.send(msg).await.map_err(|e| {
-                    SocketSendFailedSnafu {
-                        message: e.message(),
-                    }
-                    .build()
-                })?;
-
-                let resp = self.wait_for_response(self.timeout).await?;
+                let resp = self.wait_for_response().await?;
                 match_response!(
                     resp,
                     "UploadSegment",
                     SdoResponse::UploadSegment { t, n, c, data } => {
                         if t != toggle {
-                            self.sender
-                                .send(
+                            self.send(
                                     SdoRequest::abort(index, sub, AbortCode::ToggleNotAlternated)
-                                        .to_can_message(self.req_cob_id),
+                                        .to_bytes(),
                                 )
-                                .await
-                                .expect("Error sending abort");
+                                .await?;
                             return ToggleNotAlternatedSnafu.fail();
                         }
                         read_buf.extend_from_slice(&data[0..7 - n as usize]);
@@ -335,26 +328,19 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     /// Block downloads are more efficient for large amounts of data, but may not be supported by
     /// all devices.
     pub async fn block_download(&mut self, index: u16, sub: u8, data: &[u8]) -> Result<()> {
-        self.sender
-            .send(
-                SdoRequest::InitiateBlockDownload {
-                    cc: true, // CRC supported
-                    s: true,  // size specified
-                    index,
-                    sub,
-                    size: data.len() as u32,
-                }
-                .to_can_message(self.req_cob_id),
-            )
-            .await
-            .map_err(|e| {
-                SocketSendFailedSnafu {
-                    message: e.message(),
-                }
-                .build()
-            })?;
+        self.send(
+            SdoRequest::InitiateBlockDownload {
+                cc: true, // CRC supported
+                s: true,  // size specified
+                index,
+                sub,
+                size: data.len() as u32,
+            }
+            .to_bytes(),
+        )
+        .await?;
 
-        let resp = self.wait_for_response(self.timeout).await?;
+        let resp = self.wait_for_response().await?;
 
         let (crc_enabled, mut blksize) = match_response!(
             resp,
@@ -396,20 +382,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                 seqnum,
                 data: segment_data,
             };
-            self.sender
-                .send(segment.to_can_message(self.req_cob_id))
-                .await
-                .map_err(|e| {
-                    SocketSendFailedSnafu {
-                        message: e.message(),
-                    }
-                    .build()
-                })?;
+            self.send(segment.to_bytes()).await?;
 
             // Expect a confirmation message after blksize segments are sent, or after sending the
             // complete flag
             if c || seqnum == blksize {
-                let resp = self.wait_for_response(self.timeout).await?;
+                let resp = self.wait_for_response().await?;
                 match_response!(
                     resp,
                     "ConfirmBlock",
@@ -454,22 +432,92 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
 
         let n = ((7 - data.len() % 7) % 7) as u8;
 
-        self.sender
-            .send(SdoRequest::EndBlockDownload { n, crc }.to_can_message(self.req_cob_id))
-            .await
-            .map_err(|e| {
-                SocketSendFailedSnafu {
-                    message: e.message(),
-                }
-                .build()
-            })?;
+        self.send(SdoRequest::EndBlockDownload { n, crc }.to_bytes())
+            .await?;
 
-        let resp = self.wait_for_response(self.timeout).await?;
+        let resp = self.wait_for_response().await?;
         match_response!(
             resp,
             "ConfirmBlockDownloadEnd",
             SdoResponse::ConfirmBlockDownloadEnd => { Ok(()) }
         )
+    }
+
+    /// Perform a block upload of data from the node
+    pub async fn block_upload(&mut self, index: u16, sub: u8) -> Result<Vec<u8>> {
+        const CRC_SUPPORTED: bool = true;
+        const BLKSIZE: u8 = 127;
+        const PST: u8 = 0;
+        self.send(
+            SdoRequest::initiate_block_upload(index, sub, CRC_SUPPORTED, BLKSIZE, PST).to_bytes(),
+        )
+        .await?;
+
+        let resp = self.wait_for_response().await?;
+
+        let server_supports_crc = match_response!(
+            resp,
+            "ConfirmBlockUpload",
+            SdoResponse::ConfirmBlockUpload { sc, s: _, index: _, sub: _, size: _ } => {sc}
+        );
+
+        self.send(SdoRequest::StartBlockUpload.to_bytes()).await?;
+
+        let mut rx_data = Vec::new();
+        let last_segment;
+        loop {
+            let segment = self.wait_for_block_segment().await?;
+            rx_data.extend_from_slice(&segment.data);
+            if !segment.c && segment.seqnum == BLKSIZE {
+                // Finished sub block, but not yet done. Confirm this sub block and expect more
+                self.send(
+                    SdoRequest::ConfirmBlock {
+                        ackseq: BLKSIZE,
+                        blksize: BLKSIZE,
+                    }
+                    .to_bytes(),
+                )
+                .await?;
+            }
+            if segment.c {
+                last_segment = segment.seqnum;
+                break;
+            }
+        }
+
+        // NOTE: Ignoring the possibility of dropped messages here. Should check seqno to make sure
+        // all blocks are received.
+        self.send(
+            SdoRequest::ConfirmBlock {
+                ackseq: last_segment,
+                blksize: BLKSIZE,
+            }
+            .to_bytes(),
+        )
+        .await?;
+
+        let resp = self.wait_for_response().await?;
+        let (n, crc) = match_response!(
+            resp,
+            "BlockUploadEnd",
+            SdoResponse::BlockUploadEnd { n, crc } => {(n, crc)}
+        );
+
+        // Drop the n invalid data bytes
+        rx_data.resize(rx_data.len() - n as usize, 0);
+
+        if server_supports_crc {
+            let computed_crc = crc16::State::<crc16::XMODEM>::calculate(&rx_data);
+            if crc != computed_crc {
+                self.send(SdoRequest::abort(index, sub, AbortCode::CrcError).to_bytes())
+                    .await?;
+                return Err(SdoClientError::CrcMismatch);
+            }
+        }
+
+        self.send(SdoRequest::EndBlockUpload.to_bytes()).await?;
+
+        Ok(rx_data)
     }
 
     /// Write to a u32 object on the SDO server
@@ -798,8 +846,32 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         })
     }
 
-    async fn wait_for_response(&mut self, timeout: Duration) -> Result<SdoResponse> {
-        let wait_until = tokio::time::Instant::now() + timeout;
+    async fn wait_for_block_segment(&mut self) -> Result<BlockSegment> {
+        let wait_until = tokio::time::Instant::now() + self.timeout;
+        loop {
+            match tokio::time::timeout_at(wait_until, self.receiver.recv()).await {
+                // Err indicates the timeout elapsed, so return
+                Err(_) => return NoResponseSnafu.fail(),
+                // Message was recieved. If it is the resp, return. Otherwise, keep waiting
+                Ok(Ok(msg)) => {
+                    if msg.id == self.resp_cob_id {
+                        return msg
+                            .data()
+                            .try_into()
+                            .map_err(|_| MalformedResponseSnafu.build());
+                    }
+                }
+                // Recv returned an error
+                Ok(Err(e)) => {
+                    log::error!("Error reading from socket: {e:?}");
+                    return NoResponseSnafu.fail();
+                }
+            }
+        }
+    }
+
+    async fn wait_for_response(&mut self) -> Result<SdoResponse> {
+        let wait_until = tokio::time::Instant::now() + self.timeout;
         loop {
             match tokio::time::timeout_at(wait_until, self.receiver.recv()).await {
                 // Err indicates the timeout elapsed, so return

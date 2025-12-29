@@ -16,8 +16,8 @@ async fn test_sdo_read() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -27,7 +27,7 @@ async fn test_sdo_read() {
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         client
             .download(0x3000, 0, &[0xa, 0xb, 0xc, 0xd])
             .await
@@ -35,9 +35,18 @@ async fn test_sdo_read() {
         let read = client.upload(0x3000, 0).await.unwrap();
 
         assert_eq!(vec![0xa, 0xb, 0xc, 0xd], read);
+
+        client
+            .download(0x2002, 0, "teststring".as_bytes())
+            .await
+            .unwrap();
+        assert_eq!(
+            "teststring",
+            client.read_visible_string(0x2002, 0).await.unwrap()
+        );
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[tokio::test]
@@ -47,8 +56,8 @@ async fn test_block_download() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -59,7 +68,7 @@ async fn test_block_download() {
     let mut client = get_sdo_client(&mut bus, NODE_ID);
     let _bus_logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         let data = Vec::from_iter(0..128);
         client.block_download(0x3006, 0, &data).await.unwrap();
 
@@ -77,7 +86,7 @@ async fn test_block_download() {
             integration_tests::object_dict1::OBJECT3006.get_value()
         );
     };
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[derive(Debug)]
@@ -163,8 +172,8 @@ async fn test_domain_access() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -181,7 +190,7 @@ async fn test_domain_access() {
         .value
         .register_handler(domain);
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         // Create a long chunk of data
         let mut write_data = Vec::from_iter((0..1200).map(|i| i as u8));
 
@@ -211,5 +220,5 @@ async fn test_domain_access() {
         );
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }

@@ -1,10 +1,8 @@
 use std::{
     convert::Infallible,
     sync::{Arc, RwLock},
-    time::Duration,
 };
 
-use assertables::assert_matches;
 use integration_tests::{object_dict1, prelude::*};
 use serial_test::serial;
 use zencan_client::nmt_master::NmtMaster;
@@ -19,8 +17,8 @@ async fn test_device_info_readback() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -32,7 +30,7 @@ async fn test_device_info_readback() {
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         assert_eq!(
             &client.read_utf8(DEVICE_NAME_ID, 0).await.unwrap(),
             "Example 1"
@@ -47,7 +45,7 @@ async fn test_device_info_readback() {
         );
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[serial]
@@ -62,8 +60,8 @@ async fn test_identity_readback() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -75,7 +73,7 @@ async fn test_identity_readback() {
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         // Check that the identity matches the values defined in the example1.toml device config
         assert_eq!(
             client
@@ -107,7 +105,7 @@ async fn test_identity_readback() {
         );
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[tokio::test]
@@ -116,8 +114,8 @@ async fn test_string_write() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -129,7 +127,7 @@ async fn test_string_write() {
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         // Transfer a string short enough to be done expedited
         client.download(0x2002, 0, "Test".as_bytes()).await.unwrap();
         let readback = client.upload(0x2002, 0).await.unwrap();
@@ -157,7 +155,7 @@ async fn test_string_write() {
         assert_eq!("Testers1234".as_bytes(), readback);
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[tokio::test]
@@ -168,8 +166,8 @@ async fn test_record_access() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -182,7 +180,7 @@ async fn test_record_access() {
     // Create a logger to display messages on the bus on test failure for debugging
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         let size_data = client.upload(OBJECT_ID, 0).await.unwrap();
         assert_eq!(1, size_data.len());
         assert_eq!(4, size_data[0]); // Highest sub index supported
@@ -213,7 +211,7 @@ async fn test_record_access() {
         );
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[tokio::test]
@@ -223,8 +221,8 @@ async fn test_array_access() {
     const OBJECT_ID: u16 = 0x2000;
     const NODE_ID: u8 = 1;
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -236,7 +234,7 @@ async fn test_array_access() {
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         let size_data = client.upload(OBJECT_ID, 0).await.unwrap();
         assert_eq!(1, size_data.len());
         assert_eq!(2, size_data[0]); // Highest sub index supported
@@ -257,7 +255,7 @@ async fn test_array_access() {
         assert_eq!(99, i32::from_le_bytes(data.try_into().unwrap()));
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[tokio::test]
@@ -283,8 +281,8 @@ async fn test_store_and_restore_objects() {
         };
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let mut callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let mut callbacks = Callbacks::new();
     callbacks.store_objects = Some(&mut store_objects_callback);
 
     let mut node = Node::new(
@@ -299,7 +297,7 @@ async fn test_store_and_restore_objects() {
     let _ = env_logger::try_init();
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |mut ctx: TestContext| async move {
         // Load some values to persist
         client
             .download(0x2002, 0, "SAVEME".as_bytes())
@@ -314,7 +312,7 @@ async fn test_store_and_restore_objects() {
         // Trigger a save
         client.download_u32(0x1010, 1, SAVE_CMD).await.unwrap();
 
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        ctx.wait_for_process(1).await;
 
         assert!(!serialized_data.read().unwrap().is_empty());
 
@@ -342,7 +340,7 @@ async fn test_store_and_restore_objects() {
         assert_eq!(client.upload_u32(0x2000, 1).await.unwrap(), 900);
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[serial]
@@ -354,8 +352,8 @@ async fn test_empty_string_read() {
 
     const NODE_ID: u8 = 1;
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -367,11 +365,11 @@ async fn test_empty_string_read() {
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         let empty_string = client.upload_utf8(0x3005, 0).await.unwrap();
         assert_eq!("", empty_string);
     };
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 /// Verify that the NODE calls the appropriate state change callbacks
@@ -384,11 +382,11 @@ async fn test_node_state_callbacks() {
 
     const NODE_ID: u8 = 1;
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let mut callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let mut callbacks = Callbacks::new();
     let _logger = BusLogger::new(bus.new_receiver());
 
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
     enum LastCallback {
         ResetApp,
         ResetComms,
@@ -428,30 +426,30 @@ async fn test_node_state_callbacks() {
     );
     let mut nmt_master = NmtMaster::new(bus.new_sender(), bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |mut ctx: TestContext| async move {
         // Reset app should be called during bootup
-        assert_matches!(callback_rx.try_recv(), Ok(LastCallback::ResetApp));
+        assert_eq!(callback_rx.try_recv().unwrap(), LastCallback::ResetApp);
         // Enter Preop right after
-        assert_matches!(callback_rx.try_recv(), Ok(LastCallback::Preop));
+        assert_eq!(callback_rx.try_recv().unwrap(), LastCallback::Preop);
         // No more
         assert!(callback_rx.try_recv().is_err());
 
         nmt_master.nmt_start(NODE_ID).await.unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        ctx.wait_for_process(1).await;
 
-        assert_matches!(callback_rx.try_recv(), Ok(LastCallback::Operational));
+        assert_eq!(callback_rx.try_recv().unwrap(), LastCallback::Operational);
 
         nmt_master.nmt_stop(NODE_ID).await.unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        ctx.wait_for_process(1).await;
 
-        assert_matches!(callback_rx.try_recv(), Ok(LastCallback::Stopped));
+        assert_eq!(callback_rx.try_recv().unwrap(), LastCallback::Stopped);
 
         nmt_master.nmt_reset_comms(NODE_ID).await.unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        ctx.wait_for_process(2).await;
 
-        assert_matches!(callback_rx.try_recv(), Ok(LastCallback::ResetComms));
-        assert_matches!(callback_rx.try_recv(), Ok(LastCallback::Preop));
+        assert_eq!(callback_rx.try_recv().unwrap(), LastCallback::ResetComms);
+        assert_eq!(callback_rx.try_recv().unwrap(), LastCallback::Preop);
         assert!(callback_rx.try_recv().is_err());
     };
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }

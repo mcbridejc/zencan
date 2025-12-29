@@ -5,7 +5,26 @@ use zencan_common::{
     AtomicCell,
 };
 
-use crate::{lss_slave::LssReceiver, pdo::Pdo, sdo_server::SdoReceiver};
+use crate::{
+    lss_slave::LssReceiver, pdo::Pdo, priority_queue::PriorityQueue, sdo_server::SdoComms,
+};
+
+pub trait CanMessageQueue: Send + Sync {
+    fn push(&self, msg: CanMessage) -> Result<(), CanMessage>;
+
+    fn pop(&self) -> Option<CanMessage>;
+}
+
+impl<const N: usize> CanMessageQueue for PriorityQueue<N, CanMessage> {
+    fn push(&self, msg: CanMessage) -> Result<(), CanMessage> {
+        let prio = msg.id().raw();
+        self.push(prio, msg)
+    }
+
+    fn pop(&self) -> Option<CanMessage> {
+        self.pop()
+    }
+}
 
 /// A data structure to be shared between a receiving thread (e.g. a CAN controller IRQ) and the
 /// [`Node`](crate::Node) object.
@@ -14,12 +33,18 @@ use crate::{lss_slave::LssReceiver, pdo::Pdo, sdo_server::SdoReceiver};
 #[allow(missing_debug_implementations)]
 pub struct NodeMbox {
     rx_pdos: &'static [Pdo],
-    sdo_cob_id: AtomicCell<Option<CanId>>,
-    sdo_receiver: SdoReceiver,
+    tx_pdos: &'static [Pdo],
+    /// ID used for transmitting SDO server responses
+    sdo_tx_cob_id: AtomicCell<Option<CanId>>,
+    /// ID used for receiving SDO server requests
+    sdo_rx_cob_id: AtomicCell<Option<CanId>>,
+    sdo_comms: SdoComms,
     nmt_mbox: AtomicCell<Option<CanMessage>>,
     lss_receiver: LssReceiver,
     sync_flag: AtomicCell<bool>,
-    notify_cb: AtomicCell<Option<&'static (dyn Fn() + Sync)>>,
+    process_notify_cb: AtomicCell<Option<&'static (dyn Fn() + Sync)>>,
+    transmit_notify_cb: AtomicCell<Option<&'static (dyn Fn() + Sync)>>,
+    tx_queue: &'static dyn CanMessageQueue,
 }
 
 impl NodeMbox {
@@ -28,21 +53,32 @@ impl NodeMbox {
     /// # Args
     ///
     /// - `rx_pdos`: A slice of Pdo objects for all of the receive PDOs
-    pub const fn new(rx_pdos: &'static [Pdo], sdo_buffer: &'static mut [u8]) -> Self {
-        let sdo_cob_id = AtomicCell::new(None);
-        let sdo_receiver = SdoReceiver::new(sdo_buffer);
+    pub const fn new(
+        rx_pdos: &'static [Pdo],
+        tx_pdos: &'static [Pdo],
+        tx_queue: &'static dyn CanMessageQueue,
+        sdo_buffer: &'static mut [u8],
+    ) -> Self {
+        let sdo_rx_cob_id = AtomicCell::new(None);
+        let sdo_tx_cob_id = AtomicCell::new(None);
+        let sdo_comms = SdoComms::new(sdo_buffer);
         let nmt_mbox = AtomicCell::new(None);
         let lss_receiver = LssReceiver::new();
         let sync_flag = AtomicCell::new(false);
-        let notify_cb = AtomicCell::new(None);
+        let process_notify_cb = AtomicCell::new(None);
+        let transmit_notify_cb = AtomicCell::new(None);
         Self {
             rx_pdos,
-            sdo_cob_id,
-            sdo_receiver,
+            tx_pdos,
+            sdo_rx_cob_id,
+            sdo_tx_cob_id,
+            sdo_comms,
             nmt_mbox,
             lss_receiver,
             sync_flag,
-            notify_cb,
+            process_notify_cb,
+            transmit_notify_cb,
+            tx_queue,
         }
     }
 
@@ -51,21 +87,38 @@ impl NodeMbox {
     /// It must be static. Usually this will be a static fn, but in some circumstances, it may be
     /// desirable to use Box::leak to pass a heap allocated closure instead.
     pub fn set_process_notify_callback(&self, callback: &'static (dyn Fn() + Sync)) {
-        self.notify_cb.store(Some(callback));
+        self.process_notify_cb.store(Some(callback));
     }
 
-    fn notify(&self) {
-        if let Some(notify_cb) = self.notify_cb.load() {
+    fn process_notify(&self) {
+        if let Some(notify_cb) = self.process_notify_cb.load() {
             notify_cb();
         }
     }
 
-    pub(crate) fn set_sdo_cob_id(&self, cob_id: Option<CanId>) {
-        self.sdo_cob_id.store(cob_id);
+    /// Set a callback for when new transmit messages are queued
+    ///
+    /// This will be called during process anytime new messages are ready to be queued
+    pub fn set_transmit_notify_callback(&self, callback: &'static (dyn Fn() + Sync)) {
+        self.transmit_notify_cb.store(Some(callback));
     }
 
-    pub(crate) fn sdo_receiver(&self) -> &SdoReceiver {
-        &self.sdo_receiver
+    pub(crate) fn transmit_notify(&self) {
+        if let Some(notify_cb) = self.transmit_notify_cb.load() {
+            notify_cb();
+        }
+    }
+
+    pub(crate) fn set_sdo_rx_cob_id(&self, cob_id: Option<CanId>) {
+        self.sdo_rx_cob_id.store(cob_id);
+    }
+
+    pub(crate) fn set_sdo_tx_cob_id(&self, cob_id: Option<CanId>) {
+        self.sdo_tx_cob_id.store(cob_id);
+    }
+
+    pub(crate) fn sdo_comms(&self) -> &SdoComms {
+        &self.sdo_comms
     }
 
     pub(crate) fn read_nmt_mbox(&self) -> Option<CanMessage> {
@@ -85,20 +138,20 @@ impl NodeMbox {
         let id = msg.id();
         if id == zencan_common::messages::NMT_CMD_ID {
             self.nmt_mbox.store(Some(msg));
-            self.notify();
+            self.process_notify();
             return Ok(());
         }
 
         if id == zencan_common::messages::SYNC_ID {
             self.sync_flag.store(true);
-            self.notify();
+            self.process_notify();
             return Ok(());
         }
 
         if id == zencan_common::messages::LSS_REQ_ID {
             if let Ok(lss_req) = msg.data().try_into() {
                 if self.lss_receiver.handle_req(lss_req) {
-                    self.notify();
+                    self.process_notify();
                 }
             } else {
                 warn!("Invalid LSS request");
@@ -119,12 +172,44 @@ impl NodeMbox {
             }
         }
 
-        if let Some(cob_id) = self.sdo_cob_id.load() {
+        if let Some(cob_id) = self.sdo_rx_cob_id.load() {
             if id == cob_id {
-                self.sdo_receiver.handle_req(msg.data());
+                self.sdo_comms.handle_req(msg.data());
             }
         }
 
         Err(msg)
+    }
+
+    /// Get the next message ready for transmit
+    ///
+    /// Messages are prioritized as follows:
+    ///
+    /// - TPDOs first, if available, starting with TPDO0
+    /// - Other non-SDO messages (SYNC, LSS, NMT)
+    /// - SDO server responses    
+    pub fn next_transmit_message(&self) -> Option<CanMessage> {
+        for pdo in self.tx_pdos.iter() {
+            if let Some(buf) = pdo.buffered_value.take() {
+                return Some(CanMessage::new(pdo.cob_id(), &buf));
+            }
+        }
+
+        if let Some(msg) = self.tx_queue.pop() {
+            return Some(msg);
+        }
+
+        if let Some(msg) = self.sdo_comms.next_transmit_message() {
+            if let Some(id) = self.sdo_tx_cob_id.load() {
+                return Some(CanMessage::new(id, &msg));
+            }
+        }
+
+        None
+    }
+
+    /// Store a message for transmission in the general transmit queue
+    pub fn queue_transmit_message(&self, msg: CanMessage) -> Result<(), CanMessage> {
+        self.tx_queue.push(msg)
     }
 }

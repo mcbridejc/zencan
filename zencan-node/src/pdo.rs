@@ -185,7 +185,7 @@ pub struct Pdo {
     transmission_type: AtomicCell<u8>,
     /// Tracks the number of sync signals since this was last sent or received
     sync_counter: AtomicCell<u8>,
-    /// The last received data value for an RPDO
+    /// The last received data value for an RPDO, or ready to transmit data for a TPDO
     pub buffered_value: AtomicCell<Option<[u8; 8]>>,
     /// Indicates how many of the values in mapping_params are valid
     ///
@@ -350,7 +350,8 @@ impl Pdo {
         }
     }
 
-    pub(crate) fn read_pdo_data(&self, data: &mut [u8]) {
+    pub(crate) fn send_pdo(&self) {
+        let mut data = [0u8; 8];
         let mut offset = 0;
         let valid_maps = self.valid_maps.load() as usize;
         for (i, param) in self.mapping_params.iter().enumerate() {
@@ -377,6 +378,9 @@ impl Pdo {
                 .ok();
             offset += length;
         }
+        // If there is an old value here which has not been sent yet, replace it with the latest
+        // Data will be sent by mbox in message handling thread.
+        self.buffered_value.store(Some(data));
     }
 
     /// Lookup a PDO mapped object and create a MappingEntry if it is valid

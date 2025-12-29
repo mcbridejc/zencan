@@ -15,8 +15,8 @@ async fn test_nmt_init() {
     let mbox = &integration_tests::object_dict1::NODE_MBOX;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(mbox);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(mbox);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(NodeId::new(NODE_ID).unwrap(), callbacks, mbox, state, od);
 
     let _logger = BusLogger::new(bus.new_receiver());
@@ -28,6 +28,7 @@ async fn test_nmt_init() {
     assert_eq!(NmtState::Bootup, node.nmt_state());
 
     node.process(0);
+    bus.flush_mailboxes();
 
     assert_eq!(NmtState::PreOperational, node.nmt_state());
 
@@ -42,6 +43,7 @@ async fn test_nmt_init() {
 
     // Run a node process call
     node.process(0);
+    bus.flush_mailboxes();
 
     assert_eq!(NmtState::Operational, node.nmt_state());
     assert_eq!(1, node.rx_message_count());
@@ -49,6 +51,7 @@ async fn test_nmt_init() {
     master.nmt_stop(0).await.unwrap();
     // Run a node process call
     node.process(0);
+    bus.flush_mailboxes();
 
     assert_eq!(NmtState::Stopped, node.nmt_state());
     assert_eq!(2, node.rx_message_count());

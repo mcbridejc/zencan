@@ -21,8 +21,8 @@ async fn test_device_info_readback() {
     const NODE_ID: u8 = 1;
 
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -34,7 +34,7 @@ async fn test_device_info_readback() {
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = |_ctx| async move {
         // Highest sub index
         assert_eq!(3, client.read_u8(BOOTLOADER_INFO_INDEX, 0).await.unwrap());
         // Config - application mode, can reset to bootloader
@@ -52,7 +52,7 @@ async fn test_device_info_readback() {
         assert!(object_dict2::BOOTLOADER_INFO.reset_flag());
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
 #[serial_test::serial]
@@ -61,8 +61,8 @@ async fn test_program() {
     use object_dict3::*;
     const NODE_ID: u8 = 1;
     let mut bus = SimBus::new();
-    let mut sender = bus.add_node(&NODE_MBOX);
-    let callbacks = Callbacks::new(&mut sender);
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
@@ -129,7 +129,7 @@ async fn test_program() {
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = async move {
+    let test_task = move |_ctx| async move {
         // Mode register should indicate this section is programmable
         assert_eq!(
             client.read_u8(BOOTLOADER_SECTION0_INDEX, 1).await.unwrap(),
@@ -161,5 +161,5 @@ async fn test_program() {
         assert!(callbacks.finalize_flag())
     };
 
-    test_with_background_process(&mut [&mut node], test_task).await;
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }

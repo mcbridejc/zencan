@@ -1,6 +1,7 @@
 use std::{
     convert::Infallible,
     io::Write as _,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -10,7 +11,7 @@ use zencan_node::Node;
 use zencan_node::{
     common::{
         traits::{AsyncCanReceiver, AsyncCanSender},
-        CanMessage, NodeId,
+        NodeId,
     },
     Callbacks,
 };
@@ -45,14 +46,6 @@ async fn main() {
     zencan::OBJECT1018.set_serial(args.serial.unwrap_or(rand::random()));
 
     let object_storage_path = format!("zencan_node.{}.flash", node_id.raw());
-
-    // Create a buffer for messages send by the node
-    let (messages_tx, messages_rx) = std::sync::mpsc::channel();
-
-    let mut send_message = |msg: CanMessage| {
-        messages_tx.send(msg).unwrap();
-        Ok(())
-    };
 
     let mut store_objects = |reader: &mut dyn embedded_io::Read<Error = Infallible>,
                              _len: usize| {
@@ -91,7 +84,6 @@ async fn main() {
     };
 
     let callbacks = Callbacks {
-        send_message: &mut send_message,
         store_node_config: None,
         store_objects: Some(&mut store_objects),
         reset_app: Some(&mut reset_app),
@@ -135,18 +127,29 @@ async fn main() {
         }
     });
 
+    // Spawn a task to send messages
+    tokio::spawn(async move {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let notify_clone = notify.clone();
+        let transmit_notify_callback = Box::leak(Box::new(move || {
+            notify_clone.notify_waiters();
+        }));
+        zencan::NODE_MBOX.set_transmit_notify_callback(transmit_notify_callback);
+        loop {
+            notify.notified().await;
+            while let Some(msg) = zencan::NODE_MBOX.next_transmit_message() {
+                if let Err(e) = tx.send(msg).await {
+                    log::warn!("Error sending frame: {e:?}");
+                }
+            }
+        }
+    });
+
     let epoch = Instant::now();
     loop {
         let now_us = Instant::now().duration_since(epoch).as_micros() as u64;
         // Run node processing, collecting messages to send
         node.process(now_us);
-
-        // push the collected messages out to the socket
-        for msg in messages_rx.try_iter() {
-            if let Err(e) = tx.send(msg).await {
-                log::error!("Error sending CAN message to socket: {e:?}");
-            }
-        }
 
         // Wait for notification to run, or a timeout
         timeout(Duration::from_millis(1), process_notify.notified())

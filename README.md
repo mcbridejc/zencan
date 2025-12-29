@@ -35,8 +35,8 @@ I like CAN, and I wanted to make it easy to build devices with lots of communica
 
 ## Example Projects
 
-[can-io-firmware](https://github.com/mcbridejc/can-io-firmware) - A simple program to read analog inputs and make then available on a CAN bus
-[i4-controller-firmware](https://github.com/mcbridejc/i4-controller-firmware) - A 4-channel current controller
+- [can-io-firmware](https://github.com/mcbridejc/can-io-firmware) - A simple program to read analog inputs and make then available on a CAN bus
+- [i4-controller-firmware](https://github.com/mcbridejc/i4-controller-firmware) - A 4-channel current controller
 
 ## Building docs
 

@@ -21,7 +21,6 @@ use crate::{node_state::NodeStateAccess, sdo_server::SdoServer};
 
 use defmt_or_log::{debug, info};
 
-pub type MessageHandlerFn<'a> = dyn FnMut(CanMessage) -> Result<(), CanMessage> + 'a;
 pub type StoreNodeConfigFn<'a> = dyn FnMut(NodeId) + 'a;
 pub type StoreObjectsFn<'a> = dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize) + 'a;
 pub type StateChangeFn<'a> = dyn FnMut(&'a [ODEntry<'a>]) + 'a;
@@ -30,12 +29,8 @@ pub type StateChangeFn<'a> = dyn FnMut(&'a [ODEntry<'a>]) + 'a;
 ///
 /// Most are optional, and may be implemented by the application or not.
 #[allow(missing_debug_implementations)]
+#[derive(Default)]
 pub struct Callbacks<'a> {
-    /// Send a CAN message to the bus
-    ///
-    /// This method is required to be provided
-    pub send_message: &'a mut MessageHandlerFn<'a>,
-
     /// Store node config to flash
     ///
     /// An application should implement this callback in order to support storing a configured node
@@ -79,9 +74,8 @@ pub struct Callbacks<'a> {
 
 impl<'a> Callbacks<'a> {
     /// Create a new Callbacks struct with the provided send_message callback
-    pub fn new(send_message: &'a mut MessageHandlerFn<'a>) -> Self {
+    pub const fn new() -> Self {
         Self {
-            send_message,
             store_node_config: None,
             store_objects: None,
             reset_app: None,
@@ -143,6 +137,7 @@ pub struct Node<'a> {
     auto_start: bool,
     last_process_time_us: u64,
     callbacks: Callbacks<'a>,
+    transmit_flag: bool,
 }
 
 impl<'a> Node<'a> {
@@ -183,6 +178,8 @@ impl<'a> Node<'a> {
         let next_heartbeat_time_us = 0;
         let auto_start = read_autostart(od).unwrap_or(false);
         let last_process_time_us = 0;
+        let transmit_flag = false;
+
         let mut node = Self {
             node_id,
             callbacks,
@@ -198,6 +195,7 @@ impl<'a> Node<'a> {
             heartbeat_period_ms,
             auto_start,
             last_process_time_us,
+            transmit_flag,
         };
 
         node.reset_app();
@@ -232,6 +230,8 @@ impl<'a> Node<'a> {
         let elapsed = (now_us - self.last_process_time_us) as u32;
         self.last_process_time_us = now_us;
 
+        self.transmit_flag = false;
+
         let mut update_flag = false;
         if let Some(new_node_id) = self.reassigned_node_id.take() {
             self.node_id = new_node_id;
@@ -253,12 +253,11 @@ impl<'a> Node<'a> {
         }
 
         // Process SDO server
-        let (resp, updated_index) =
+        let (message_sent, updated_index) =
             self.sdo_server
-                .process(self.mbox.sdo_receiver(), elapsed, self.od);
-        if let Some(resp) = resp {
-            self.send_message(resp.to_can_message(self.sdo_tx_cob_id()));
-        }
+                .process(self.mbox.sdo_comms(), elapsed, self.od);
+
+        self.transmit_flag |= message_sent;
         if updated_index.is_some() {
             update_flag = true;
         }
@@ -340,16 +339,12 @@ impl<'a> Node<'a> {
                 let transmission_type = pdo.transmission_type();
                 if transmission_type >= 254 {
                     if global_trigger && pdo.read_events() {
-                        let mut data = [0u8; 8];
-                        pdo.read_pdo_data(&mut data);
-                        let msg = CanMessage::new(pdo.cob_id(), &data);
-                        self.send_message(msg);
+                        pdo.send_pdo();
+                        self.transmit_flag = true;
                     }
                 } else if sync && pdo.sync_update() {
-                    let mut data = [0u8; 8];
-                    pdo.read_pdo_data(&mut data);
-                    let msg = CanMessage::new(pdo.cob_id(), &data);
-                    self.send_message(msg);
+                    pdo.send_pdo();
+                    self.transmit_flag = true;
                 }
             }
 
@@ -366,6 +361,10 @@ impl<'a> Node<'a> {
                     update_flag = true;
                 }
             }
+        }
+
+        if self.transmit_flag {
+            self.mbox.transmit_notify();
         }
 
         update_flag
@@ -414,8 +413,9 @@ impl<'a> Node<'a> {
     }
 
     fn send_message(&mut self, msg: CanMessage) {
+        self.transmit_flag = true;
         // TODO: return  the error, and then handle it everywhere
-        (*self.callbacks.send_message)(msg).ok();
+        self.mbox.queue_transmit_message(msg).ok();
     }
 
     fn enter_operational(&mut self) {
@@ -471,7 +471,8 @@ impl<'a> Node<'a> {
 
         if let NodeId::Configured(node_id) = self.node_id {
             info!("Booting node with ID {}", node_id.raw());
-            self.mbox.set_sdo_cob_id(Some(self.sdo_rx_cob_id()));
+            self.mbox.set_sdo_rx_cob_id(Some(self.sdo_rx_cob_id()));
+            self.mbox.set_sdo_tx_cob_id(Some(self.sdo_tx_cob_id()));
             self.send_heartbeat();
         }
     }

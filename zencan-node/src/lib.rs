@@ -95,25 +95,16 @@
 //!   Node and objects such as PDO configuration objects, or special purpose object like the Save
 //!   Command object. It is defined by the generated code in a static variable named `NODE_STATE`.
 //!
-//! There are a variety of callback functions you may provide, the only one required is a callback
-//! for sending CAN messages.
-//!
+//! There are a variety of callback functions you may provide as well, although they are not
+//! required.
 //!
 //!
 //! ```ignore
-//!
 //! // Get references to the functions which save to flash
 //! let store_node_config = &mut store_node_config;
 //! let store_objects = &mut store_objects;
 //!
 //! let callbacks = Callbacks {
-//!     send_message: &mut move |msg| {
-//!         let header = zencan_to_fdcan_header(&msg);
-//!         if let Err(_) = can_tx.transmit(header, msg.data()) {
-//!             defmt::error!("Error transmitting CAN message");
-//!         }
-//!         Ok(())
-//!     },
 //!     store_node_config: Some(store_node_config),
 //!     store_objects: Some(store_objects),
 //!     reset_app: None,
@@ -138,23 +129,50 @@
 //!
 //! The application has to handle sending and receiving CAN messages.
 //!
-//! Received messages should be passed to the `NODE_MBOX` struct. This can be done in any thread --
-//! a good way to do it is to have the CAN controller receive interrupt store messages here
+//! The NODE_MBOX struct acts as a mailbox for both incoming and outgoing mailboxes, and the
+//! application must pass messages between the mailbox and the CAN controller.  This can be done in
+//! any thread -- a good way to do it is to have the CAN controller interrupt store messages here
 //! directly.
 //!
 //! ```ignore
+//! // Assuming we've received a message (id, and buffer) from somewhere, pass it to the mailbox
 //! let msg = zencan_node::common::messages::CanMessage::new(id, &buffer[..msg.len as usize]);
 //! // Ignore error -- as an Err is returned for messages that are not consumed by the node
 //! // stack. You may handle those some other way, or simply drop them.
 //! zencan::NODE_MBOX.store_message(msg).ok();
 //! ```
 //!
+//! Outgoing messages can be read from the mbox using the [`NodeMbox::next_transmit_message`]
+//! function. A callback can be registered (see [`NodeMbox::set_transmit_notify_callback`]) to be
+//! notified when new messages are queued for transmission -- this can be used to e.g. push the
+//! first message(s) to the CAN controller to initiate an IRQ driven transmit look, or to wake an
+//! async task which is responsible for moving messages from the node to the CAN controller.
+//!
+//! ```ignore
+//! #[embassy_executor::task]
+//! async fn twai_tx_task(mut twai_tx: TwaiTx<'static, Async>) {
+//!     loop {
+//!         while let Some(msg) = zencan::NODE_MBOX.next_transmit_message() {
+//!             let frame =
+//!                 EspTwaiFrame::new(StandardId::new(msg.id.raw() as u16).unwrap(), msg.data())
+//!                     .unwrap();
+//!             if let Err(e) = twai_tx.transmit_async(&frame).await {
+//!                 log::error!("Error sending CAN message: {e:?}");
+//!             }
+//!         }
+//!
+//!         // Wait for wakeup signal when new CAN messages become ready for sending
+//!         CANOPEN_TX_SIGNAL.wait().await;
+//!     }
+//! }
+//! ```
+//!
 //! ## Calling periodic process method
 //!
 //! To execute the Node logic, the [`Node::process`] function must be called periodically.  While it
-//! is possible to call process only periodically, the NODE_MBOX object provides a callback which
-//! can be used to notify another task that process should be called when a message is received and
-//! requires processing.
+//! is possible to call process only periodically, the NODE_MBOX object provides a
+//! [callback](NodeMbox::set_process_notify_callback) which can be used to notify another task that
+//! process should be called when a message is received and requires processing.
 //!
 //! Here's an example of a lilos task which executes process when either CAN_NOTIFY is signals, or
 //! 10ms has passed since the last notification.
@@ -185,6 +203,7 @@ mod node_state;
 pub mod object_dict;
 pub mod pdo;
 mod persist;
+pub mod priority_queue;
 mod sdo_server;
 pub mod storage;
 
