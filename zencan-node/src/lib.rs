@@ -147,7 +147,7 @@
 //! notified when new messages are queued for transmission -- this can be used to e.g. push the
 //! first message(s) to the CAN controller to initiate an IRQ driven transmit look, or to wake an
 //! async task which is responsible for moving messages from the node to the CAN controller.
-//! 
+//!
 //! ```ignore
 //! #[embassy_executor::task]
 //! async fn twai_tx_task(mut twai_tx: TwaiTx<'static, Async>) {
@@ -160,13 +160,13 @@
 //!                 log::error!("Error sending CAN message: {e:?}");
 //!             }
 //!         }
-//! 
+//!
 //!         // Wait for wakeup signal when new CAN messages become ready for sending
 //!         CANOPEN_TX_SIGNAL.wait().await;
 //!     }
 //! }
 //! ```
-//! 
+//!
 //! ## Calling periodic process method
 //!
 //! To execute the Node logic, the [`Node::process`] function must be called periodically.  While it
