@@ -59,7 +59,7 @@ async fn main(spawner: Spawner) {
     let (twai_rx, twai_tx) = twai_config.into_async().start().split();
 
     let mac_address = Efuse::read_base_mac_address();
-    log::info!("MAC address: {:?}", mac_address);
+    log::info!("MAC address: {mac_address:?}");
 
     let last_mac_bytes: [u8; 4] = mac_address[2..].try_into().unwrap();
     let serial = u32::from_be_bytes(last_mac_bytes);
@@ -89,7 +89,7 @@ async fn twai_tx_task(mut twai_tx: TwaiTx<'static, Async>) {
                 EspTwaiFrame::new(StandardId::new(msg.id.raw() as u16).unwrap(), msg.data())
                     .unwrap();
             if let Err(e) = twai_tx.transmit_async(&frame).await {
-                log::error!("Error sending CAN message: {:?}", e);
+                log::error!("Error sending CAN message: {e:?}");
             }
         }
 
