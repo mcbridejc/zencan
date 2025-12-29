@@ -2,7 +2,7 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-client crate.
 
-## [Unreleased]
+## v0.0.2 - 2025-12-29
 
 ### Added
 
@@ -25,7 +25,7 @@ Human-friendly documentation of releases and what's changed in them for the zenc
 - Fix and retry message sending in SdoClient on failure. With block downloads, it is easy to overrun
   transmit buffers and fail, and the desired behavior is to wait and try again.
 
-## [v0.0.1] - 2025-10-09
+## v0.0.1 - 2025-10-09
 
 The first release! 
 

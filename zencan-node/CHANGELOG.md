@@ -2,7 +2,7 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-node crate.
 
-## Unreleased
+## v0.0.2 - 2025-12-29
 
 ### Added
 
