@@ -97,16 +97,16 @@ impl SdoComms {
                     send_complete,
                 } => {
                     // Send blocks
-                    let total_segments = (block_size as usize + 6) / 7;
+                    let total_segments = (block_size as usize).div_ceil(7);
                     let read_idx = current_segment as usize * 7;
                     let bytes_remaining = block_size as usize - read_idx;
                     let segment_size = bytes_remaining.min(7);
                     let last_segment_in_subblock = current_segment == total_segments as u8 - 1;
                     let c = send_complete && last_segment_in_subblock;
                     let mut data = [0; 7];
-                    data[..segment_size as usize].copy_from_slice(
+                    data[..segment_size].copy_from_slice(
                         &self.borrow_buffer()[current_segment as usize * 7
-                            ..current_segment as usize * 7 + segment_size as usize],
+                            ..current_segment as usize * 7 + segment_size],
                     );
                     let msg = BlockSegment {
                         c,

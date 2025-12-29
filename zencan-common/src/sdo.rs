@@ -1085,7 +1085,7 @@ impl SdoResponse {
             }
             SdoResponse::BlockUploadEnd { n, crc } => {
                 payload[0] = ((ServerCommand::BlockUpload as u8) << 5)
-                    | ((*n as u8) << 2)
+                    | (*n << 2)
                     | (BlockUploadServerSubcommand::EndUpload as u8);
                 payload[1..3].copy_from_slice(&crc.to_le_bytes());
             }

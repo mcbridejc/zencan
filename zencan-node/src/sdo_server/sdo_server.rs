@@ -846,7 +846,7 @@ impl<'a> SdoState<'a> {
                 if let Some(req) = rx.take_request() {
                     match req {
                         SdoRequest::ConfirmBlock { ackseq, blksize } => {
-                            let expected_ackseq = (state.last_subblock_size + 6) / 7;
+                            let expected_ackseq = state.last_subblock_size.div_ceil(7);
 
                             if ackseq != expected_ackseq as u8 {
                                 let offset = state.sent_counter - state.last_subblock_size;
@@ -937,9 +937,9 @@ impl<'a> SdoState<'a> {
                         ),
                     }
                 } else if timer > SDO_TIMEOUT_US {
-                    return SdoResult::abort(state.object.index, state.sub, AbortCode::SdoTimeout);
+                    SdoResult::abort(state.object.index, state.sub, AbortCode::SdoTimeout)
                 } else {
-                    return SdoResult::no_response(SdoState::UploadBlock(state));
+                    SdoResult::no_response(SdoState::UploadBlock(state))
                 }
             }
             ReceiverState::BlockSendAborted => todo!(),
