@@ -1,6 +1,6 @@
 # zencan-client
-
-![docs](https://img.shields.io/docsrs/zencan-node)
+![crates](https://img.shields.io/crates/v/zencan-client.svg)(https://docs.rs/zencan-client)
+![docs](https://img.shields.io/docsrs/zencan-client)(https://crates.io/crates/zencan-client)
 
 A library for talking to CANOpen compatible devices.
 
