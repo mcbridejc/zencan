@@ -1,6 +1,6 @@
 # zencan-node
-![crates](https://img.shields.io/crates/v/semverver.svg)(https://docs.rs/zencan-node)
-![docs](https://img.shields.io/docsrs/zencan-node)(https://crates.io/crates/zencan-node)
+[![crates](https://img.shields.io/crates/v/zencan-node.svg)](https://crates.io/crates/zencan-node)
+[![docs](https://img.shields.io/docsrs/zencan-node)](https://docs.rs/zencan-node)
 
 Crate for implementing a zencan device. Usually used in an embedded `no_std` context, but also can
 be used elsewhere.
