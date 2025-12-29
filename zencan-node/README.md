@@ -1,5 +1,7 @@
 # zencan-node
 
+![docs](https://img.shields.io/docsrs/zencan-node)
+
 Crate for implementing a zencan device. Usually used in an embedded `no_std` context, but also can
 be used elsewhere.
 
@@ -95,7 +97,7 @@ access_type = "rw"
 default_value = 0
 ```
 
-### Add zencan-build and zencan-node as a dev-dependency
+### Add zencan-build and zencan-node as dependencies
 
 `zencan-build` contains functions for generating the object dictionary code, and can be used as a
 build dependency.
@@ -138,77 +140,15 @@ mod zencan {
 
 ### Instantiate a node
 
-```rust
-    // Use the UID register or some other method to set a unique 32-bit serial number
-    let serial_number: u32 = get_serial();
-    zencan::OBJECT1018.set_serial(serial_number);
+Then, you instantiate a Node object, wire up CAN message rx and tx, wire up any required Node
+callbacks, and then build your application logic. Store your application state in "objects" (defined
+in the device config) and it will be accessible over the CAN bus via the SDO server. Objects can
+also be mapped to PDOs, so that they can sent and received efficiently either periodically, in
+response to SYNC messages on the bus, or whenever data is changed. 
 
-    let node = Node::new(
-        NodeId::Unconfigured,
-        &zencan::NODE_MBOX,
-        &zencan::NODE_STATE,
-        &zencan::OD_TABLE,
-    );
-```
+For full details, see the [docs](https://docs.rs/zencan-node) or the [examples](../examples).
 
-### Feed it incoming messages, and poll process
+## Socketcan Example
 
-Since Zencan doesn't know what your CAN interface looks like, you have to do some plumbing to wire
-it up.
-
-Received messages can be passed in using the `NODE_MBOX` struct, which serves as a Sync buffer
-between the receive and process contexts. For example:
-
-```rust
-zencan::NODE_MBOX.store_message(msg)?;
-```
-
-The node `process()` method must be called from time to time. It isn't critical how fast, but your
-node's response time depends on it. The NODE_MBOX also provides the `set_process_notify_callback`
-method. This can optionally be used to register a callback for whenever there is new information to
-be processed, so that the `process()` call can be accelerated by the application.
-
-Here's an example snippet which uses lilos and a Notify object -- which is set by a register process
-notify callback function to trigger the process task to run immediately on process, or after a 10ms
-timeout when no callback is received.
-
-```rust
-/// A task for running the CAN node processing periodically, or when triggered by the CAN receive
-/// interrupt to run immediately
-async fn can_task(
-    mut node: Node<'static>,
-    mut can_tx: fdcan::Tx<FdCan1, NormalOperationMode>,
-) -> Infallible {
-    let epoch = lilos::time::TickTime::now();
-    loop {
-        lilos::time::with_timeout(Duration::from_millis(10), CAN_NOTIFY.until_next()).await;
-        let time_us = epoch.elapsed().0 * 1000;
-        // Process is called with the current time, so that it can execute periodic tasks, and a
-        // callback for transmitting messages.
-        node.process(time_us, &mut |msg| {
-            // Convert between zencan and fdcan frame types
-            let id: fdcan::id::Id = match msg.id() {
-                zencan_node::common::messages::CanId::Extended(id) => {
-                    fdcan::id::ExtendedId::new(id).unwrap().into()
-                }
-                zencan_node::common::messages::CanId::Std(id) => {
-                    fdcan::id::StandardId::new(id).unwrap().into()
-                }
-            };
-            let header = fdcan::frame::TxFrameHeader {
-                len: msg.dlc,
-                frame_format: fdcan::frame::FrameFormat::Standard,
-                id,
-                bit_rate_switching: false,
-                marker: None,
-            };
-            can_tx.transmit(header, msg.data()).ok();
-        });
-    }
-}
-```
-
-### Socketcan Example
-
-You can also run a node on linux, with socketcan. This can be useful for testing with a virtual can adapter. See
-[this example](../examples/socketcan_node/) for a full implementation.
+You can also run a node on linux, with socketcan. This can be useful for testing with a virtual can
+adapter. See [this example](../examples/socketcan_node/) for a full implementation.
