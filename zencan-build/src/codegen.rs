@@ -49,7 +49,7 @@ fn get_sub_field_name(sub: &SubDefinition) -> Result<syn::Ident, CompileError> {
         }
         None => {
             // Unwrap safety: This should always yield a valid identifier
-            Ok(syn::parse_str(&format!("sub{:x}", sub.sub_index)).unwrap())
+            Ok(syn::parse_str(&format!("sub{}", sub.sub_index)).unwrap())
         }
     }
 }
