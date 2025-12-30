@@ -2,6 +2,12 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-client crate.
 
+## Unreleased
+
+### Added
+
+- Support for TimeOfDay, TimeDifference, f64, u64, i64 access in `SdoClient`
+
 ## v0.0.2 - 2025-12-29
 
 ### Added

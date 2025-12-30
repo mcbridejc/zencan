@@ -2,6 +2,16 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-node crate.
 
+## Unreleased
+
+### Added
+
+- Support for TimeOfDay, TimeDifference, f64, u64, i64 object data types.
+
+### Fixed
+
+- Fix record sub object accessor/field naming to use decimal instead of hex values (e.g. `get_sub10` instead of `get_suba`).
+
 ## v0.0.2 - 2025-12-29
 
 ### Added
