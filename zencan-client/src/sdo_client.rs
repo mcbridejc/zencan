@@ -9,7 +9,7 @@ use zencan_common::{
     pdo::PdoMapping,
     sdo::{AbortCode, BlockSegment, SdoRequest, SdoResponse},
     traits::{AsyncCanReceiver, AsyncCanSender, CanSendError as _},
-    CanMessage,
+    CanMessage, TimeDifference, TimeOfDay,
 };
 
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_millis(150);
@@ -126,6 +126,41 @@ macro_rules! match_response  {
                         .fail()
                     }
                 }
+    };
+}
+
+use paste::paste;
+macro_rules! access_methods {
+    ($type: ty) => {
+
+        paste! {
+            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server\n\n")]
+            #[doc = concat!("This is an alias for upload_", stringify!($type), " for a more intuitive API")]
+            pub async fn [<read_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
+                self.[<upload_ $type>](index, sub).await
+            }
+
+            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server")]
+            pub async fn [<upload_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
+                let data = self.upload(index, sub).await?;
+                if data.len() != size_of::<$type>() {
+                    return UnexpectedSizeSnafu.fail();
+                }
+                Ok($type::from_le_bytes(data.try_into().unwrap()))
+            }
+
+            #[doc = concat!("Write a ", stringify!($type), " sub object on the SDO server\n\n")]
+            #[doc = concat!("This is an alias for download_", stringify!($type), " for a more intuitive API")]
+            pub async fn [<write_ $type>](&mut self, index: u16, sub: u8, value: $type) -> Result<()> {
+                self.[<download_ $type>](index, sub, value).await
+            }
+
+            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server")]
+            pub async fn [<download_ $type>](&mut self, index: u16, sub: u8, value: $type) -> Result<()> {
+                let data = value.to_le_bytes();
+                self.download(index, sub, &data).await
+            }
+        }
     };
 }
 
@@ -520,82 +555,58 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         Ok(rx_data)
     }
 
-    /// Write to a u32 object on the SDO server
-    pub async fn download_u32(&mut self, index: u16, sub: u8, data: u32) -> Result<()> {
+    access_methods!(f64);
+    access_methods!(f32);
+    access_methods!(u64);
+    access_methods!(u32);
+    access_methods!(u16);
+    access_methods!(u8);
+    access_methods!(i64);
+    access_methods!(i32);
+    access_methods!(i16);
+    access_methods!(i8);
+
+    /// Write to a TimeOfDay object on the SDO server
+    pub async fn download_time_of_day(
+        &mut self,
+        index: u16,
+        sub: u8,
+        data: TimeOfDay,
+    ) -> Result<()> {
         let data = data.to_le_bytes();
         self.download(index, sub, &data).await
     }
 
-    /// Alias for `download_u32`
+    /// Write to a TimeOfDay object on the SDO server
     ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn write_u32(&mut self, index: u16, sub: u8, data: u32) -> Result<()> {
-        self.download_u32(index, sub, data).await
-    }
-
-    /// Write to a u16 object on the SDO server
-    pub async fn download_u16(&mut self, index: u16, sub: u8, data: u16) -> Result<()> {
+    /// Alias for `download_time_of_day`. This is a convenience function to allow for a more intuitive API.
+    pub async fn write_time_of_day(&mut self, index: u16, sub: u8, data: TimeOfDay) -> Result<()> {
         let data = data.to_le_bytes();
         self.download(index, sub, &data).await
     }
 
-    /// Alias for `download_u16`
-    ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn write_u16(&mut self, index: u16, sub: u8, data: u16) -> Result<()> {
-        self.download_u16(index, sub, data).await
-    }
-
-    /// Write to a u16 object on the SDO server
-    pub async fn download_u8(&mut self, index: u16, sub: u8, data: u8) -> Result<()> {
+    /// Write to a TimeDifference object on the SDO server
+    pub async fn download_time_difference(
+        &mut self,
+        index: u16,
+        sub: u8,
+        data: TimeDifference,
+    ) -> Result<()> {
         let data = data.to_le_bytes();
         self.download(index, sub, &data).await
     }
 
-    /// Alias for `download_u8`
+    /// Write to a TimeDifference object on the SDO server
     ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn write_u8(&mut self, index: u16, sub: u8, data: u8) -> Result<()> {
-        self.download_u8(index, sub, data).await
-    }
-
-    /// Write to an i32 object on the SDO server
-    pub async fn download_i32(&mut self, index: u16, sub: u8, data: i32) -> Result<()> {
+    /// Alias for `download_time_difference`. This is a convenience function to allow for a more intuitive API.
+    pub async fn write_time_difference(
+        &mut self,
+        index: u16,
+        sub: u8,
+        data: TimeDifference,
+    ) -> Result<()> {
         let data = data.to_le_bytes();
         self.download(index, sub, &data).await
-    }
-
-    /// Alias for `download_i32`
-    ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn write_i32(&mut self, index: u16, sub: u8, data: i32) -> Result<()> {
-        self.download_i32(index, sub, data).await
-    }
-
-    /// Write to an i16 object on the SDO server
-    pub async fn download_i16(&mut self, index: u16, sub: u8, data: i16) -> Result<()> {
-        let data = data.to_le_bytes();
-        self.download(index, sub, &data).await
-    }
-
-    /// Alias for `download_i16`
-    ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn write_i16(&mut self, index: u16, sub: u8, data: i16) -> Result<()> {
-        self.download_i16(index, sub, data).await
-    }
-
-    /// Write to an i8 object on the SDO server
-    pub async fn download_i8(&mut self, index: u16, sub: u8, data: i8) -> Result<()> {
-        let data = data.to_le_bytes();
-        self.download(index, sub, &data).await
-    }
-
-    /// Alias for `download_i8`
-    ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn write_i8(&mut self, index: u16, sub: u8, data: i8) -> Result<()> {
-        self.download_i8(index, sub, data).await
     }
 
     /// Read a string from the SDO server
@@ -608,99 +619,40 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         self.upload_utf8(index, sub).await
     }
 
-    /// Read a sub-object from the SDO server, assuming it is an u8
-    pub async fn upload_u8(&mut self, index: u16, sub: u8) -> Result<u8> {
+    /// Read a TimeOfDay object from the SDO server
+    pub async fn upload_time_of_day(&mut self, index: u16, sub: u8) -> Result<TimeOfDay> {
         let data = self.upload(index, sub).await?;
-        if data.len() != 1 {
-            return UnexpectedSizeSnafu.fail();
+        if data.len() != TimeOfDay::SIZE {
+            UnexpectedSizeSnafu.fail()
+        } else {
+            Ok(TimeOfDay::from_le_bytes(data.try_into().unwrap()))
         }
-        Ok(data[0])
-    }
-    /// Alias for `upload_u8`
-    ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn read_u8(&mut self, index: u16, sub: u8) -> Result<u8> {
-        self.upload_u8(index, sub).await
     }
 
-    /// Read a sub-object from the SDO server, assuming it is an u16
-    pub async fn upload_u16(&mut self, index: u16, sub: u8) -> Result<u16> {
+    /// Read a TimeOfDay object from the SDO server
+    ///
+    /// Alias for `upload_time_of_day`. This is a convenience function to allow for a more intuitive
+    /// API.
+    pub async fn read_time_of_day(&mut self, index: u16, sub: u8) -> Result<TimeOfDay> {
+        self.upload_time_of_day(index, sub).await
+    }
+
+    /// Read a TimeOfDay object from the SDO server
+    pub async fn upload_time_difference(&mut self, index: u16, sub: u8) -> Result<TimeDifference> {
         let data = self.upload(index, sub).await?;
-        if data.len() != 2 {
-            return UnexpectedSizeSnafu.fail();
+        if data.len() != TimeDifference::SIZE {
+            UnexpectedSizeSnafu.fail()
+        } else {
+            Ok(TimeDifference::from_le_bytes(data.try_into().unwrap()))
         }
-        Ok(u16::from_le_bytes(data.try_into().unwrap()))
     }
 
-    /// Alias for `upload_u16`
+    /// Read a TimeOfDay object from the SDO server
     ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn read_u16(&mut self, index: u16, sub: u8) -> Result<u16> {
-        self.upload_u16(index, sub).await
-    }
-
-    /// Read a sub-object from the SDO server, assuming it is an u32
-    pub async fn upload_u32(&mut self, index: u16, sub: u8) -> Result<u32> {
-        let data = self.upload(index, sub).await?;
-        if data.len() != 4 {
-            return UnexpectedSizeSnafu.fail();
-        }
-        Ok(u32::from_le_bytes(data.try_into().unwrap()))
-    }
-
-    /// Alias for `upload_u32`
-    ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn read_u32(&mut self, index: u16, sub: u8) -> Result<u32> {
-        self.upload_u32(index, sub).await
-    }
-
-    /// Read a sub-object from the SDO server, assuming it is an i8
-    pub async fn upload_i8(&mut self, index: u16, sub: u8) -> Result<i8> {
-        let data = self.upload(index, sub).await?;
-        if data.len() != 1 {
-            return UnexpectedSizeSnafu.fail();
-        }
-        Ok(i8::from_le_bytes(data.try_into().unwrap()))
-    }
-
-    /// Alias for `upload_i8`
-    ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn read_i8(&mut self, index: u16, sub: u8) -> Result<i8> {
-        self.upload_i8(index, sub).await
-    }
-
-    /// Read a sub-object from the SDO server, assuming it is an i16
-    pub async fn upload_i16(&mut self, index: u16, sub: u8) -> Result<i16> {
-        let data = self.upload(index, sub).await?;
-        if data.len() != 2 {
-            return UnexpectedSizeSnafu.fail();
-        }
-        Ok(i16::from_le_bytes(data.try_into().unwrap()))
-    }
-
-    /// Alias for `upload_i16`
-    ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn read_i16(&mut self, index: u16, sub: u8) -> Result<i16> {
-        self.upload_i16(index, sub).await
-    }
-
-    /// Read a sub-object from the SDO server, assuming it is an i32
-    pub async fn upload_i32(&mut self, index: u16, sub: u8) -> Result<i32> {
-        let data = self.upload(index, sub).await?;
-        if data.len() != 4 {
-            return UnexpectedSizeSnafu.fail();
-        }
-        Ok(i32::from_le_bytes(data.try_into().unwrap()))
-    }
-
-    /// Alias for `upload_i32`
-    ///
-    /// This is a convenience function to allow for a more intuitive API
-    pub async fn read_i32(&mut self, index: u16, sub: u8) -> Result<i32> {
-        self.upload_i32(index, sub).await
+    /// Alias for `upload_time_of_day`. This is a convenience function to allow for a more intuitive
+    /// API.
+    pub async fn read_time_difference(&mut self, index: u16, sub: u8) -> Result<TimeDifference> {
+        self.upload_time_difference(index, sub).await
     }
 
     /// Read an object as a visible string

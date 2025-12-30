@@ -148,3 +148,72 @@ array_size = 9
 data_type = "uint8"
 access_type = "rw"
 pdo_mapping = "both"
+
+[[objects]]
+index = 0x300B
+parameter_name = "Time Objects"
+object_type = "record"
+[[objects.subs]]
+sub_index = 1
+data_type = "TimeOfDay"
+access_type = "rw"
+pdo_mapping = "tpdo"
+[[objects.subs]]
+sub_index = 2
+data_type = "TimeDifference"
+access_type = "rw"
+
+[[objects]]
+index = 0x300C
+parameter_name = "All The Numbers"
+object_type = "record"
+[[objects.subs]]
+sub_index = 1
+data_type = "uint8"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 2
+data_type = "uint16"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 3
+data_type = "uint32"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 4
+data_type = "uint64"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 5
+data_type = "int8"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 6
+data_type = "int16"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 7
+data_type = "int32"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 8
+data_type = "int64"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 9
+data_type = "real32"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 10
+data_type = "real64"
+access_type = "rw"
+pdo_mapping = "both"

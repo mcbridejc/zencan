@@ -37,7 +37,6 @@ embedded-io = { version = "0.6.1" }
 futures = { version = "0.3.31", default-features = false, features = [
     "async-await",
 ] }
-heapless = "0.8.0"
 log = "0.4.27"
 serde = { version = "1.0.219", features = ["derive"] }
 snafu = { version = "0.8.5", default-features = false }

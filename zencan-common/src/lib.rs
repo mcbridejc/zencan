@@ -21,6 +21,7 @@ pub mod node_id;
 pub mod objects;
 pub mod pdo;
 pub mod sdo;
+mod time_types;
 pub mod traits;
 
 #[cfg(feature = "socketcan")]
@@ -30,6 +31,6 @@ mod socketcan;
 #[cfg_attr(docsrs, doc(cfg(feature = "socketcan")))]
 pub use socketcan::open_socketcan;
 
-pub use node_id::NodeId;
-
 pub use messages::{CanError, CanId, CanMessage};
+pub use node_id::NodeId;
+pub use time_types::{TimeDifference, TimeOfDay};

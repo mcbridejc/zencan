@@ -191,6 +191,6 @@ mod tests {
         let out_file = NamedTempFile::new().expect("Failed to create tempfile");
         let err = compile_device_config(input_file.path(), out_file.path());
         assert!(err.is_err());
-        assert_contains!(err.unwrap_err().to_string(), "DefaultValueTypeMismatch: Default value 0 is not a valid value for type VisibleString(16)");
+        assert_contains!(err.unwrap_err().to_string(), "DefaultValueTypeMismatch: Default integer value 0 is not a valid value for type VisibleString(16)");
     }
 }
