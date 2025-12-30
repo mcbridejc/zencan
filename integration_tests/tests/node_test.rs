@@ -4,8 +4,10 @@ use std::{
 };
 
 use integration_tests::{object_dict1, prelude::*};
+use rand::Rng as _;
 use serial_test::serial;
 use zencan_client::nmt_master::NmtMaster;
+use zencan_common::{TimeDifference, TimeOfDay};
 
 #[serial]
 #[tokio::test]
@@ -450,6 +452,136 @@ async fn test_node_state_callbacks() {
         assert_eq!(callback_rx.try_recv().unwrap(), LastCallback::ResetComms);
         assert_eq!(callback_rx.try_recv().unwrap(), LastCallback::Preop);
         assert!(callback_rx.try_recv().is_err());
+    };
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
+}
+
+/// Access time fields
+#[serial]
+#[tokio::test]
+async fn test_time_field_access() {
+    use object_dict1::*;
+
+    let _ = env_logger::try_init();
+
+    const NODE_ID: u8 = 1;
+    let mut bus = SimBus::new();
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
+    );
+    let mut client = get_sdo_client(&mut bus, NODE_ID);
+
+    let _logger = BusLogger::new(bus.new_receiver());
+
+    let test_task = move |_ctx| async move {
+        let time = TimeOfDay::from_ymd_hms_ms(2015, 8, 23, 10, 20, 5, 500).unwrap();
+        client.write_time_of_day(0x300B, 1, time).await.unwrap();
+        assert_eq!(time, OBJECT300B.get_sub1());
+        let read_time = client.read_time_of_day(0x300B, 1).await.unwrap();
+        assert_eq!(time, read_time);
+
+        let delta = TimeDifference::new(20, 50000);
+        client
+            .write_time_difference(0x300B, 2, delta)
+            .await
+            .unwrap();
+        assert_eq!(delta, OBJECT300B.get_sub2());
+        let read_delta = client.read_time_difference(0x300B, 2).await.unwrap();
+        assert_eq!(delta, read_delta);
+    };
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
+}
+
+/// Access fields for all numeric types
+#[serial]
+#[tokio::test]
+async fn test_numeric_access() {
+    use object_dict1::*;
+
+    let _ = env_logger::try_init();
+
+    const NODE_ID: u8 = 1;
+    let mut bus = SimBus::new();
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
+    );
+    let mut client = get_sdo_client(&mut bus, NODE_ID);
+
+    let _logger = BusLogger::new(bus.new_receiver());
+
+    let mut rng = rand::rng();
+    let test_task = move |_ctx| async move {
+        let val: u8 = rng.random();
+        client.write_u8(0x300C, 1, val).await.unwrap();
+        let read_val = client.read_u8(0x300C, 1).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub1());
+        assert_eq!(val, read_val);
+
+        let val: u16 = rng.random();
+        client.write_u16(0x300C, 2, val).await.unwrap();
+        let read_val = client.read_u16(0x300C, 2).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub2());
+        assert_eq!(val, read_val);
+
+        let val: u32 = rng.random();
+        client.write_u32(0x300C, 3, val).await.unwrap();
+        let read_val = client.read_u32(0x300C, 3).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub3());
+        assert_eq!(val, read_val);
+
+        let val: u64 = rng.random();
+        client.write_u64(0x300C, 4, val).await.unwrap();
+        let read_val = client.read_u64(0x300C, 4).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub4());
+        assert_eq!(val, read_val);
+
+        let val: i8 = rng.random();
+        client.write_i8(0x300C, 5, val).await.unwrap();
+        let read_val = client.read_i8(0x300C, 5).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub5());
+        assert_eq!(val, read_val);
+
+        let val: i16 = rng.random();
+        client.write_i16(0x300C, 6, val).await.unwrap();
+        let read_val = client.read_i16(0x300C, 6).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub6());
+        assert_eq!(val, read_val);
+
+        let val: i32 = rng.random();
+        client.write_i32(0x300C, 7, val).await.unwrap();
+        let read_val = client.read_i32(0x300C, 7).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub7());
+        assert_eq!(val, read_val);
+
+        let val: i64 = rng.random();
+        client.write_i64(0x300C, 8, val).await.unwrap();
+        let read_val = client.read_i64(0x300C, 8).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub8());
+        assert_eq!(val, read_val);
+
+        let val: f32 = rng.random();
+        client.write_f32(0x300C, 9, val).await.unwrap();
+        let read_val = client.read_f32(0x300C, 9).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub9());
+        assert_eq!(val, read_val);
+
+        let val: f64 = rng.random();
+        client.write_f64(0x300C, 10, val).await.unwrap();
+        let read_val = client.read_f64(0x300C, 10).await.unwrap();
+        assert_eq!(val, OBJECT300C.get_sub10());
+        assert_eq!(val, read_val);
     };
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }

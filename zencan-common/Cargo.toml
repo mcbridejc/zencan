@@ -11,6 +11,7 @@ repository.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+chrono = { version = "0.4.42", default-features = false }
 critical-section.workspace = true
 defmt = { workspace = true, optional = true }
 defmt-or-log = { workspace = true, default-features = false, features = ["at_least_one"] }
@@ -27,7 +28,7 @@ assertables = "9.8.0"
 
 [features]
 default = ["socketcan", "std", "log"]
-std = ["critical-section/std", "snafu/std", "dep:toml", "dep:regex", "dep:serde"]
+std = ["critical-section/std", "snafu/std", "chrono/std", "dep:toml", "dep:regex", "dep:serde"]
 socketcan = ["dep:socketcan", "dep:tokio", "std"]
 defmt = ["defmt-or-log/defmt", "dep:defmt"]
 log = ["defmt-or-log/log"]

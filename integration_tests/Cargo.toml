@@ -17,6 +17,7 @@ critical-section = { version = "1.2.0", features = ["std"] }
 embedded-io.workspace = true
 futures.workspace = true
 tokio = { version = "1.44.2", features = ["rt", "macros", "time", "sync"] }
+rand = "0.9.2"
 
 [dev-dependencies]
 assertables = "9.8.1"

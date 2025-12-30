@@ -2,7 +2,7 @@
 
 use core::cell::UnsafeCell;
 
-use zencan_common::{sdo::AbortCode, AtomicCell};
+use zencan_common::{sdo::AbortCode, AtomicCell, TimeDifference, TimeOfDay};
 
 /// Allow transparent byte level access to a sub object
 pub trait SubObjectAccess: Sync + Send {
@@ -129,7 +129,7 @@ impl<T: Copy + Default> Default for ScalarField<T> {
 }
 
 macro_rules! impl_scalar_field {
-    ($rust_type: ty, $data_type: ty) => {
+    ($rust_type: ty) => {
         impl ScalarField<$rust_type> {
             /// Create a new ScalarField with the given value
             pub const fn new(value: $rust_type) -> Self {
@@ -169,13 +169,16 @@ macro_rules! impl_scalar_field {
     };
 }
 
-impl_scalar_field!(u8, DataType::UInt8);
-impl_scalar_field!(u16, DataType::UInt16);
-impl_scalar_field!(u32, DataType::UInt32);
-impl_scalar_field!(i8, DataType::Int8);
-impl_scalar_field!(i16, DataType::Int16);
-impl_scalar_field!(i32, DataType::Int32);
-impl_scalar_field!(f32, DataType::Float);
+impl_scalar_field!(u8);
+impl_scalar_field!(u16);
+impl_scalar_field!(u32);
+impl_scalar_field!(u64);
+impl_scalar_field!(i8);
+impl_scalar_field!(i16);
+impl_scalar_field!(i32);
+impl_scalar_field!(i64);
+impl_scalar_field!(f32);
+impl_scalar_field!(f64);
 
 // bool doesn't support from_le_bytes so it needs a special implementation
 impl SubObjectAccess for ScalarField<bool> {
@@ -199,6 +202,84 @@ impl SubObjectAccess for ScalarField<bool> {
         let value = data[0] != 0;
         self.value.store(value);
         Ok(())
+    }
+}
+
+impl SubObjectAccess for ScalarField<TimeDifference> {
+    fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+        let value = self.value.load();
+        let bytes = value.to_le_bytes();
+        if offset < bytes.len() {
+            let read_len = buf.len().min(bytes.len() - offset);
+            buf[0..read_len].copy_from_slice(&bytes[offset..offset + read_len]);
+            Ok(read_len)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn read_size(&self) -> usize {
+        6
+    }
+
+    fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
+        let value = TimeDifference::from_le_bytes(data.try_into().map_err(|_| {
+            if data.len() < 6 {
+                AbortCode::DataTypeMismatchLengthLow
+            } else {
+                AbortCode::DataTypeMismatchLengthHigh
+            }
+        })?);
+        self.value.store(value);
+        Ok(())
+    }
+}
+
+impl ScalarField<TimeDifference> {
+    /// Create a new ScalarField with the given value
+    pub const fn new(value: TimeDifference) -> Self {
+        Self {
+            value: AtomicCell::new(value),
+        }
+    }
+}
+
+impl SubObjectAccess for ScalarField<TimeOfDay> {
+    fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+        let value = self.value.load();
+        let bytes = value.to_le_bytes();
+        if offset < bytes.len() {
+            let read_len = buf.len().min(bytes.len() - offset);
+            buf[0..read_len].copy_from_slice(&bytes[offset..offset + read_len]);
+            Ok(read_len)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn read_size(&self) -> usize {
+        6
+    }
+
+    fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
+        let value = TimeOfDay::from_le_bytes(data.try_into().map_err(|_| {
+            if data.len() < 6 {
+                AbortCode::DataTypeMismatchLengthLow
+            } else {
+                AbortCode::DataTypeMismatchLengthHigh
+            }
+        })?);
+        self.value.store(value);
+        Ok(())
+    }
+}
+
+impl ScalarField<TimeOfDay> {
+    /// Create a new ScalarField with the given value
+    pub const fn new(value: TimeOfDay) -> Self {
+        Self {
+            value: AtomicCell::new(value),
+        }
     }
 }
 

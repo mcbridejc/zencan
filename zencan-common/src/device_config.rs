@@ -946,11 +946,14 @@ pub enum DataType {
     Int8,
     Int16,
     Int32,
+    Int64,
     #[default]
     UInt8,
     UInt16,
     UInt32,
+    UInt64,
     Real32,
+    Real64,
     VisibleString(usize),
     OctetString(usize),
     UnicodeString(usize),
@@ -975,10 +978,13 @@ impl DataType {
             DataType::Int8 => 1,
             DataType::Int16 => 2,
             DataType::Int32 => 4,
+            DataType::Int64 => 8,
             DataType::UInt8 => 1,
             DataType::UInt16 => 2,
             DataType::UInt32 => 4,
+            DataType::UInt64 => 8,
             DataType::Real32 => 4,
+            DataType::Real64 => 8,
             DataType::VisibleString(size) => *size,
             DataType::OctetString(size) => *size,
             DataType::UnicodeString(size) => *size,
@@ -1007,14 +1013,20 @@ impl<'de> serde::Deserialize<'de> for DataType {
             Ok(DataType::Int16)
         } else if s == "int32" {
             Ok(DataType::Int32)
+        } else if s == "int64" {
+            Ok(DataType::Int64)
         } else if s == "uint8" {
             Ok(DataType::UInt8)
         } else if s == "uint16" {
             Ok(DataType::UInt16)
         } else if s == "uint32" {
             Ok(DataType::UInt32)
+        } else if s == "uint64" {
+            Ok(DataType::UInt64)
         } else if s == "real32" {
             Ok(DataType::Real32)
+        } else if s == "real64" {
+            Ok(DataType::Real64)
         } else if let Some(caps) = re_visiblestring.captures(&s) {
             let size: usize = caps[1].parse().map_err(|_| {
                 D::Error::custom(format!("Invalid size for VisibleString: {}", &caps[1]))

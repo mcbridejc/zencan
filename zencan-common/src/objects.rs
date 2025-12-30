@@ -145,6 +145,12 @@ pub enum DataType {
     /// An arbitrary byte access type for e.g. data streams, or large chunks of
     /// data. Size is typically not known at build time.
     Domain = 0xf,
+    /// A 64-bit floating point value
+    Real64 = 0x11,
+    /// A signed 64-bit integer
+    Int64 = 0x15,
+    /// An unsigned 64-bit integer
+    UInt64 = 0x1b,
     /// A contained for an unrecognized data type value
     Other(u16),
 }

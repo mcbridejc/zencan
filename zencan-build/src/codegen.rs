@@ -61,17 +61,21 @@ fn get_storage_type(data_type: DCDataType) -> (syn::Type, usize) {
         DCDataType::Int8 => (syn::parse_quote!(ScalarField<i8>), 1),
         DCDataType::Int16 => (syn::parse_quote!(ScalarField<i16>), 2),
         DCDataType::Int32 => (syn::parse_quote!(ScalarField<i32>), 4),
+        DCDataType::Int64 => (syn::parse_quote!(ScalarField<i64>), 8),
         DCDataType::UInt8 => (syn::parse_quote!(ScalarField<u8>), 1),
         DCDataType::UInt16 => (syn::parse_quote!(ScalarField<u16>), 2),
         DCDataType::UInt32 => (syn::parse_quote!(ScalarField<u32>), 4),
+        DCDataType::UInt64 => (syn::parse_quote!(ScalarField<u64>), 8),
         DCDataType::Real32 => (syn::parse_quote!(ScalarField<f32>), 4),
+        DCDataType::Real64 => (syn::parse_quote!(ScalarField<f64>), 8),
         DCDataType::VisibleString(n) | DCDataType::UnicodeString(n) => (
             syn::parse_str(&format!("NullTermByteField::<{}>", n)).unwrap(),
             n,
         ),
         DCDataType::OctetString(n) => (syn::parse_str(&format!("ByteField::<{}>", n)).unwrap(), n),
+        DCDataType::TimeOfDay => (syn::parse_quote!(ScalarField<TimeOfDay>), 6),
+        DCDataType::TimeDifference => (syn::parse_quote!(ScalarField<TimeDifference>), 6),
         DCDataType::Domain => (syn::parse_quote!(CallbackSubObject), 0),
-        _ => panic!("Unsupported data type {:?}", data_type),
     }
 }
 
@@ -81,15 +85,19 @@ fn get_rust_type_and_size(data_type: DCDataType) -> (syn::Type, usize) {
         DCDataType::Int8 => (syn::parse_quote!(i8), 1),
         DCDataType::Int16 => (syn::parse_quote!(i16), 2),
         DCDataType::Int32 => (syn::parse_quote!(i32), 4),
+        DCDataType::Int64 => (syn::parse_quote!(i64), 8),
         DCDataType::UInt8 => (syn::parse_quote!(u8), 1),
         DCDataType::UInt16 => (syn::parse_quote!(u16), 2),
         DCDataType::UInt32 => (syn::parse_quote!(u32), 4),
+        DCDataType::UInt64 => (syn::parse_quote!(u64), 8),
         DCDataType::Real32 => (syn::parse_quote!(f32), 4),
+        DCDataType::Real64 => (syn::parse_quote!(f64), 8),
         DCDataType::VisibleString(n)
         | DCDataType::OctetString(n)
         | DCDataType::UnicodeString(n) => (syn::parse_str(&format!("[u8; {}]", n)).unwrap(), n),
+        DCDataType::TimeOfDay => (syn::parse_quote!(TimeOfDay), 6),
+        DCDataType::TimeDifference => (syn::parse_quote!(TimeDifference), 6),
         DCDataType::Domain => (syn::parse_quote!(None), 0),
-        _ => panic!("Unsupported data type {:?}", data_type),
     }
 }
 
@@ -122,10 +130,13 @@ fn data_type_to_tokens(dt: DCDataType) -> TokenStream {
         DCDataType::Int8 => quote!(zencan_node::common::objects::DataType::Int8),
         DCDataType::Int16 => quote!(zencan_node::common::objects::DataType::Int16),
         DCDataType::Int32 => quote!(zencan_node::common::objects::DataType::Int32),
+        DCDataType::Int64 => quote!(zencan_node::common::objects::DataType::Int64),
         DCDataType::UInt8 => quote!(zencan_node::common::objects::DataType::UInt8),
         DCDataType::UInt16 => quote!(zencan_node::common::objects::DataType::UInt16),
         DCDataType::UInt32 => quote!(zencan_node::common::objects::DataType::UInt32),
+        DCDataType::UInt64 => quote!(zencan_node::common::objects::DataType::UInt64),
         DCDataType::Real32 => quote!(zencan_node::common::objects::DataType::Real32),
+        DCDataType::Real64 => quote!(zencan_node::common::objects::DataType::Real64),
         DCDataType::VisibleString(_) => {
             quote!(zencan_node::common::objects::DataType::VisibleString)
         }
@@ -141,7 +152,7 @@ fn data_type_to_tokens(dt: DCDataType) -> TokenStream {
     }
 }
 
-fn pdo_mapping_to_tokens(p: PdoMappable) -> TokenStream {
+fn pdo_mappable_to_tokens(p: PdoMappable) -> TokenStream {
     match p {
         PdoMappable::None => quote!(zencan_node::common::objects::PdoMappable::None),
         PdoMappable::Tpdo => quote!(zencan_node::common::objects::PdoMappable::Tpdo),
@@ -229,38 +240,48 @@ fn generate_object_definition(obj: &ObjectDefinition) -> Result<TokenStream, Com
 }
 
 /// Get DefaultValue for a given data type. This is the default value when none is provided.
-fn default_default_value(data_type: DCDataType) -> DefaultValue {
+fn default_default_value(data_type: DCDataType) -> Option<DefaultValue> {
     match data_type {
         DCDataType::Boolean
         | DCDataType::Int8
         | DCDataType::Int16
         | DCDataType::Int32
+        | DCDataType::Int64
         | DCDataType::UInt8
         | DCDataType::UInt16
-        | DCDataType::UInt32 => DefaultValue::Integer(0),
-        DCDataType::Real32 => DefaultValue::Float(0.0),
+        | DCDataType::UInt32 => Some(DefaultValue::Integer(0)),
+        DCDataType::UInt64 => Some(DefaultValue::Integer(0)),
+        DCDataType::Real32 | DCDataType::Real64 => Some(DefaultValue::Float(0.0)),
         DCDataType::VisibleString(_)
         | DCDataType::UnicodeString(_)
-        | DCDataType::OctetString(_) => DefaultValue::String("".to_string()),
-        DCDataType::TimeOfDay => DefaultValue::String("".to_string()),
-        DCDataType::TimeDifference => DefaultValue::String("".to_string()),
-        DCDataType::Domain => DefaultValue::String("".to_string()),
+        | DCDataType::OctetString(_) => Some(DefaultValue::String("".to_string())),
+        _ => None,
     }
 }
 
 fn get_default_tokens(
-    value: &DefaultValue,
+    value: Option<&DefaultValue>,
     data_type: DCDataType,
 ) -> Result<TokenStream, CompileError> {
     if matches!(data_type, DCDataType::Domain) {
         return Ok(quote!(CallbackSubObject::new()));
     }
+    if value.is_none() {
+        return Ok(match data_type {
+            DCDataType::TimeDifference => {
+                quote!(ScalarField::<TimeDifference>::new(TimeDifference::ZERO))
+            }
+            DCDataType::TimeOfDay => quote!(ScalarField::<TimeOfDay>::new(TimeOfDay::EPOCH)),
+            _ => quote!(Default::Default),
+        });
+    }
+    let value = value.unwrap();
     match value {
         DefaultValue::String(s) => {
             if !data_type.is_str() {
                 return Err(CompileError::DefaultValueTypeMismatch {
                     message: format!(
-                        "Default value {} is not a string for type {:?}",
+                        "Default string value '{}' is not a string for type {:?}",
                         s, data_type
                     ),
                 });
@@ -274,10 +295,11 @@ fn get_default_tokens(
             }
         }
         DefaultValue::Float(f) => match data_type {
-            DCDataType::Real32 => Ok(quote!(ScalarField<f32>::new(#f))),
+            DCDataType::Real32 => Ok(quote!(ScalarField::<f32>::new(#f as f32))),
+            DCDataType::Real64 => Ok(quote!(ScalarField::<f64>::new(#f))),
             _ => Err(CompileError::DefaultValueTypeMismatch {
                 message: format!(
-                    "Default value {} is not a valid value for type {:?}",
+                    "Default float value {} is not a valid value for type {:?}",
                     f, data_type
                 ),
             }),
@@ -295,13 +317,16 @@ fn get_default_tokens(
                 DCDataType::Int8 => Ok(quote!(ScalarField::<i8>::new(#i as i8))),
                 DCDataType::Int16 => Ok(quote!(ScalarField::<i16>::new(#i as i16))),
                 DCDataType::Int32 => Ok(quote!(ScalarField::<i32>::new(#i as i32))),
+                DCDataType::Int64 => Ok(quote!(ScalarField::<i64>::new(#i))),
                 DCDataType::UInt8 => Ok(quote!(ScalarField::<u8>::new(#i as u8))),
                 DCDataType::UInt16 => Ok(quote!(ScalarField::<u16>::new(#i as u16))),
                 DCDataType::UInt32 => Ok(quote!(ScalarField::<u32>::new(#i as u32))),
+                DCDataType::UInt64 => Ok(quote!(ScalarField::<u64>::new(#i as u64))),
                 DCDataType::Real32 => Ok(quote!(ScalarField::<f32>::new(#i as f32))),
+                DCDataType::Real64 => Ok(quote!(ScalarField::<f64>::new(#i as f64))),
                 _ => Err(CompileError::DefaultValueTypeMismatch {
                     message: format!(
-                        "Default value {} is not a valid value for type {:?}",
+                        "Default integer value {} is not a valid value for type {:?}",
                         i, data_type
                     ),
                 }),
@@ -328,14 +353,14 @@ fn get_object_impls(
             let getter_name = format_ident!("get_{}", field_name);
             let data_type = data_type_to_tokens(def.data_type);
             let access_type = access_type_to_tokens(def.access_type.0);
-            let pdo_mapping = pdo_mapping_to_tokens(def.pdo_mapping);
+            let pdo_mapping = pdo_mappable_to_tokens(def.pdo_mapping);
             let persist = def.persist;
 
             let default_value = def
                 .default_value
                 .clone()
-                .unwrap_or(default_default_value(def.data_type));
-            let default_value = get_default_tokens(&default_value, def.data_type)?;
+                .or_else(|| default_default_value(def.data_type));
+            let default_value = get_default_tokens(default_value.as_ref(), def.data_type)?;
             default_init_tokens.extend(quote! {
                 #field_name: #default_value,
             });
@@ -383,17 +408,17 @@ fn get_object_impls(
             let array_size = def.array_size;
             let data_type = data_type_to_tokens(def.data_type);
             let access_type = access_type_to_tokens(def.access_type.0);
-            let pdo_mapping = pdo_mapping_to_tokens(def.pdo_mapping);
+            let pdo_mapping = pdo_mappable_to_tokens(def.pdo_mapping);
             let persist = def.persist;
 
-            let default_value =
-                def.default_value
-                    .clone()
-                    .unwrap_or(vec![default_default_value(def.data_type); array_size]);
-
-            let default_tokens: Vec<_> = default_value
+            let default_values = if let Some(defs) = def.default_value.clone() {
+                defs.into_iter().map(Some).collect()
+            } else {
+                vec![default_default_value(def.data_type); array_size]
+            };
+            let default_tokens: Vec<_> = default_values
                 .iter()
-                .map(|v| get_default_tokens(v, def.data_type))
+                .map(|v| get_default_tokens(v.as_ref(), def.data_type))
                 .collect::<Result<Vec<_>, CompileError>>()?;
 
             if !matches!(def.data_type, DCDataType::Domain) {
@@ -481,14 +506,14 @@ fn get_object_impls(
                 let getter_name = format_ident!("get_{}", field_name);
                 let sub_index = sub.sub_index;
                 let data_type = data_type_to_tokens(sub.data_type);
-                let pdo_mapping = pdo_mapping_to_tokens(sub.pdo_mapping);
+                let pdo_mapping = pdo_mappable_to_tokens(sub.pdo_mapping);
                 let persist = sub.persist;
 
                 let default_value = sub
                     .default_value
                     .clone()
-                    .unwrap_or(default_default_value(sub.data_type));
-                let default_tokens = get_default_tokens(&default_value, sub.data_type)?;
+                    .or_else(|| default_default_value(sub.data_type));
+                let default_tokens = get_default_tokens(default_value.as_ref(), sub.data_type)?;
 
                 let access_type = access_type_to_tokens(sub.access_type.0);
 
@@ -793,6 +818,8 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             ConstField,
             NullTermByteField,
         };
+        #[allow(unused_imports)]
+        use zencan_node::common::{TimeOfDay, TimeDifference};
         #[allow(unused_imports)]
         use zencan_node::SDO_BUFFER_SIZE;
         #[allow(unused_imports)]
