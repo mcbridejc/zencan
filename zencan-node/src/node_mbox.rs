@@ -32,8 +32,8 @@ impl<const N: usize> CanMessageQueue for PriorityQueue<N, CanMessage> {
 /// Incoming messages should be passed to [NodeMbox::store_message].
 #[allow(missing_debug_implementations)]
 pub struct NodeMbox {
-    rx_pdos: &'static [Pdo],
-    tx_pdos: &'static [Pdo],
+    rx_pdos: &'static [Pdo<'static>],
+    tx_pdos: &'static [Pdo<'static>],
     /// ID used for transmitting SDO server responses
     sdo_tx_cob_id: AtomicCell<Option<CanId>>,
     /// ID used for receiving SDO server requests

@@ -220,7 +220,7 @@ pub use bootloader::{BootloaderInfo, BootloaderSection, BootloaderSectionCallbac
 pub use common::open_socketcan;
 pub use node::{Callbacks, Node};
 pub use node_mbox::NodeMbox;
-pub use node_state::{NodeState, NodeStateAccess};
+pub use node_state::NodeState;
 pub use persist::{restore_stored_comm_objects, restore_stored_objects};
 pub use sdo_server::SDO_BUFFER_SIZE;
 
