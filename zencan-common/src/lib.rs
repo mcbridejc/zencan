@@ -14,6 +14,7 @@ pub mod constants;
 pub mod device_config;
 pub mod lss;
 pub mod messages;
+pub mod nmt;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod node_configuration;

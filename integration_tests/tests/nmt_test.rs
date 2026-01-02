@@ -1,5 +1,5 @@
 use zencan_client::nmt_master::NmtMaster;
-use zencan_common::{messages::NmtState, NodeId};
+use zencan_common::{nmt::NmtState, NodeId};
 use zencan_node::{Callbacks, Node};
 
 use integration_tests::prelude::*;

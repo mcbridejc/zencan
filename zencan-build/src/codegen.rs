@@ -21,7 +21,7 @@ fn pdo_init_tokens(cfg: Option<&PdoDefaultConfig>) -> TokenStream {
         let mappings: Vec<u32> = mappings.iter().map(|m| m.to_object_value()).collect();
 
         quote! {
-            Pdo::new_with_defaults(&OD_TABLE, &PdoDefaults::new(
+            Pdo::new_with_defaults(&OD_TABLE, &NODE_STATE, &PdoDefaults::new(
                 #cob_id,
                 #extended,
                 #add_node_id,
@@ -32,7 +32,7 @@ fn pdo_init_tokens(cfg: Option<&PdoDefaultConfig>) -> TokenStream {
             ))
         }
     } else {
-        quote! { Pdo::new_with_defaults(&OD_TABLE, &PdoDefaults::DEFAULT) }
+        quote! { Pdo::new_with_defaults(&OD_TABLE, &NODE_STATE, &PdoDefaults::DEFAULT) }
     }
 }
 
@@ -829,7 +829,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
         #[allow(unused_imports)]
         use zencan_node::NodeMbox;
         #[allow(unused_imports)]
-        use zencan_node::{NodeState, NodeStateAccess};
+        use zencan_node::NodeState;
         #[allow(unused_imports)]
         use zencan_node::priority_queue::PriorityQueue;
         #object_defs

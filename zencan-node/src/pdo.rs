@@ -40,10 +40,14 @@
 //! ]
 //! ```
 
-use crate::object_dict::{
-    find_object_entry, ConstField, ODEntry, ObjectAccess, ProvidesSubObjects, SubObjectAccess,
+use crate::{
+    node_state::NmtStateAccess,
+    object_dict::{
+        find_object_entry, ConstField, ODEntry, ObjectAccess, ProvidesSubObjects, SubObjectAccess,
+    },
 };
 use zencan_common::{
+    nmt::NmtState,
     objects::{AccessType, DataType, ObjectCode, PdoMappable, SubInfo},
     pdo::PdoMapping,
     sdo::AbortCode,
@@ -58,9 +62,9 @@ const N_MAPPING_PARAMS: usize = 8;
 
 #[derive(Clone, Copy)]
 /// Data structure for storing a PDO object mapping
-struct MappingEntry {
+struct MappingEntry<'a> {
     /// A reference to the object which is mapped
-    pub object: &'static ODEntry<'static>,
+    pub object: &'a ODEntry<'a>,
     /// The index of the sub object mapped
     pub sub: u8,
     /// The length of the mapping in bytes
@@ -70,28 +74,28 @@ struct MappingEntry {
 #[allow(missing_debug_implementations)]
 /// Initialization values for a PDO
 #[derive(Copy, Clone)]
-pub struct PdoDefaults {
+pub struct PdoDefaults<'a> {
     cob_id: u32,
     flags: u8,
     transmission_type: u8,
-    mappings: &'static [u32],
+    mappings: &'a [u32],
 }
 
-impl Default for PdoDefaults {
+impl Default for PdoDefaults<'_> {
     fn default() -> Self {
         Self::DEFAULT
     }
 }
 
 #[allow(missing_docs)]
-impl PdoDefaults {
+impl<'a> PdoDefaults<'a> {
     const ADD_NODE_ID_FLAG: usize = 0;
     const VALID_FLAG: usize = 1;
     const RTR_DISABLED_FLAG: usize = 2;
     const IS_EXTENDED_FLAG: usize = 3;
 
     /// The PDO defaults used when no other defaults are configured
-    pub const DEFAULT: PdoDefaults = Self {
+    pub const DEFAULT: PdoDefaults<'a> = Self {
         cob_id: 0,
         flags: 0,
         transmission_type: 0,
@@ -163,11 +167,13 @@ impl PdoDefaults {
 
 /// Represents a single PDO state
 #[allow(missing_debug_implementations)]
-pub struct Pdo {
+pub struct Pdo<'a> {
     /// The object dictionary
     ///
     /// PDOs have to access other objects and use this to do so
-    od: &'static [ODEntry<'static>],
+    od: &'a [ODEntry<'a>],
+    /// Accessor for the node NMT state
+    nmt_state: &'a dyn NmtStateAccess,
     /// Configured Node ID for the system
     node_id: AtomicCell<NodeId>,
     /// The COB-ID used to send or receive this PDO
@@ -194,14 +200,14 @@ pub struct Pdo {
     /// The mapping parameters
     ///
     /// These specify which objects are
-    mapping_params: [AtomicCell<Option<MappingEntry>>; N_MAPPING_PARAMS],
+    mapping_params: [AtomicCell<Option<MappingEntry<'a>>>; N_MAPPING_PARAMS],
     /// System default values for this PDO
-    defaults: Option<&'static PdoDefaults>,
+    defaults: Option<&'a PdoDefaults<'a>>,
 }
 
-impl Pdo {
+impl<'a> Pdo<'a> {
     /// Create a new PDO object
-    pub const fn new(od: &'static [ODEntry<'static>]) -> Self {
+    pub const fn new(od: &'a [ODEntry<'a>], nmt_state: &'a dyn NmtStateAccess) -> Self {
         let cob_id = AtomicCell::new(None);
         let node_id = AtomicCell::new(NodeId::Unconfigured);
         let valid = AtomicCell::new(false);
@@ -214,6 +220,7 @@ impl Pdo {
         let defaults = None;
         Self {
             od,
+            nmt_state,
             node_id,
             cob_id,
             valid,
@@ -230,9 +237,10 @@ impl Pdo {
     /// Create a new PDO object with provided defaults
     pub const fn new_with_defaults(
         od: &'static [ODEntry<'static>],
+        nmt_state: &'static dyn NmtStateAccess,
         defaults: &'static PdoDefaults,
     ) -> Self {
-        let mut pdo = Pdo::new(od);
+        let mut pdo = Pdo::new(od, nmt_state);
         pdo.defaults = Some(defaults);
         pdo
     }
@@ -315,6 +323,10 @@ impl Pdo {
         false
     }
 
+    fn nmt_state(&self) -> NmtState {
+        self.nmt_state.nmt_state()
+    }
+
     pub(crate) fn clear_events(&self) {
         for i in 0..self.mapping_params.len() {
             let param = self.mapping_params[i].load();
@@ -391,7 +403,7 @@ impl Pdo {
     ///
     /// This function may fail if the mapped object doesn't exist, or if it is
     /// too short.
-    fn try_create_mapping_entry(&self, mapping: PdoMapping) -> Result<MappingEntry, AbortCode> {
+    fn try_create_mapping_entry(&self, mapping: PdoMapping) -> Result<MappingEntry<'a>, AbortCode> {
         let PdoMapping {
             index,
             sub,
@@ -415,7 +427,7 @@ impl Pdo {
     }
 
     /// Initialize the PDO configuration with its default value
-    pub fn init_defaults(&self, node_id: NodeId) {
+    pub fn init_defaults(&'a self, node_id: NodeId) {
         if self.defaults.is_none() {
             return;
         }
@@ -440,12 +452,12 @@ impl Pdo {
     }
 }
 
-struct PdoCobSubObject {
-    pdo: &'static Pdo,
+struct PdoCobSubObject<'a> {
+    pdo: &'a Pdo<'a>,
 }
 
-impl PdoCobSubObject {
-    pub const fn new(pdo: &'static Pdo) -> Self {
+impl<'a> PdoCobSubObject<'a> {
+    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
         Self { pdo }
     }
 
@@ -457,7 +469,7 @@ impl PdoCobSubObject {
     }
 }
 
-impl SubObjectAccess for PdoCobSubObject {
+impl SubObjectAccess for PdoCobSubObject<'_> {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         let cob_id = self.pdo.cob_id();
         let mut value = cob_id.raw();
@@ -486,6 +498,10 @@ impl SubObjectAccess for PdoCobSubObject {
     }
 
     fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
+        // Changing PDO config is only allowed during PreOperational state
+        if self.pdo.nmt_state() != NmtState::PreOperational {
+            return Err(AbortCode::GeneralError);
+        }
         if data.len() < 4 {
             Err(AbortCode::DataTypeMismatchLengthLow)
         } else if data.len() > 4 {
@@ -509,17 +525,17 @@ impl SubObjectAccess for PdoCobSubObject {
     }
 }
 
-struct PdoTransmissionTypeSubObject {
-    pdo: &'static Pdo,
+struct PdoTransmissionTypeSubObject<'a> {
+    pdo: &'a Pdo<'a>,
 }
 
-impl PdoTransmissionTypeSubObject {
-    pub const fn new(pdo: &'static Pdo) -> Self {
+impl<'a> PdoTransmissionTypeSubObject<'a> {
+    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
         Self { pdo }
     }
 }
 
-impl SubObjectAccess for PdoTransmissionTypeSubObject {
+impl SubObjectAccess for PdoTransmissionTypeSubObject<'_> {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         if offset > 1 {
             return Ok(0);
@@ -533,6 +549,10 @@ impl SubObjectAccess for PdoTransmissionTypeSubObject {
     }
 
     fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
+        // Changing of PDO config only allowed during preoperational state
+        if self.pdo.nmt_state() != NmtState::PreOperational {
+            return Err(AbortCode::GeneralError);
+        }
         if data.is_empty() {
             Err(AbortCode::DataTypeMismatchLengthLow)
         } else {
@@ -544,14 +564,14 @@ impl SubObjectAccess for PdoTransmissionTypeSubObject {
 
 /// Implements a PDO communications config object for both RPDOs and TPDOs
 #[allow(missing_debug_implementations)]
-pub struct PdoCommObject {
-    cob: PdoCobSubObject,
-    transmission_type: PdoTransmissionTypeSubObject,
+pub struct PdoCommObject<'a> {
+    cob: PdoCobSubObject<'a>,
+    transmission_type: PdoTransmissionTypeSubObject<'a>,
 }
 
-impl PdoCommObject {
+impl<'a> PdoCommObject<'a> {
     /// Create a new PdoCommObject
-    pub const fn new(pdo: &'static Pdo) -> Self {
+    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
         let cob = PdoCobSubObject::new(pdo);
         let transmission_type = PdoTransmissionTypeSubObject::new(pdo);
         Self {
@@ -561,7 +581,7 @@ impl PdoCommObject {
     }
 }
 
-impl ProvidesSubObjects for PdoCommObject {
+impl ProvidesSubObjects for PdoCommObject<'_> {
     fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
         match sub {
             0 => Some((
@@ -589,18 +609,18 @@ impl ProvidesSubObjects for PdoCommObject {
 
 /// Implements a PDO mapping config object for both TPDOs and RPDOs
 #[allow(missing_debug_implementations)]
-pub struct PdoMappingObject {
-    pdo: &'static Pdo,
+pub struct PdoMappingObject<'a> {
+    pdo: &'a Pdo<'a>,
 }
 
-impl PdoMappingObject {
+impl<'a> PdoMappingObject<'a> {
     /// Create a new PdoMappingObject
-    pub const fn new(pdo: &'static Pdo) -> Self {
+    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
         Self { pdo }
     }
 }
 
-impl ObjectAccess for PdoMappingObject {
+impl ObjectAccess for PdoMappingObject<'_> {
     fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         if sub == 0 {
             if offset < 1 && !buf.is_empty() {
@@ -637,6 +657,10 @@ impl ObjectAccess for PdoMappingObject {
     }
 
     fn write(&self, sub: u8, data: &[u8]) -> Result<(), AbortCode> {
+        // Changing of PDO mapping is only allowed in PreOperational state
+        if self.pdo.nmt_state() != NmtState::PreOperational {
+            return Err(AbortCode::GeneralError);
+        }
         if sub == 0 {
             self.pdo.valid_maps.store(data[0]);
             Ok(())
@@ -680,5 +704,62 @@ impl ObjectAccess for PdoMappingObject {
         } else {
             Err(AbortCode::NoSuchSubIndex)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::object_dict::ScalarField;
+
+    #[derive(Default)]
+    struct TestObject {
+        value: ScalarField<u32>,
+    }
+
+    impl ProvidesSubObjects for TestObject {
+        fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
+            match sub {
+                0 => Some((SubInfo::new_u32(), &self.value)),
+                _ => None,
+            }
+        }
+
+        fn object_code(&self) -> ObjectCode {
+            ObjectCode::Var
+        }
+    }
+
+    #[test]
+    /// Assert that attempts to update PDO comms or mapping parameters fail when in operational mode
+    pub fn test_changes_denied_while_operational() {
+        let object1000 = TestObject::default();
+        let od = &[ODEntry {
+            index: 0x1000,
+            data: &object1000,
+        }];
+        let nmt_state = AtomicCell::new(NmtState::PreOperational);
+
+        let pdo = Pdo::new(od, &nmt_state);
+
+        let comm_obj = PdoCommObject::new(&pdo);
+        let mapping_obj = PdoMappingObject::new(&pdo);
+
+        // Setup initially
+        mapping_obj
+            .write(1, &((0x1000 << 16) | 32 as u32).to_le_bytes())
+            .unwrap();
+        mapping_obj.write(0, &[1]).unwrap();
+        comm_obj.write(1, &(1u32 << 31).to_le_bytes()).unwrap();
+
+        nmt_state.store(NmtState::Operational);
+
+        // Changing now should error
+        let result = mapping_obj.write(1, &0u32.to_le_bytes());
+        assert_eq!(Err(AbortCode::GeneralError), result);
+        let result = comm_obj.write(1, &0u32.to_le_bytes());
+        assert_eq!(Err(AbortCode::GeneralError), result);
+        let result = comm_obj.write(2, &0u32.to_le_bytes());
+        assert_eq!(Err(AbortCode::GeneralError), result);
     }
 }

@@ -9,7 +9,8 @@ use zencan_common::constants::object_ids::{
     RPDO_COMM_BASE, RPDO_MAP_BASE, TPDO_COMM_BASE, TPDO_MAP_BASE,
 };
 use zencan_common::lss::{LssIdentity, LssState};
-use zencan_common::messages::{NmtCommand, NmtCommandSpecifier, NmtState, ZencanMessage};
+use zencan_common::messages::{NmtCommand, NmtCommandSpecifier, ZencanMessage};
+use zencan_common::nmt::NmtState;
 use zencan_common::node_id::ConfiguredNodeId;
 use zencan_common::sdo::AbortCode;
 use zencan_common::{
