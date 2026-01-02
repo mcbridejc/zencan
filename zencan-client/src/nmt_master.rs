@@ -2,7 +2,8 @@
 use std::time::Instant;
 
 use zencan_common::{
-    messages::{CanMessage, NmtCommand, NmtCommandSpecifier, NmtState, ZencanMessage},
+    messages::{CanMessage, NmtCommand, NmtCommandSpecifier, ZencanMessage},
+    nmt::NmtState,
     traits::{AsyncCanReceiver, AsyncCanSender},
 };
 

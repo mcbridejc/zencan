@@ -6,18 +6,19 @@ use core::{convert::Infallible, sync::atomic::Ordering};
 use zencan_common::{
     constants::object_ids,
     lss::LssIdentity,
-    messages::{
-        CanId, CanMessage, Heartbeat, NmtCommandSpecifier, NmtState, ZencanMessage, LSS_RESP_ID,
-    },
+    messages::{CanId, CanMessage, Heartbeat, NmtCommandSpecifier, ZencanMessage, LSS_RESP_ID},
+    nmt::NmtState,
     NodeId,
 };
 
+use crate::sdo_server::SdoServer;
 use crate::{
     lss_slave::{LssConfig, LssSlave},
     node_mbox::NodeMbox,
+    node_state::NmtStateAccess as _,
     object_dict::{find_object, ODEntry},
+    NodeState,
 };
-use crate::{node_state::NodeStateAccess, sdo_server::SdoServer};
 
 use defmt_or_log::{debug, info};
 
@@ -124,13 +125,12 @@ fn read_autostart(od: &[ODEntry]) -> Option<bool> {
 #[allow(missing_debug_implementations)]
 pub struct Node<'a> {
     node_id: NodeId,
-    nmt_state: NmtState,
     sdo_server: SdoServer<'a>,
     lss_slave: LssSlave,
     message_count: u32,
-    od: &'a [ODEntry<'a>],
-    mbox: &'a NodeMbox,
-    state: &'a dyn NodeStateAccess,
+    od: &'static [ODEntry<'static>],
+    mbox: &'static NodeMbox,
+    state: &'static NodeState<'static>,
     reassigned_node_id: Option<NodeId>,
     next_heartbeat_time_us: u64,
     heartbeat_period_ms: u16,
@@ -152,9 +152,9 @@ impl<'a> Node<'a> {
     pub fn new(
         node_id: NodeId,
         callbacks: Callbacks<'a>,
-        mbox: &'a NodeMbox,
-        state: &'a dyn NodeStateAccess,
-        od: &'a [ODEntry<'a>],
+        mbox: &'static NodeMbox,
+        state: &'static NodeState<'static>,
+        od: &'static [ODEntry<'static>],
     ) -> Self {
         let message_count = 0;
         let sdo_server = SdoServer::new();
@@ -163,7 +163,6 @@ impl<'a> Node<'a> {
             node_id,
             store_supported: false,
         });
-        let nmt_state = NmtState::Bootup;
         let reassigned_node_id = None;
 
         // Storage command is supported if the application provides a callback
@@ -183,7 +182,6 @@ impl<'a> Node<'a> {
         let mut node = Self {
             node_id,
             callbacks,
-            nmt_state,
             sdo_server,
             lss_slave,
             message_count,
@@ -235,10 +233,10 @@ impl<'a> Node<'a> {
         let mut update_flag = false;
         if let Some(new_node_id) = self.reassigned_node_id.take() {
             self.node_id = new_node_id;
-            self.nmt_state = NmtState::Bootup;
+            self.state.set_nmt_state(NmtState::Bootup);
         }
 
-        if self.nmt_state == NmtState::Bootup {
+        if self.nmt_state() == NmtState::Bootup {
             // Set state before calling boot_up, so the heartbeat state is correct
             self.enter_preoperational();
             self.boot_up();
@@ -322,7 +320,7 @@ impl<'a> Node<'a> {
             }
         }
 
-        if self.nmt_state == NmtState::Operational {
+        if self.nmt_state() == NmtState::Operational {
             // check if a sync has been received
             let sync = self.mbox.read_sync_flag();
 
@@ -332,7 +330,7 @@ impl<'a> Node<'a> {
             // possible when it has nothing to do, so it can be called frequently with little cost.
             let global_trigger = self.state.object_flag_sync().toggle();
 
-            for pdo in self.state.get_tpdos() {
+            for pdo in self.state.tpdos() {
                 if !(pdo.valid()) {
                     continue;
                 }
@@ -348,11 +346,11 @@ impl<'a> Node<'a> {
                 }
             }
 
-            for pdo in self.state.get_tpdos() {
+            for pdo in self.state.tpdos() {
                 pdo.clear_events();
             }
 
-            for rpdo in self.state.get_rpdos() {
+            for rpdo in self.state.rpdos() {
                 if !rpdo.valid() {
                     continue;
                 }
@@ -371,7 +369,7 @@ impl<'a> Node<'a> {
     }
 
     fn handle_nmt_command(&mut self, cmd: NmtCommandSpecifier) {
-        let prev_state = self.nmt_state;
+        let prev_state = self.nmt_state();
 
         match cmd {
             NmtCommandSpecifier::Start => self.enter_operational(),
@@ -383,7 +381,8 @@ impl<'a> Node<'a> {
 
         debug!(
             "NMT state changed from {:?} to {:?}",
-            prev_state, self.nmt_state
+            prev_state,
+            self.nmt_state()
         );
     }
 
@@ -394,7 +393,7 @@ impl<'a> Node<'a> {
 
     /// Get the current NMT state of the node
     pub fn nmt_state(&self) -> NmtState {
-        self.nmt_state
+        self.state.nmt_state()
     }
 
     /// Get the number of received messages
@@ -419,21 +418,21 @@ impl<'a> Node<'a> {
     }
 
     fn enter_operational(&mut self) {
-        self.nmt_state = NmtState::Operational;
+        self.state.set_nmt_state(NmtState::Operational);
         if let Some(cb) = &mut self.callbacks.enter_operational {
             (*cb)(self.od);
         }
     }
 
     fn enter_stopped(&mut self) {
-        self.nmt_state = NmtState::Stopped;
+        self.state.set_nmt_state(NmtState::Stopped);
         if let Some(cb) = &mut self.callbacks.enter_stopped {
             (*cb)(self.od);
         }
     }
 
     fn enter_preoperational(&mut self) {
-        self.nmt_state = NmtState::PreOperational;
+        self.state.set_nmt_state(NmtState::PreOperational);
         if let Some(cb) = &mut self.callbacks.enter_preoperational {
             (*cb)(self.od);
         }
@@ -441,24 +440,24 @@ impl<'a> Node<'a> {
 
     fn reset_app(&mut self) {
         // TODO: All objects should get reset to their defaults, but that isn't yet supported
-        for pdo in self.state.get_rpdos().iter().chain(self.state.get_tpdos()) {
+        for pdo in self.state.rpdos().iter().chain(self.state.tpdos()) {
             pdo.init_defaults(self.node_id);
         }
 
         if let Some(reset_app_cb) = &mut self.callbacks.reset_app {
             (*reset_app_cb)(self.od);
         }
-        self.nmt_state = NmtState::Bootup;
+        self.state.set_nmt_state(NmtState::Bootup);
     }
 
     fn reset_comm(&mut self) {
-        for pdo in self.state.get_rpdos().iter().chain(self.state.get_tpdos()) {
+        for pdo in self.state.rpdos().iter().chain(self.state.tpdos()) {
             pdo.init_defaults(self.node_id);
         }
         if let Some(reset_comms_cb) = &mut self.callbacks.reset_comms {
             (*reset_comms_cb)(self.od);
         }
-        self.nmt_state = NmtState::Bootup;
+        self.state.set_nmt_state(NmtState::Bootup);
     }
 
     fn boot_up(&mut self) {
@@ -482,7 +481,7 @@ impl<'a> Node<'a> {
             let heartbeat = Heartbeat {
                 node: node_id.raw(),
                 toggle: false,
-                state: self.nmt_state,
+                state: self.nmt_state(),
             };
             self.send_message(heartbeat.into());
             self.next_heartbeat_time_us += (self.heartbeat_period_ms as u64) * 1000;

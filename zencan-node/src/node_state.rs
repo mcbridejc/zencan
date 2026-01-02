@@ -1,19 +1,20 @@
 //! Implements node state struct
+use zencan_common::nmt::NmtState;
+use zencan_common::AtomicCell;
+
 use crate::object_dict::ObjectFlagSync;
 
 use crate::pdo::Pdo;
 use crate::storage::StorageContext;
 
-/// A trait by which NodeState is accessed
-pub trait NodeStateAccess: Sync + Send {
-    /// Get the receive PDO objects
-    fn get_rpdos(&self) -> &[Pdo];
-    /// Get the transmit PDO objects
-    fn get_tpdos(&self) -> &[Pdo];
-    /// Get the PDO flag sync object
-    fn object_flag_sync(&self) -> &ObjectFlagSync;
-    /// Get the storage context object
-    fn storage_context(&self) -> &StorageContext;
+pub trait NmtStateAccess: Send + Sync {
+    fn nmt_state(&self) -> NmtState;
+}
+
+impl NmtStateAccess for AtomicCell<NmtState> {
+    fn nmt_state(&self) -> NmtState {
+        self.load()
+    }
 }
 
 /// The NodeState provides config-dependent storage to the [`Node`](crate::Node) object
@@ -24,19 +25,27 @@ pub trait NodeStateAccess: Sync + Send {
 #[allow(missing_debug_implementations)]
 pub struct NodeState<'a> {
     /// Pdo control objects for receive PDOs
-    rpdos: &'a [Pdo],
+    rpdos: &'a [Pdo<'a>],
     /// Pdo control objects for transmit PDOs
-    tpdos: &'a [Pdo],
+    tpdos: &'a [Pdo<'a>],
     /// A global flag used by all objects to synchronize their event flag A/B swapping
     object_flag_sync: ObjectFlagSync,
     /// State shared between the [`StorageCommandObject`](crate::storage::StorageCommandObject) and
     /// [`Node`](crate::node::Node) for indicating when a store objects command has been recieved.
     storage_context: StorageContext,
+    /// Global storage for the NMT state
+    nmt_state: AtomicCell<NmtState>,
+}
+
+impl NmtStateAccess for NodeState<'_> {
+    fn nmt_state(&self) -> NmtState {
+        self.nmt_state.load()
+    }
 }
 
 impl<'a> NodeState<'a> {
     /// Create a new NodeState object
-    pub const fn new(rpdos: &'a [Pdo], tpdos: &'a [Pdo]) -> Self {
+    pub const fn new(rpdos: &'a [Pdo<'a>], tpdos: &'a [Pdo<'a>]) -> Self {
         let object_flag_sync = ObjectFlagSync::new();
         let storage_context = StorageContext::new();
 
@@ -45,46 +54,36 @@ impl<'a> NodeState<'a> {
             tpdos,
             object_flag_sync,
             storage_context,
+            nmt_state: AtomicCell::new(NmtState::Bootup),
         }
     }
 
     /// Access the RPDOs as a const function
-    pub const fn rpdos(&self) -> &'a [Pdo] {
+    pub const fn rpdos(&self) -> &'a [Pdo<'a>] {
         self.rpdos
     }
 
     /// Access the TPDOs as a const function
-    pub const fn tpdos(&self) -> &'a [Pdo] {
+    pub const fn tpdos(&self) -> &'a [Pdo<'a>] {
         self.tpdos
     }
 
     /// Access the pdo_sync as a const function
     ///
     /// This is required so that it can be shared with the objects in generated code
-    pub const fn object_flag_sync(&'static self) -> &'static ObjectFlagSync {
+    pub const fn object_flag_sync(&'a self) -> &'a ObjectFlagSync {
         &self.object_flag_sync
     }
 
     /// Access the storage_context as a const function
-    pub const fn storage_context(&'static self) -> &'static StorageContext {
+    pub const fn storage_context(&'a self) -> &'a StorageContext {
         &self.storage_context
     }
-}
 
-impl NodeStateAccess for NodeState<'_> {
-    fn get_rpdos(&self) -> &[Pdo] {
-        self.rpdos
-    }
-
-    fn get_tpdos(&self) -> &[Pdo] {
-        self.tpdos
-    }
-
-    fn object_flag_sync(&self) -> &ObjectFlagSync {
-        &self.object_flag_sync
-    }
-
-    fn storage_context(&self) -> &StorageContext {
-        &self.storage_context
+    /// Set the NMT state
+    ///
+    /// This method is intended only for the `Node` object to update the global node nmt state
+    pub(crate) fn set_nmt_state(&self, nmt_state: NmtState) {
+        self.nmt_state.store(nmt_state);
     }
 }
