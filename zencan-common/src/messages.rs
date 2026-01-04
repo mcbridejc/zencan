@@ -288,37 +288,39 @@ impl From<Heartbeat> for CanMessage {
 /// Represents a SYNC object/message
 ///
 /// A single CAN node can serve as the SYNC provider, sending a periodic sync object to all other
-/// nodes. The one byte count value starts at 1, and increments. On overflow, it should be reset to
-/// 1.
-#[derive(Clone, Copy, Debug)]
+/// nodes. When used, the one byte count value starts at 1, and increments. On overflow, it should be reset to
+/// 1. It is optional, and when not provided the sync message DLC will be zero.
+#[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SyncObject {
-    count: u8,
+    count: Option<u8>,
 }
 
 impl SyncObject {
     /// Create a new SyncObjectd
-    pub fn new(count: u8) -> Self {
+    pub fn new(count: Option<u8>) -> Self {
         Self { count }
-    }
-}
-
-impl Default for SyncObject {
-    fn default() -> Self {
-        Self { count: 1 }
     }
 }
 
 impl From<SyncObject> for CanMessage {
     fn from(value: SyncObject) -> Self {
-        CanMessage::new(SYNC_ID, &[value.count])
+        if let Some(count) = value.count {
+            CanMessage::new(SYNC_ID, &[count])
+        } else {
+            CanMessage::new(SYNC_ID, &[])
+        }
     }
 }
 
 impl From<CanMessage> for SyncObject {
     fn from(msg: CanMessage) -> Self {
         if msg.id() == SYNC_ID {
-            let count = msg.data()[0];
+            let count = if msg.data().is_empty() {
+                None
+            } else {
+                Some(msg.data()[0])
+            };
             Self { count }
         } else {
             panic!("Invalid message ID for SyncObject");
