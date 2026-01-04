@@ -140,7 +140,7 @@ async fn test_tpdo_assignment() {
 
         rx.flush();
 
-        let sync_msg = SyncObject::new(1).into();
+        let sync_msg = SyncObject::new(Some(1)).into();
         sender.send(sync_msg).await.unwrap();
 
         // We expect to receive the sync message just sent first
