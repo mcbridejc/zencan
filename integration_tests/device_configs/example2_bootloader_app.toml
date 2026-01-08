@@ -1,6 +1,8 @@
 # A simple system with a bootloader
 device_name = "Bootload Example"
 
+autostart = "enabled"
+
 [pdos]
 num_rpdo = 4
 num_tpdo = 4

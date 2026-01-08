@@ -10,7 +10,12 @@
 //! device_name = "can-io"
 //! software_version = "v0.0.1"
 //! hardware_version = "rev1"
+//!
+//! # How frequently to send heartbeat messages (ms)
 //! heartbeat_period = 1000
+//!
+//! # Sets the default value of the Auto-start object
+//! autostart = "enabled"
 //!
 //! # Define 3 out of 4 device unique identifiers. These define the application/device, the fourth is
 //! # the serial number, which must be provided at run-time by the application.
@@ -172,7 +177,7 @@ pub enum LoadError {
 }
 
 fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
-    vec![
+    let mut objects = vec![
         ObjectDefinition {
             index: 0x1000,
             parameter_name: "Device Type".to_string(),
@@ -300,19 +305,29 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectDefinition> {
                 ],
             }),
         },
-        ObjectDefinition {
+    ];
+
+    let (create_autostart, default) = match config.autostart {
+        AutoStartConfig::Disabled => (true, 0),
+        AutoStartConfig::Enabled => (true, 1),
+        AutoStartConfig::Unsupported => (false, 0),
+    };
+    if create_autostart {
+        objects.push(ObjectDefinition {
             index: 0x5000,
             parameter_name: "Auto Start".to_string(),
             application_callback: false,
             object: Object::Var(VarDefinition {
                 data_type: DataType::UInt8,
                 access_type: AccessType::Rw.into(),
-                default_value: None,
+                default_value: Some(DefaultValue::Integer(default)),
                 pdo_mapping: PdoMappable::None,
                 persist: true,
             }),
-        },
-    ]
+        });
+    }
+
+    objects
 }
 
 fn pdo_objects(num_rpdo: usize, num_tpdo: usize) -> Vec<ObjectDefinition> {
@@ -519,6 +534,19 @@ fn default_true() -> bool {
     true
 }
 
+/// Options for Autostart config
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoStartConfig {
+    /// Autostart is supported, but defaults to off
+    #[default]
+    Disabled,
+    /// Autostart defaults to enabled
+    Enabled,
+    /// Autostart is not supported -- no 0x5000 object will be created
+    Unsupported,
+}
+
 /// Represents the configuration parameters for a single PDO
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct PdoDefaultConfig {
@@ -655,6 +683,15 @@ pub struct BootloaderConfig {
 pub struct DeviceConfig {
     /// The name describing the type of device (e.g. a model)
     pub device_name: String,
+
+    /// Configures support for the AutoStart (0x5000) object and its default value
+    ///
+    /// Allowed values:
+    /// - 'unsupported': No autostart object is created
+    /// - 'disabled': An autostart object is created, and it defaults to disabled
+    /// - 'enabled': An autostart object is created, and it defaults to enabled
+    #[serde(default)]
+    pub autostart: AutoStartConfig,
 
     /// Enables object storage commands (object 0x1010)
     ///

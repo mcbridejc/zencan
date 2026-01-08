@@ -1,6 +1,8 @@
 # A simple config for a bootloader
 device_name = "Bootload Example"
 
+autostart = "unsupported"
+
 [pdos]
 num_rpdo = 4
 num_tpdo = 4
