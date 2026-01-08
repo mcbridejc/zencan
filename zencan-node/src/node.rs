@@ -159,7 +159,7 @@ impl<'a> Node<'a> {
         let message_count = 0;
         let sdo_server = SdoServer::new();
         let lss_slave = LssSlave::new(LssConfig {
-            identity: read_identity(od).unwrap(),
+            identity: read_identity(od).unwrap_or_default(),
             node_id,
             store_supported: false,
         });
@@ -463,7 +463,7 @@ impl<'a> Node<'a> {
     fn boot_up(&mut self) {
         // Reset the LSS slave with the new ID
         self.lss_slave.update_config(LssConfig {
-            identity: read_identity(self.od).unwrap(),
+            identity: read_identity(self.od).unwrap_or_default(),
             node_id: self.node_id,
             store_supported: self.callbacks.store_node_config.is_some(),
         });
@@ -486,5 +486,94 @@ impl<'a> Node<'a> {
             self.send_message(heartbeat.into());
             self.next_heartbeat_time_us += (self.heartbeat_period_ms as u64) * 1000;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zencan_common::{
+        nmt::NmtState,
+        objects::{ObjectCode, SubInfo},
+        CanMessage, NodeId,
+    };
+
+    use crate::{
+        object_dict::{ODEntry, ProvidesSubObjects, ScalarField, SubObjectAccess},
+        priority_queue::PriorityQueue,
+        Callbacks, Node, NodeMbox, NodeState,
+    };
+
+    struct AutoStartObject {
+        value: ScalarField<u8>,
+    }
+
+    impl AutoStartObject {
+        pub fn new(value: u8) -> Self {
+            Self {
+                value: ScalarField::<u8>::new(value),
+            }
+        }
+    }
+    impl ProvidesSubObjects for AutoStartObject {
+        fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
+            match sub {
+                0 => Some((SubInfo::new_u8(), &self.value)),
+                _ => None,
+            }
+        }
+
+        fn object_code(&self) -> ObjectCode {
+            ObjectCode::Var
+        }
+    }
+
+    #[test]
+    fn test_node_autostart_enabled() {
+        let object5000 = Box::leak(Box::new(AutoStartObject::new(1)));
+        let od_table = Box::leak(Box::new([ODEntry {
+            index: 0x5000,
+            data: object5000,
+        }]));
+
+        let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
+        let sdo_buffer = Box::leak(Box::new([0u8; 100]));
+        let mbox = Box::leak(Box::new(NodeMbox::new(&[], &[], tx_queue, sdo_buffer)));
+        let state = Box::leak(Box::new(NodeState::new(&[], &[])));
+
+        let mut node = Node::new(
+            NodeId::new(1).unwrap(),
+            Callbacks::default(),
+            mbox,
+            state,
+            od_table,
+        );
+
+        node.process(0);
+        assert_eq!(NmtState::Operational, node.nmt_state());
+    }
+
+    #[test]
+    fn test_node_autostart_disabled() {
+        let object5000 = Box::leak(Box::new(AutoStartObject::new(0)));
+        let od_table = Box::leak(Box::new([ODEntry {
+            index: 0x5000,
+            data: object5000,
+        }]));
+
+        let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
+        let sdo_buffer = Box::leak(Box::new([0u8; 100]));
+        let mbox = Box::leak(Box::new(NodeMbox::new(&[], &[], tx_queue, sdo_buffer)));
+        let state = Box::leak(Box::new(NodeState::new(&[], &[])));
+
+        let mut node = Node::new(
+            NodeId::new(1).unwrap(),
+            Callbacks::default(),
+            mbox,
+            state,
+            od_table,
+        );
+
+        node.process(0);
+        assert_eq!(NmtState::PreOperational, node.nmt_state());
     }
 }

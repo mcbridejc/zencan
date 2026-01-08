@@ -1,6 +1,7 @@
 device_name = "Example 1"
 hardware_version = "v1.2.3"
 software_version = "v2.1.0"
+autostart = "disabled"
 
 [identity]
 vendor_id = 1234

@@ -600,7 +600,7 @@ impl LssState {
 /// number must be set by the application to a unique value. This can be done, e.g., using a UID
 /// register on the MCU, or by loading a previously programmed value from flash. It is important
 /// that each device on the bus have a unique identity.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct LssIdentity {
     /// A number indicating the vendor of the device
     pub vendor_id: u32,
