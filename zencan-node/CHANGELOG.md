@@ -6,7 +6,8 @@ Human-friendly documentation of releases and what's changed in them for the zenc
 
 ### Added
 
-- Support for TimeOfDay, TimeDifference, f64, u64, i64 object data types.
+- Support for TimeOfDay, TimeDifference, f64, u64, i64 object data types (#42).
+- Device config `autostart` field for configuring 0x5000 object default value (#47).
 
 ### Fixed
 
