@@ -640,30 +640,36 @@ pub fn generate_state_inst(dev: &DeviceConfig) -> TokenStream {
         }
     }
 
-    let tpdo_numbers = 0..n_tpdo;
-    tokens.extend(quote! {
-        pub static TPDO_COMM_OBJECTS: [PdoCommObject; #n_tpdo] = [
-            #(PdoCommObject::new(&NODE_STATE.tpdos()[#tpdo_numbers])),*
-        ];
-    });
-    let tpdo_numbers = 0..n_tpdo;
-    tokens.extend(quote! {
-        pub static TPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_tpdo] = [
-            #(PdoMappingObject::new(&NODE_STATE.tpdos()[#tpdo_numbers])),*
-        ];
-    });
-    let rpdo_numbers = 0..n_rpdo;
-    tokens.extend(quote! {
-        pub static RPDO_COMM_OBJECTS: [PdoCommObject; #n_rpdo] = [
-            #(PdoCommObject::new(&NODE_STATE.rpdos()[#rpdo_numbers])),*
-        ];
-    });
-    let rpdo_numbers = 0..n_rpdo;
-    tokens.extend(quote! {
-        pub static RPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_rpdo] = [
-            #(PdoMappingObject::new(&NODE_STATE.rpdos()[#rpdo_numbers])),*
-        ];
-    });
+    if n_tpdo > 0 {
+        let tpdo_numbers = 0..n_tpdo;
+        tokens.extend(quote! {
+            pub static TPDO_COMM_OBJECTS: [PdoCommObject; #n_tpdo] = [
+                #(PdoCommObject::new(&NODE_STATE.tpdos()[#tpdo_numbers])),*
+            ];
+        });
+        let tpdo_numbers = 0..n_tpdo;
+        tokens.extend(quote! {
+            pub static TPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_tpdo] = [
+                #(PdoMappingObject::new(&NODE_STATE.tpdos()[#tpdo_numbers])),*
+            ];
+        });
+    }
+
+    if n_rpdo > 0 {
+        let rpdo_numbers = 0..n_rpdo;
+        tokens.extend(quote! {
+            pub static RPDO_COMM_OBJECTS: [PdoCommObject; #n_rpdo] = [
+                #(PdoCommObject::new(&NODE_STATE.rpdos()[#rpdo_numbers])),*
+            ];
+        });
+
+        let rpdo_numbers = 0..n_rpdo;
+        tokens.extend(quote! {
+            pub static RPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_rpdo] = [
+                #(PdoMappingObject::new(&NODE_STATE.rpdos()[#rpdo_numbers])),*
+            ];
+        });
+    }
 
     if dev.support_storage {
         tokens.extend(quote! {
