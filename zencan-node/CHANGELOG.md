@@ -4,6 +4,12 @@ Human-friendly documentation of releases and what's changed in them for the zenc
 
 ## Unreleased
 
+### Fixed
+
+- Unused code warning when num_tdpos or num_rpdos is 0
+- TPDO bug where event flags were never cleared causing all TPDOs to be transmitted when any event
+  was set
+
 ## v0.0.3 - 2026-01-20
 
 ### Added
