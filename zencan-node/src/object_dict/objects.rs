@@ -311,6 +311,12 @@ impl<T: ProvidesSubObjects + Sync + Send> ObjectAccess for T {
         }
     }
 
+    fn clear_events(&self) {
+        if let Some(flags) = self.flags() {
+            flags.clear();
+        }
+    }
+
     fn object_code(&self) -> ObjectCode {
         self.object_code()
     }
