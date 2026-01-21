@@ -14,7 +14,7 @@ use zencan_common::{
     traits::{AsyncCanReceiver, AsyncCanSender},
     NodeId,
 };
-use zencan_node::object_dict::find_object;
+use zencan_node::object_dict::ObjectAccess as _;
 
 #[serial]
 #[tokio::test]
@@ -221,16 +221,20 @@ async fn test_tpdo_event_flags() {
             .await
             .unwrap();
 
-        // Disable TPDO1 (which is on by default in example system)
+        // Enable TPDO1
         client
             .configure_tpdo(
                 1,
                 &PdoConfig {
-                    cob_id: CanId::std(0),
-                    enabled: false,
+                    cob_id: CanId::std(0x182),
+                    enabled: true,
                     rtr_disabled: false,
-                    mappings: vec![],
-                    transmission_type: 0,
+                    mappings: vec![PdoMapping {
+                        index: 0x3000,
+                        sub: 0,
+                        size: 32,
+                    }],
+                    transmission_type: 254,
                 },
             )
             .await
@@ -251,22 +255,10 @@ async fn test_tpdo_event_flags() {
             .await
             .unwrap();
 
-        // Set some known values into some application objects
+        // Set some known values into the mapped application objects
         client.download_u32(0x2000, 1, 222).await.unwrap();
         client.download_u32(0x2001, 1, 333).await.unwrap();
-
-        // Set the first TPDO mapping to 0x2000, subindex 1, length 32 bits
-        let mapping_entry: u32 = (0x2000 << 16) | (1 << 8) | 32;
-        client
-            .download(0x1A00, 1, &mapping_entry.to_le_bytes())
-            .await
-            .unwrap();
-        // Set the second TPDO mapping entry to 0x2001, subindex 1, length 32 bits
-        let mapping_entry: u32 = (0x2001 << 16) | (1 << 8) | 32;
-        client
-            .download(0x1A00, 2, &mapping_entry.to_le_bytes())
-            .await
-            .unwrap();
+        client.download_u32(0x3000, 0, 444).await.unwrap();
 
         // Node has to be in Operating mode to send PDOs
         nmt.nmt_start(0).await.unwrap();
@@ -278,15 +270,40 @@ async fn test_tpdo_event_flags() {
         // No messages in queue
         assert!(rx.try_recv().is_none());
 
-        let obj = find_object(&OD_TABLE, 0x2000).expect("Could not find object 0x2000");
         // Set the event flag for sub 1
-        obj.set_event_flag(1).expect("Error setting event flag");
+        OBJECT2000
+            .set_event_flag(1)
+            .expect("Error setting event flag");
 
         ctx.wait_for_process(1).await;
 
-        let _pdomsg = rx.try_recv().expect("No message received after TPDO event");
+        let pdomsg = rx.try_recv().expect("No message received after TPDO event");
         // should only have gotten one message
         assert!(rx.try_recv().is_none());
+        assert_eq!(CanId::std(0x181), pdomsg.id);
+        assert_eq!(
+            222,
+            u32::from_le_bytes(pdomsg.data()[0..4].try_into().unwrap())
+        );
+        assert_eq!(
+            333,
+            u32::from_le_bytes(pdomsg.data()[4..8].try_into().unwrap())
+        );
+
+        // Call process again -- no message should be received
+        ctx.wait_for_process(1).await;
+        assert!(rx.try_recv().is_none());
+
+        // Set flag for TPDO1
+        OBJECT3000
+            .set_event_flag(0)
+            .expect("Error setting event flag");
+        ctx.wait_for_process(1).await;
+        // Expect to get exactly one message
+        let pdomsg = rx.try_recv().expect("No message received after TPDO event");
+        assert!(rx.try_recv().is_none());
+
+        assert_eq!(CanId::std(0x182), pdomsg.id);
     };
 
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
