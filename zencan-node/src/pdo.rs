@@ -498,8 +498,10 @@ impl SubObjectAccess for PdoCobSubObject<'_> {
     }
 
     fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
-        // Changing PDO config is only allowed during PreOperational state
-        if self.pdo.nmt_state() != NmtState::PreOperational {
+        // Changing PDO config is only allowed during PreOperational state, or Bootup when the
+        // defaults are loaded (Bootup is a always a short-lived state).
+        let nmt_state = self.pdo.nmt_state();
+        if nmt_state != NmtState::PreOperational && nmt_state != NmtState::Bootup {
             return Err(AbortCode::GeneralError);
         }
         if data.len() < 4 {
@@ -549,8 +551,10 @@ impl SubObjectAccess for PdoTransmissionTypeSubObject<'_> {
     }
 
     fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
-        // Changing of PDO config only allowed during preoperational state
-        if self.pdo.nmt_state() != NmtState::PreOperational {
+        // Changing PDO config is only allowed during PreOperational state, or Bootup when the
+        // defaults are loaded (Bootup is a always a short-lived state).
+        let nmt_state = self.pdo.nmt_state();
+        if nmt_state != NmtState::PreOperational && nmt_state != NmtState::Bootup {
             return Err(AbortCode::GeneralError);
         }
         if data.is_empty() {
@@ -657,8 +661,10 @@ impl ObjectAccess for PdoMappingObject<'_> {
     }
 
     fn write(&self, sub: u8, data: &[u8]) -> Result<(), AbortCode> {
-        // Changing of PDO mapping is only allowed in PreOperational state
-        if self.pdo.nmt_state() != NmtState::PreOperational {
+        // Changing PDO config is only allowed during PreOperational state, or Bootup when the
+        // defaults are loaded (Bootup is a always a short-lived state).
+        let nmt_state = self.pdo.nmt_state();
+        if nmt_state != NmtState::PreOperational && nmt_state != NmtState::Bootup {
             return Err(AbortCode::GeneralError);
         }
         if sub == 0 {
