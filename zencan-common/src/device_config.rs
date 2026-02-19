@@ -870,7 +870,6 @@ pub struct DomainDefinition {}
 
 /// Descriptor for an object in the object dictionary
 #[derive(Deserialize, Debug, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct ObjectDefinition {
     /// The index of the object
     pub index: u16,
