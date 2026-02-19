@@ -212,6 +212,7 @@ pub use zencan_macro::build_object_dict;
 
 // Re-export types used by generated code
 pub use critical_section;
+pub use embedded_io;
 pub use zencan_common as common;
 
 pub use bootloader::{BootloaderInfo, BootloaderSection, BootloaderSectionCallbacks};

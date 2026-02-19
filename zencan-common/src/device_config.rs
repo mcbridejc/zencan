@@ -549,6 +549,7 @@ pub enum AutoStartConfig {
 
 /// Represents the configuration parameters for a single PDO
 #[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct PdoDefaultConfig {
     /// The COB ID this PDO will use to send/receive
     pub cob_id: u32,
@@ -586,6 +587,7 @@ impl From<PdoDefaultConfigMapSerializer> for HashMap<usize, PdoDefaultConfig> {
 
 /// Private struct for deserializing [pdos] section of device config TOML
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DevicePdoConfigSerializer {
     #[serde(default = "default_num_rpdo")]
     /// The number of TX PDO slots available in the device. Defaults to 4.
@@ -658,6 +660,7 @@ pub struct IdentityConfig {
 
 /// Configuration object to define a programmable bootloader section
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BootloaderSection {
     /// Name of the section
     pub name: String,
@@ -667,6 +670,7 @@ pub struct BootloaderSection {
 
 /// Configuration of bootloader parameters
 #[derive(Clone, Deserialize, Debug, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BootloaderConfig {
     /// If true, this node is an application which supports resetting to a bootloader, rather than a
     /// bootloader implementation
