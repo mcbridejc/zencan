@@ -38,6 +38,27 @@ I like CAN, and I wanted to make it easy to build devices with lots of communica
 - [can-io-firmware](https://github.com/mcbridejc/can-io-firmware) - A simple program to read analog inputs and make then available on a CAN bus
 - [i4-controller-firmware](https://github.com/mcbridejc/i4-controller-firmware) - A 4-channel current controller
 
+## Contributing
+
+### Pull Requests
+
+If you're interested in using zencan, that's great! Given its early state and broad goals, it's likely you will come across a need to extend it. 
+PRs are welcome! Some things are straight-forward bug fixes or feature extensions, and you can feel free to land a surprise PR. If you're embarking on a 
+bigger project, feel free to reach out and talk about what you're trying to do and perhaps we can gain some efficiency by coordinating. My email 
+is open, as are the [project discussions](https://github.com/mcbridejc/zencan/discussions).
+
+### Opening Issues
+
+If you find a bug, feel free to open an issue. If that issue comes with a PR to fix it, all the better, but even if not I am interested in 
+the reports as well. One thing I do ask is to please limit issues to actionable topics. I don't want to use issues for questions about how to 
+use the library, or feature ideas, etc. For that, please use [discussions](https://github.com/mcbridejc/zencan/discussions), or contact me 
+directly. 
+
+### General Feedback
+
+If you use zencan, I'd love to hear about it. If it doesn't quite meet your use-case, I'd love to hear why that is too. Drop me an email or 
+post a discussion thread. 
+
 ## Building docs
 
 Uses nightly docs features on docs.rs. To build docs locally using nightly features:
