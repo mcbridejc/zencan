@@ -782,7 +782,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
         } else {
             let object_code = object_code_to_tokens(obj.object_code());
             object_instantiations.extend(quote! {
-                pub static #inst_name: CallbackObject = CallbackObject::new(&OD_TABLE, #object_code);
+                pub static #inst_name: CallbackObject = CallbackObject::new(#object_code);
             });
             table_entries.extend(quote! {
                 ODEntry {

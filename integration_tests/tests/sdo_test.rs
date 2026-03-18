@@ -7,7 +7,11 @@ use std::{
 };
 
 use integration_tests::{object_dict1, prelude::*};
-use zencan_node::object_dict::SubObjectAccess;
+use zencan_common::{
+    objects::{ObjectCode, SubInfo},
+    AtomicCell,
+};
+use zencan_node::object_dict::{ObjectAccess, SubObjectAccess};
 
 #[tokio::test]
 #[serial_test::serial]
@@ -220,5 +224,106 @@ async fn test_domain_access() {
         );
     };
 
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_application_callbacks_unregistered() {
+    use object_dict1::*;
+    const NODE_ID: u8 = 1;
+    const OBJECT_ID: u16 = 0x3010;
+
+    struct TestCallback {
+        write_value: AtomicCell<u32>,
+    }
+
+    impl TestCallback {
+        pub fn new() -> Self {
+            Self {
+                write_value: AtomicCell::new(0),
+            }
+        }
+    }
+
+    impl ObjectAccess for TestCallback {
+        fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+            match sub {
+                0 => {
+                    assert!(offset == 0, "Callback test struct requires offset==0");
+                    buf[0..4].copy_from_slice(&42u32.to_le_bytes());
+                    Ok(4)
+                }
+                _ => Err(AbortCode::NoSuchSubIndex),
+            }
+        }
+
+        fn read_size(&self, sub: u8) -> Result<usize, AbortCode> {
+            match sub {
+                0 => Ok(size_of::<u32>()),
+                _ => Err(AbortCode::NoSuchSubIndex),
+            }
+        }
+
+        fn write(&self, sub: u8, data: &[u8]) -> Result<(), AbortCode> {
+            match sub {
+                0 => {
+                    self.write_value
+                        .store(u32::from_le_bytes(data.try_into().unwrap()));
+                    Ok(())
+                }
+                _ => Err(AbortCode::NoSuchSubIndex),
+            }
+        }
+
+        fn object_code(&self) -> ObjectCode {
+            ObjectCode::Var
+        }
+
+        fn sub_info(&self, sub: u8) -> Result<SubInfo, AbortCode> {
+            match sub {
+                0 => Ok(SubInfo::new_u32().rw_access()),
+                _ => Err(AbortCode::NoSuchSubIndex),
+            }
+        }
+    }
+
+    let mut bus = SimBus::new();
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
+    );
+    let mut client = get_sdo_client(&mut bus, NODE_ID);
+    let _bus_logger = BusLogger::new(bus.new_receiver());
+
+    let callback_handler = Box::leak(Box::new(TestCallback::new()));
+
+    let test_task = move |_ctx| async move {
+        // Callback is not registered, accessing it should return an error
+        let result = client.read_u32(OBJECT_ID, 0).await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            SdoClientError::ServerAbort {
+                index: OBJECT_ID,
+                sub: 0,
+                abort_code: RawAbortCode::Valid(AbortCode::ResourceNotAvailable)
+            },
+            result.unwrap_err()
+        );
+
+        // Register the callback handler, and check that read and writes are passed to the handler
+        OBJECT3010.register_handler(callback_handler);
+
+        assert_eq!(42, client.read_u32(OBJECT_ID, 0).await.unwrap(),);
+
+        client.write_u32(OBJECT_ID, 0, 100).await.unwrap();
+        assert_eq!(100, callback_handler.write_value.load());
+    };
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }

@@ -218,3 +218,11 @@ sub_index = 10
 data_type = "real64"
 access_type = "rw"
 pdo_mapping = "both"
+
+[[objects]]
+index = 0x3010
+parameter_name = "Application Callback Var"
+object_type = "var"
+data_type = "uint32"
+access_type = "rw"
+application_callback = true
