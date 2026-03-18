@@ -293,7 +293,8 @@ impl From<Heartbeat> for CanMessage {
 #[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SyncObject {
-    count: Option<u8>,
+    /// The (optional) count of this SyncObject
+    pub count: Option<u8>,
 }
 
 impl SyncObject {

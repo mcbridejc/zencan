@@ -25,6 +25,7 @@ use defmt_or_log::{debug, info};
 pub type StoreNodeConfigFn<'a> = dyn FnMut(NodeId) + 'a;
 pub type StoreObjectsFn<'a> = dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize) + 'a;
 pub type StateChangeFn<'a> = dyn FnMut(&'a [ODEntry<'a>]) + 'a;
+pub type SyncReceiveFn<'a> = dyn FnMut(Option<u8>) + 'a;
 
 /// Collection of callbacks events which Node object can call.
 ///
@@ -71,6 +72,9 @@ pub struct Callbacks<'a> {
 
     /// The node is entering the PRE-OPERATIONAL state
     pub enter_preoperational: Option<&'a mut StateChangeFn<'a>>,
+
+    /// The node has received a SYNC object
+    pub sync_received: Option<&'a mut SyncReceiveFn<'a>>,
 }
 
 impl<'a> Callbacks<'a> {
@@ -84,6 +88,7 @@ impl<'a> Callbacks<'a> {
             enter_operational: None,
             enter_stopped: None,
             enter_preoperational: None,
+            sync_received: None,
         }
     }
 }
@@ -324,6 +329,16 @@ impl<'a> Node<'a> {
             // check if a sync has been received
             let sync = self.mbox.read_sync_flag();
 
+            // TODO Process RPDO
+
+            // Run the sync callback after RPDO have been processed so the callback can read updated values
+            if let Some(cb) = &mut self.callbacks.sync_received {
+                // TODO Use "let chain" when moving to Edition 2024
+                if let Some(obj) = sync {
+                    (*cb)(obj.count);
+                }
+            }
+
             // Swap the active TPDO flag set. Returns true if any object flags were set since last
             // toggle. Tracking the global trigger is a performance boost, at least in the frequent
             // case when no events have been triggered. The goal is for `process` to be as fast as
@@ -340,7 +355,7 @@ impl<'a> Node<'a> {
                         pdo.send_pdo();
                         self.transmit_flag = true;
                     }
-                } else if sync && pdo.sync_update() {
+                } else if sync.is_some() && pdo.sync_update() {
                     pdo.send_pdo();
                     self.transmit_flag = true;
                 }

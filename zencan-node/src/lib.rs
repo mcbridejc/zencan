@@ -107,11 +107,7 @@
 //! let callbacks = Callbacks {
 //!     store_node_config: Some(store_node_config),
 //!     store_objects: Some(store_objects),
-//!     reset_app: None,
-//!     reset_comms: None,
-//!     enter_operational: None,
-//!     enter_stopped: None,
-//!     enter_preoperational: None,
+//!     ..Default::default()
 //! };
 //!
 //!

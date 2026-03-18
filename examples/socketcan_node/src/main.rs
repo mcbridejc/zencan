@@ -83,14 +83,16 @@ async fn main() {
         }
     };
 
+    let mut sync_received = |count| {
+        log::info!("Sync received with count {:?}!", count);
+    };
+
     let callbacks = Callbacks {
-        store_node_config: None,
         store_objects: Some(&mut store_objects),
         reset_app: Some(&mut reset_app),
         reset_comms: Some(&mut reset_comms),
-        enter_operational: None,
-        enter_stopped: None,
-        enter_preoperational: None,
+        sync_received: Some(&mut sync_received),
+        ..Default::default()
     };
 
     let mut node = Node::new(
@@ -105,10 +107,10 @@ async fn main() {
 
     // Node requires callbacks be static, so use Box::leak to make static ref from closure on heap
     let process_notify = Box::leak(Box::new(tokio::sync::Notify::new()));
-    let notify_cb = Box::leak(Box::new(|| {
+    let process_notify_cb = Box::leak(Box::new(|| {
         process_notify.notify_one();
     }));
-    zencan::NODE_MBOX.set_process_notify_callback(notify_cb);
+    zencan::NODE_MBOX.set_process_notify_callback(process_notify_cb);
 
     // Spawn a task to receive messages
     tokio::spawn(async move {

@@ -352,9 +352,7 @@ fn main() -> ! {
         store_objects: Some(&mut store_objects),
         reset_app: Some(&mut reset_app),
         reset_comms: Some(&mut reset_comms),
-        enter_operational: None,
-        enter_stopped: None,
-        enter_preoperational: None,
+        ..Default::default()
     };
 
     let node = Node::new(
