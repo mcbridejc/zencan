@@ -10,6 +10,8 @@ Human-friendly documentation of releases and what's changed in them for the zenc
 - TPDO bug where event flags were never cleared causing all TPDOs to be transmitted when any event
   was set
 - PDO objects were unwritable when reset_app/reset_comms callback is called
+- Objects with `application_callback` failed to compile
+- CallbackObject provided no method for registering a callback
 
 ## v0.0.3 - 2026-01-20
 
