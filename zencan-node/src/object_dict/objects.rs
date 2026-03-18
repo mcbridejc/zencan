@@ -337,13 +337,18 @@ pub struct CallbackObject<'a> {
     object_code: ObjectCode,
 }
 
-impl CallbackObject<'_> {
+impl<'a> CallbackObject<'a> {
     /// Create a new callback
-    pub fn new(object_code: ObjectCode) -> Self {
+    pub const fn new(object_code: ObjectCode) -> Self {
         Self {
             obj: AtomicCell::new(None),
             object_code,
         }
+    }
+
+    /// Register callback handler for object accesses
+    pub fn register_handler(&self, handler: &'a dyn ObjectAccess) {
+        self.obj.store(Some(handler))
     }
 }
 
