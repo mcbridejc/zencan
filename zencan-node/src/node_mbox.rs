@@ -1,7 +1,7 @@
 //! Implements mailbox for receiving CAN messages
 use defmt_or_log::warn;
 use zencan_common::{
-    messages::{CanId, CanMessage},
+    messages::{CanId, CanMessage, SyncObject},
     AtomicCell,
 };
 
@@ -41,7 +41,7 @@ pub struct NodeMbox {
     sdo_comms: SdoComms,
     nmt_mbox: AtomicCell<Option<CanMessage>>,
     lss_receiver: LssReceiver,
-    sync_flag: AtomicCell<bool>,
+    sync_flag: AtomicCell<Option<SyncObject>>,
     process_notify_cb: AtomicCell<Option<&'static (dyn Fn() + Sync)>>,
     transmit_notify_cb: AtomicCell<Option<&'static (dyn Fn() + Sync)>>,
     tx_queue: &'static dyn CanMessageQueue,
@@ -64,7 +64,7 @@ impl NodeMbox {
         let sdo_comms = SdoComms::new(sdo_buffer);
         let nmt_mbox = AtomicCell::new(None);
         let lss_receiver = LssReceiver::new();
-        let sync_flag = AtomicCell::new(false);
+        let sync_flag = AtomicCell::new(None);
         let process_notify_cb = AtomicCell::new(None);
         let transmit_notify_cb = AtomicCell::new(None);
         Self {
@@ -129,7 +129,7 @@ impl NodeMbox {
         &self.lss_receiver
     }
 
-    pub(crate) fn read_sync_flag(&self) -> bool {
+    pub(crate) fn read_sync_flag(&self) -> Option<SyncObject> {
         self.sync_flag.take()
     }
 
@@ -143,7 +143,8 @@ impl NodeMbox {
         }
 
         if id == zencan_common::messages::SYNC_ID {
-            self.sync_flag.store(true);
+            let sync_object = SyncObject::from(msg);
+            self.sync_flag.store(Some(sync_object));
             self.process_notify();
             return Ok(());
         }

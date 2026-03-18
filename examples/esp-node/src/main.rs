@@ -100,15 +100,7 @@ async fn twai_tx_task(mut twai_tx: TwaiTx<'static, Async>) {
 
 #[embassy_executor::task]
 async fn canopen_process_task() {
-    let callbacks = Callbacks {
-        store_node_config: None,
-        store_objects: None,
-        reset_app: None,
-        reset_comms: None,
-        enter_operational: None,
-        enter_stopped: None,
-        enter_preoperational: None,
-    };
+    let callbacks = Callbacks::default();
     let mut node = Node::new(
         NodeId::Unconfigured,
         callbacks,
