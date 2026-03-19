@@ -4,6 +4,8 @@ use core::cell::UnsafeCell;
 
 use zencan_common::{sdo::AbortCode, AtomicCell, TimeDifference, TimeOfDay};
 
+pub use arbitrary_int::{i24, u24};
+
 /// Allow transparent byte level access to a sub object
 pub trait SubObjectAccess: Sync + Send {
     /// Read data from the sub object
@@ -204,6 +206,50 @@ impl SubObjectAccess for ScalarField<bool> {
         Ok(())
     }
 }
+
+macro_rules! impl_arbitrary_int_field {
+    ($rust_type: ty, $storage_type: ty) => {
+        impl ScalarField<$rust_type> {
+            /// Create a new ScalarField with the given value
+            pub const fn new(value: $storage_type) -> Self {
+                Self {
+                    value: AtomicCell::new(<$rust_type>::new(value)),
+                }
+            }
+        }
+        impl SubObjectAccess for ScalarField<$rust_type> {
+            fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+                let bytes = self.value.load().to_le_bytes();
+                if offset < bytes.len() {
+                    let read_len = buf.len().min(bytes.len() - offset);
+                    buf[0..read_len].copy_from_slice(&bytes[offset..offset + read_len]);
+                    Ok(read_len)
+                } else {
+                    Ok(0)
+                }
+            }
+
+            fn read_size(&self) -> usize {
+                <$rust_type>::BITS / 8
+            }
+
+            fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
+                let value = <$rust_type>::from_le_bytes(data.try_into().map_err(|_| {
+                    if data.len() < self.read_size() {
+                        AbortCode::DataTypeMismatchLengthLow
+                    } else {
+                        AbortCode::DataTypeMismatchLengthHigh
+                    }
+                })?);
+                self.value.store(value);
+                Ok(())
+            }
+        }
+    };
+}
+
+impl_arbitrary_int_field!(i24, i32);
+impl_arbitrary_int_field!(u24, u32);
 
 impl SubObjectAccess for ScalarField<TimeDifference> {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {

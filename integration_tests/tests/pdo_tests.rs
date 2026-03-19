@@ -46,6 +46,9 @@ async fn test_rpdo_assignment() {
         // Readback the largest sub index
         assert_eq!(2, client.upload_u8(0x1400, 0).await.unwrap());
 
+        // Check initial value of RPDO0 cob_id
+        assert_eq!(0x300, client.upload_u32(0x1400, 1).await.unwrap());
+
         // Set COB-ID and readback
         // Invalid bit cleared, and ID == 0x201.
         let cob_id_word: u32 = 0x201;
@@ -400,19 +403,25 @@ async fn test_pdo_defaults() {
         assert_eq!(true, tpdo1_cfg.enabled);
         assert_eq!(CanId::std(0x201), tpdo1_cfg.cob_id);
         assert_eq!(254, tpdo1_cfg.transmission_type);
-        assert_eq!(1, tpdo1_cfg.mappings.len());
+        assert_eq!(2, tpdo1_cfg.mappings.len());
         assert_eq!(0x2000, tpdo1_cfg.mappings[0].index);
         assert_eq!(1, tpdo1_cfg.mappings[0].sub);
         assert_eq!(32, tpdo1_cfg.mappings[0].size);
+        assert_eq!(0x300C, tpdo1_cfg.mappings[1].index);
+        assert_eq!(11, tpdo1_cfg.mappings[1].sub);
+        assert_eq!(24, tpdo1_cfg.mappings[1].size);
 
         let rpdo0_cfg = client.read_rpdo_config(0).await.unwrap();
         assert_eq!(true, rpdo0_cfg.enabled);
         assert_eq!(CanId::std(0x300), rpdo0_cfg.cob_id);
         assert_eq!(254, rpdo0_cfg.transmission_type);
-        assert_eq!(1, rpdo0_cfg.mappings.len());
+        assert_eq!(2, rpdo0_cfg.mappings.len());
         assert_eq!(0x2000, rpdo0_cfg.mappings[0].index);
         assert_eq!(2u8, rpdo0_cfg.mappings[0].sub);
         assert_eq!(32, rpdo0_cfg.mappings[0].size);
+        assert_eq!(0x300C, rpdo0_cfg.mappings[1].index);
+        assert_eq!(12, rpdo0_cfg.mappings[1].sub);
+        assert_eq!(24, rpdo0_cfg.mappings[1].size);
     };
 
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
