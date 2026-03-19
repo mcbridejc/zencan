@@ -40,6 +40,16 @@ async fn test_sdo_read() {
 
         assert_eq!(vec![0xa, 0xb, 0xc, 0xd], read);
 
+        client.download(0x3001, 0, &[0xa, 0xb, 0xc]).await.unwrap();
+        let read = client.upload(0x3001, 0).await.unwrap();
+
+        assert_eq!(vec![0xa, 0xb, 0xc], read);
+
+        client.download(0x3002, 0, &[0xc, 0xb, 0xa]).await.unwrap();
+        let read = client.upload(0x3002, 0).await.unwrap();
+
+        assert_eq!(vec![0xc, 0xb, 0xa], read);
+
         client
             .download(0x2002, 0, "teststring".as_bytes())
             .await

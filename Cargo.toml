@@ -42,3 +42,4 @@ serde = { version = "1.0.219", features = ["derive"] }
 snafu = { version = "0.8.5", default-features = false }
 socketcan = { version = "3.5.0", features = ["tokio"] }
 toml = "0.8.20"
+arbitrary-int = "2.1.1"

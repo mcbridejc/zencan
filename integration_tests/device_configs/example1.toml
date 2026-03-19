@@ -19,6 +19,7 @@ add_node_id = true
 transmission_type = 254
 mappings = [
     { index=0x2000, sub=1, size=32 },
+    { index=0x300C, sub=11, size=24 },
 ]
 
 [pdos.rpdo.0]
@@ -28,6 +29,7 @@ add_node_id = false
 transmission_type = 254
 mappings = [
     { index = 0x2000, sub=2, size=32 },
+    { index = 0x300C, sub=12, size=24 },
 ]
 
 
@@ -87,6 +89,20 @@ parameter_name = "u32 var"
 data_type = "uint32"
 access_type = "rw"
 pdo_mapping = "tpdo"
+
+[[objects]]
+index = 0x3001
+object_type = "var"
+parameter_name = "u24 var"
+data_type = "uint24"
+access_type = "rw"
+
+[[objects]]
+index = 0x3002
+object_type = "var"
+parameter_name = "i24 var"
+data_type = "int24"
+access_type = "rw"
 
 [[objects]]
 index = 0x3003
@@ -216,6 +232,16 @@ pdo_mapping = "both"
 [[objects.subs]]
 sub_index = 10
 data_type = "real64"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 11
+data_type = "int24"
+access_type = "rw"
+pdo_mapping = "both"
+[[objects.subs]]
+sub_index = 12
+data_type = "uint24"
 access_type = "rw"
 pdo_mapping = "both"
 
