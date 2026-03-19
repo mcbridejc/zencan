@@ -986,11 +986,13 @@ pub enum DataType {
     Boolean,
     Int8,
     Int16,
+    Int24,
     Int32,
     Int64,
     #[default]
     UInt8,
     UInt16,
+    UInt24,
     UInt32,
     UInt64,
     Real32,
@@ -1018,10 +1020,12 @@ impl DataType {
             DataType::Boolean => 1,
             DataType::Int8 => 1,
             DataType::Int16 => 2,
+            DataType::Int24 => 3,
             DataType::Int32 => 4,
             DataType::Int64 => 8,
             DataType::UInt8 => 1,
             DataType::UInt16 => 2,
+            DataType::UInt24 => 3,
             DataType::UInt32 => 4,
             DataType::UInt64 => 8,
             DataType::Real32 => 4,
@@ -1052,6 +1056,8 @@ impl<'de> serde::Deserialize<'de> for DataType {
             Ok(DataType::Int8)
         } else if s == "int16" {
             Ok(DataType::Int16)
+        } else if s == "int24" {
+            Ok(DataType::Int24)
         } else if s == "int32" {
             Ok(DataType::Int32)
         } else if s == "int64" {
@@ -1060,6 +1066,8 @@ impl<'de> serde::Deserialize<'de> for DataType {
             Ok(DataType::UInt8)
         } else if s == "uint16" {
             Ok(DataType::UInt16)
+        } else if s == "uint24" {
+            Ok(DataType::UInt24)
         } else if s == "uint32" {
             Ok(DataType::UInt32)
         } else if s == "uint64" {
