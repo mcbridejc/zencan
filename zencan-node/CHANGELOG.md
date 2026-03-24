@@ -4,6 +4,10 @@ Human-friendly documentation of releases and what's changed in them for the zenc
 
 ## Unreleased
 
+### Added
+
+- `sync_received` node callback added (thanks to rohel01)
+
 ### Fixed
 
 - Unused code warning when num_tdpos or num_rpdos is 0
