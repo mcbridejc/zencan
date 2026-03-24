@@ -6,7 +6,9 @@ use core::{convert::Infallible, sync::atomic::Ordering};
 use zencan_common::{
     constants::object_ids,
     lss::LssIdentity,
-    messages::{CanId, CanMessage, Heartbeat, NmtCommandSpecifier, ZencanMessage, LSS_RESP_ID},
+    messages::{
+        CanId, CanMessage, Heartbeat, NmtCommandSpecifier, SyncObject, ZencanMessage, LSS_RESP_ID,
+    },
     nmt::NmtState,
     NodeId,
 };
@@ -25,7 +27,7 @@ use defmt_or_log::{debug, info};
 pub type StoreNodeConfigFn<'a> = dyn FnMut(NodeId) + 'a;
 pub type StoreObjectsFn<'a> = dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize) + 'a;
 pub type StateChangeFn<'a> = dyn FnMut(&'a [ODEntry<'a>]) + 'a;
-pub type SyncReceiveFn<'a> = dyn FnMut(Option<u8>) + 'a;
+pub type SyncReceiveFn<'a> = dyn FnMut(SyncObject) + 'a;
 
 /// Collection of callbacks events which Node object can call.
 ///
@@ -325,19 +327,11 @@ impl<'a> Node<'a> {
             }
         }
 
+        // check if a sync has been received
+        let sync = self.mbox.read_sync_flag();
+
         if self.nmt_state() == NmtState::Operational {
-            // check if a sync has been received
-            let sync = self.mbox.read_sync_flag();
-
-            // TODO Process RPDO
-
-            // Run the sync callback after RPDO have been processed so the callback can read updated values
-            if let Some(cb) = &mut self.callbacks.sync_received {
-                // TODO Use "let chain" when moving to Edition 2024
-                if let Some(obj) = sync {
-                    (*cb)(obj.count);
-                }
-            }
+            // TODO Process RPDO when sync received
 
             // Swap the active TPDO flag set. Returns true if any object flags were set since last
             // toggle. Tracking the global trigger is a performance boost, at least in the frequent
@@ -372,6 +366,20 @@ impl<'a> Node<'a> {
                 if let Some(new_data) = rpdo.buffered_value.take() {
                     rpdo.store_pdo_data(&new_data);
                     update_flag = true;
+                }
+            }
+        }
+
+        // Sync callback active when in operational or preop states. It is called after PDO
+        // processing, so that any pending RPDOs which are transferred on SYNC are transferred
+        // before the callback is run
+        if matches!(
+            self.nmt_state(),
+            NmtState::Operational | NmtState::PreOperational
+        ) {
+            if let Some(cb) = &mut self.callbacks.sync_received {
+                if let Some(obj) = sync {
+                    (*cb)(obj);
                 }
             }
         }
