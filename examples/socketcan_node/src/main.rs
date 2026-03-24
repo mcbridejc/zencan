@@ -7,7 +7,7 @@ use std::{
 
 use clap::Parser;
 use tokio::time::timeout;
-use zencan_node::Node;
+use zencan_node::{common::messages::SyncObject, Node};
 use zencan_node::{
     common::{
         traits::{AsyncCanReceiver, AsyncCanSender},
@@ -83,8 +83,8 @@ async fn main() {
         }
     };
 
-    let mut sync_received = |count| {
-        log::info!("Sync received with count {:?}!", count);
+    let mut sync_received = |sync_object: SyncObject| {
+        log::info!("Sync received with count {:?}!", sync_object.count);
     };
 
     let callbacks = Callbacks {
