@@ -7,7 +7,9 @@ use integration_tests::{object_dict1, prelude::*};
 use rand::Rng as _;
 use serial_test::serial;
 use zencan_client::nmt_master::NmtMaster;
-use zencan_common::{TimeDifference, TimeOfDay};
+use zencan_common::{
+    messages::SyncObject, traits::AsyncCanSender, AtomicCell, TimeDifference, TimeOfDay,
+};
 
 #[serial]
 #[tokio::test]
@@ -494,6 +496,54 @@ async fn test_time_field_access() {
         assert_eq!(delta, OBJECT300B.get_sub2());
         let read_delta = client.read_time_difference(0x300B, 2).await.unwrap();
         assert_eq!(delta, read_delta);
+    };
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
+}
+
+/// Test that the Node properly calls the sync callback when the sync object is received
+#[serial]
+#[tokio::test]
+async fn test_sync_object_callback() {
+    use object_dict1::*;
+
+    let _ = env_logger::try_init();
+
+    const NODE_ID: u8 = 1;
+    let mut bus = SimBus::new();
+    bus.add_node(&NODE_MBOX);
+
+    let sync_counter: Arc<AtomicCell<Option<u8>>> = Arc::new(AtomicCell::new(None));
+    let sync_counter_clone = sync_counter.clone();
+    let mut sync_received_cb = |sync_object: SyncObject| {
+        println!("Received SYNC: {sync_object:?}");
+        sync_counter_clone.store(sync_object.count);
+    };
+
+    let callbacks = Callbacks {
+        sync_received: Some(&mut sync_received_cb),
+        ..Default::default()
+    };
+
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
+    );
+
+    let mut sender = bus.new_sender();
+
+    let test_task = |mut ctx: TestContext| async move {
+        // Send a sync to the BUS
+        let sync_object = SyncObject::new(Some(123));
+        sender.send(sync_object.into()).await.unwrap();
+
+        // Allow node process to be called
+        ctx.wait_for_process(2).await;
+
+        // Check that callback was called with the correct counter value
+        assert_eq!(sync_object.count, sync_counter.load());
     };
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
