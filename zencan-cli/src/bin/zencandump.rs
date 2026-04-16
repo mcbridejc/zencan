@@ -1,3 +1,4 @@
+#![cfg_attr(not(target_os = "linux"), allow(unused_imports))]
 use clap::Parser;
 use zencan_client::common::{
     messages::{MessageError, ZencanMessage},
@@ -31,6 +32,12 @@ impl From<CanMessage> for Message {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    println!("zencandump uses socketcan, so currently only works on linux.");
+}
+
+#[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() {
     let args = Args::parse();

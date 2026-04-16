@@ -25,11 +25,11 @@ pub mod sdo;
 mod time_types;
 pub mod traits;
 
-#[cfg(feature = "socketcan")]
+#[cfg(all(feature = "socketcan", target_os = "linux"))]
 mod socketcan;
 
-#[cfg(feature = "socketcan")]
-#[cfg_attr(docsrs, doc(cfg(feature = "socketcan")))]
+#[cfg(all(feature = "socketcan", target_os = "linux"))]
+#[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
 pub use socketcan::open_socketcan;
 
 pub use messages::{CanError, CanId, CanMessage};

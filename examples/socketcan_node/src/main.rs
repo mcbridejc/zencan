@@ -1,3 +1,4 @@
+#![cfg_attr(not(target_os = "linux"), allow(unused_imports, dead_code))]
 use std::{
     convert::Infallible,
     io::Write as _,
@@ -16,6 +17,7 @@ use zencan_node::{
     Callbacks,
 };
 
+#[cfg(target_os = "linux")]
 use zencan_node::open_socketcan;
 
 mod zencan {
@@ -33,6 +35,12 @@ struct Args {
     serial: Option<u32>,
 }
 
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    println!("socketcan_node can only run on linux");
+}
+
+#[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() {
     // Initialize the logger

@@ -18,7 +18,7 @@ path = "src/bin/zencan-cli.rs"
 
 [dependencies]
 # Local
-zencan-client.workspace = true
+zencan-client = { workspace = true, features = ["socketcan"] }
 
 # External
 clap = { version = "4.5.37", features = ["derive"] }
