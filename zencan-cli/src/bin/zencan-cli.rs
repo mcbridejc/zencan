@@ -1,3 +1,4 @@
+#![cfg_attr(not(target_os = "linux"), allow(unused_imports, dead_code))]
 //! A REPL-style interactive shell for talking to CAN devices via socketcan
 use std::{
     array::TryFromSliceError,
@@ -23,8 +24,11 @@ use zencan_client::{
         lss::LssState, node_configuration::NodeConfig, node_id::ConfiguredNodeId,
         traits::AsyncCanSender, NodeId,
     },
-    open_socketcan, BusManager,
+    BusManager,
 };
+
+#[cfg(target_os = "linux")]
+use zencan_client::open_socketcan;
 
 #[derive(Parser)]
 struct Args {
@@ -486,6 +490,12 @@ fn parse_command(line: &str) -> Result<Cli, clap::Error> {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    println!("zencan-cli uses socketcan, so currently only works on linux.");
+}
+
+#[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() {
     env_logger::init();
@@ -494,6 +504,7 @@ async fn main() {
     let node_state = Arc::new(Mutex::new(0));
     let prompt = ZencanPrompt::new(&args.socket, node_state.clone());
 
+    #[cfg(target_os = "linux")]
     let (tx, rx) = open_socketcan(&args.socket).expect("Failed to open bus socket");
     let mut manager = BusManager::new(tx, rx);
 

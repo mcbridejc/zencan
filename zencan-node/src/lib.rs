@@ -212,8 +212,8 @@ pub use embedded_io;
 pub use zencan_common as common;
 
 pub use bootloader::{BootloaderInfo, BootloaderSection, BootloaderSectionCallbacks};
-#[cfg(feature = "socketcan")]
-#[cfg_attr(docsrs, doc(cfg(feature = "socketcan")))]
+#[cfg(all(feature = "socketcan", target_os = "linux"))]
+#[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
 pub use common::open_socketcan;
 pub use node::{Callbacks, Node};
 pub use node_mbox::NodeMbox;
