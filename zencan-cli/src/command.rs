@@ -30,6 +30,8 @@ pub enum Commands {
     /// LSS commands
     #[command(subcommand)]
     Lss(LssCommands),
+    /// Send a SYNC packet
+    Sync(SyncArgs),
 }
 
 #[derive(Debug, Args)]
@@ -92,6 +94,12 @@ pub struct LoadConfigArgs {
 pub struct SaveObjectsArgs {
     /// The ID of the node to command
     pub node_id: u8,
+}
+
+#[derive(Debug, Args)]
+pub struct SyncArgs {
+    /// The optional count value (0-255). When omitted, sends a SYNC with zero data length.
+    pub count: Option<u8>,
 }
 
 /// Specifies a node to apply an NMT command

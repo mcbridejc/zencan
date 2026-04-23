@@ -476,6 +476,10 @@ async fn run_command<S: AsyncCanSender + Sync + Send>(cmd: Commands, manager: &m
                 Err(e) => println!("Error reading PDO config: {e}"),
             }
         }
+        Commands::Sync(args) => {
+            manager.sync(args.count).await;
+            println!("SYNC sent");
+        }
     }
 }
 

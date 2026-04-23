@@ -9,7 +9,7 @@ use zencan_common::constants::object_ids::{
     RPDO_COMM_BASE, RPDO_MAP_BASE, TPDO_COMM_BASE, TPDO_MAP_BASE,
 };
 use zencan_common::lss::{LssIdentity, LssState};
-use zencan_common::messages::{NmtCommand, NmtCommandSpecifier, ZencanMessage};
+use zencan_common::messages::{NmtCommand, NmtCommandSpecifier, SyncObject, ZencanMessage};
 use zencan_common::nmt::NmtState;
 use zencan_common::node_id::ConfiguredNodeId;
 use zencan_common::sdo::AbortCode;
@@ -547,6 +547,12 @@ impl<S: AsyncCanSender + Sync + Send> BusManager<S> {
     /// node - The node ID to command, or 0 to broadcast to all nodes
     pub async fn nmt_stop(&mut self, node: u8) {
         self.send_nmt_cmd(NmtCommandSpecifier::Stop, node).await
+    }
+
+    /// Send a SYNC packet on the bus
+    pub async fn sync(&mut self, count: Option<u8>) {
+        let sync_obj = SyncObject::new(count);
+        self.sender.send(sync_obj.into()).await.ok();
     }
 
     async fn send_nmt_cmd(&mut self, cmd: NmtCommandSpecifier, node: u8) {
