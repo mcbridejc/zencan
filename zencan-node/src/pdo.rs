@@ -297,7 +297,26 @@ impl<'a> Pdo<'a> {
             // For now, send every sync
             true
         } else if transmission_type <= 240 {
-            let cnt = self.sync_counter.fetch_add(1) + 1;
+            // Atomically update this PDO's sync counter. If it has
+            // reached the transmit threshold ("transmission_type"),
+            // then reset it to zero.
+            let r = self.sync_counter.fetch_update(|old| {
+                let new = old + 1;
+                if new >= transmission_type {
+                    Some(0)
+                } else {
+                    Some(new)
+                }
+            });
+
+            // We don't care if the update worked or not (because there's
+            // nothing we can do about it). Just use whatever the old
+            // value was.
+            let cnt = match r {
+                Ok(old) => old,
+                Err(old) => old,
+            } + 1;
+
             cnt == transmission_type
         } else {
             false
