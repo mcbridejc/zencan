@@ -122,35 +122,39 @@ pub enum DataType {
     Int8 = 2,
     /// A signed 16-bit integer
     Int16 = 3,
+    /// A signed 24-bit integer
+    Int24 = 4,
     /// A signed 32-bit integer
-    Int32 = 4,
+    Int32 = 5,
     /// An unsigned 8-bit integer
-    UInt8 = 5,
+    UInt8 = 6,
     /// An unsigned 16-bit integer
-    UInt16 = 6,
+    UInt16 = 7,
+    /// An unsigned 24-bit integer
+    UInt24 = 8,
     /// An unsigned 32-bit integer
-    UInt32 = 7,
+    UInt32 = 9,
     /// A 32-bit floating point value
-    Real32 = 8,
+    Real32 = 0xa,
     /// An ASCII/utf-8 string
-    VisibleString = 9,
+    VisibleString = 0xb,
     /// A byte string
-    OctetString = 0xa,
+    OctetString = 0xc,
     /// A unicode string
-    UnicodeString = 0xb,
+    UnicodeString = 0xd,
     /// Currently Unimplemented
-    TimeOfDay = 0xc,
+    TimeOfDay = 0xe,
     /// Currently Unimplemented
-    TimeDifference = 0xd,
+    TimeDifference = 0xf,
     /// An arbitrary byte access type for e.g. data streams, or large chunks of
     /// data. Size is typically not known at build time.
-    Domain = 0xf,
+    Domain = 0x11,
     /// A 64-bit floating point value
-    Real64 = 0x11,
+    Real64 = 0x13,
     /// A signed 64-bit integer
-    Int64 = 0x15,
+    Int64 = 0x17,
     /// An unsigned 64-bit integer
-    UInt64 = 0x1b,
+    UInt64 = 0x1d,
     /// A contained for an unrecognized data type value
     Other(u16),
 }
@@ -162,15 +166,17 @@ impl From<u16> for DataType {
             1 => Boolean,
             2 => Int8,
             3 => Int16,
-            4 => Int32,
-            5 => UInt8,
-            6 => UInt16,
-            7 => UInt32,
-            8 => Real32,
-            9 => VisibleString,
-            0xa => OctetString,
-            0xb => UnicodeString,
-            0xf => Domain,
+            4 => Int24,
+            5 => Int32,
+            6 => UInt8,
+            7 => UInt16,
+            8 => UInt24,
+            9 => UInt32,
+            0xa => Real32,
+            0xb => VisibleString,
+            0xc => OctetString,
+            0xd => UnicodeString,
+            0x11 => Domain,
             _ => Other(value),
         }
     }
@@ -223,6 +229,17 @@ impl SubInfo {
     }
 
     /// Convenience function for creating a new sub-info by type
+    pub const fn new_u24() -> Self {
+        Self {
+            size: 3,
+            data_type: DataType::UInt24,
+            access_type: AccessType::Ro,
+            pdo_mapping: PdoMappable::None,
+            persist: false,
+        }
+    }
+
+    /// Convenience function for creating a new sub-info by type
     pub const fn new_u16() -> Self {
         Self {
             size: 2,
@@ -249,6 +266,17 @@ impl SubInfo {
         Self {
             size: 4,
             data_type: DataType::Int32,
+            access_type: AccessType::Ro,
+            pdo_mapping: PdoMappable::None,
+            persist: false,
+        }
+    }
+
+    /// Convenience function for creating a new sub-info by type
+    pub const fn new_i24() -> Self {
+        Self {
+            size: 3,
+            data_type: DataType::Int24,
             access_type: AccessType::Ro,
             pdo_mapping: PdoMappable::None,
             persist: false,
