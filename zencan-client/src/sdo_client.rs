@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use arbitrary_int::{i24, u24};
 use snafu::Snafu;
 use zencan_common::{
     constants::{object_ids, values::SAVE_CMD},
@@ -144,6 +145,40 @@ macro_rules! access_methods {
             pub async fn [<upload_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
                 let data = self.upload(index, sub).await?;
                 if data.len() != size_of::<$type>() {
+                    return UnexpectedSizeSnafu.fail();
+                }
+                Ok($type::from_le_bytes(data.try_into().unwrap()))
+            }
+
+            #[doc = concat!("Write a ", stringify!($type), " sub object on the SDO server\n\n")]
+            #[doc = concat!("This is an alias for download_", stringify!($type), " for a more intuitive API")]
+            pub async fn [<write_ $type>](&mut self, index: u16, sub: u8, value: $type) -> Result<()> {
+                self.[<download_ $type>](index, sub, value).await
+            }
+
+            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server")]
+            pub async fn [<download_ $type>](&mut self, index: u16, sub: u8, value: $type) -> Result<()> {
+                let data = value.to_le_bytes();
+                self.download(index, sub, &data).await
+            }
+        }
+    };
+}
+
+macro_rules! access_methods_arbitrary {
+    ($type: ty) => {
+
+        paste! {
+            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server\n\n")]
+            #[doc = concat!("This is an alias for upload_", stringify!($type), " for a more intuitive API")]
+            pub async fn [<read_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
+                self.[<upload_ $type>](index, sub).await
+            }
+
+            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server")]
+            pub async fn [<upload_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
+                let data = self.upload(index, sub).await?;
+                if data.len() != ($type::BITS / 8) {
                     return UnexpectedSizeSnafu.fail();
                 }
                 Ok($type::from_le_bytes(data.try_into().unwrap()))
@@ -565,6 +600,9 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     access_methods!(i32);
     access_methods!(i16);
     access_methods!(i8);
+
+    access_methods_arbitrary!(u24);
+    access_methods_arbitrary!(i24);
 
     /// Write to a TimeOfDay object on the SDO server
     pub async fn download_time_of_day(
