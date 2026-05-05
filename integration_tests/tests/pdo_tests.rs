@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use arbitrary_int::{i24, u24};
 use integration_tests::{object_dict1, prelude::*};
 use serial_test::serial;
 use tokio::time::timeout;
@@ -46,7 +47,7 @@ async fn test_rpdo_assignment() {
         // Readback the largest sub index
         assert_eq!(2, client.upload_u8(0x1400, 0).await.unwrap());
 
-        // Check initial value of RPDO0 cob_id
+        // Check initial value of RPDO1 cob_id
         assert_eq!(0x300, client.upload_u32(0x1400, 1).await.unwrap());
 
         // Set COB-ID and readback
@@ -57,18 +58,35 @@ async fn test_rpdo_assignment() {
         let readback_cob_id_word = client.upload_u32(0x1400, 1).await.unwrap();
         assert_eq!(cob_id_word, readback_cob_id_word);
 
+        // Check initial values of RPDO mappings
+        assert_eq!(2, client.upload_u8(0x1600, 0).await.unwrap());
+        let default_mapping_entry_1: u32 = (0x2000 << 16) | (2 << 8) | 32;
+        let default_mapping_entry_2: u32 = (0x300C << 16) | (12 << 8) | 24;
+        assert_eq!(
+            default_mapping_entry_1,
+            client.upload_u32(0x1600, 1).await.unwrap()
+        );
+        assert_eq!(
+            default_mapping_entry_2,
+            client.upload_u32(0x1600, 2).await.unwrap()
+        );
+        assert_eq!(u24::new(0), client.upload_u24(0x300C, 12).await.unwrap());
+
         // Set RPDO1 to map to object 0x2000, subindex 1, length 32 bits
         let mapping_entry: u32 = (0x2000 << 16) | (1 << 8) | 32;
         client.download_u32(0x1600, 1, mapping_entry).await.unwrap();
-        // Set the number of valid mappings
-        client.download_u8(0x1600, 0, 1).await.unwrap();
+        // // Set the number of valid mappings
+        client.download_u8(0x1600, 0, 3).await.unwrap();
 
         // Put in operational mode
         nmt.nmt_start(0).await.unwrap();
 
         // Now send a PDO message and it should update the mapped object
         pdo_sender
-            .send(CanMessage::new(CanId::Std(0x201), &500u32.to_le_bytes()))
+            .send(CanMessage::new(
+                CanId::Std(0x201),
+                &(0x01020300000000u64 + 500u64).to_le_bytes(),
+            ))
             .await
             .unwrap();
 
@@ -76,6 +94,10 @@ async fn test_rpdo_assignment() {
         ctx.wait_for_process(1).await;
         // Readback the mapped object; the PDO message above should have updated it
         assert_eq!(500, client.upload_u32(0x2000, 1).await.unwrap());
+        assert_eq!(
+            u24::new(0x010203),
+            client.upload_u24(0x300C, 12).await.unwrap()
+        );
     };
 
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
@@ -126,14 +148,17 @@ async fn test_tpdo_assignment() {
             .await
             .unwrap();
 
-        client.download_u32(0x2000, 1, 222).await.unwrap();
         client.download_u32(0x2001, 1, 333).await.unwrap();
+        client
+            .download_i24(0x300C, 11, i24::new(-65432))
+            .await
+            .unwrap();
 
-        // Set the TPDO mapping to 0x2000, subindex 1, length 32 bits
-        let mapping_entry: u32 = (0x2000 << 16) | (1 << 8) | 32;
-        client.download_u32(0x1A00, 1, mapping_entry).await.unwrap();
-        // Set the second TPDO mapping entry to 0x2001, subindex 1, length 32 bits
+        // Set the TPDO mapping to 0x2001, subindex 1, length 32 bits
         let mapping_entry: u32 = (0x2001 << 16) | (1 << 8) | 32;
+        client.download_u32(0x1A00, 1, mapping_entry).await.unwrap();
+        // Set the second TPDO mapping entry to 0x300C, subindex 11, length 24 bits
+        let mapping_entry: u32 = (0x300C << 16) | (11 << 8) | 24;
         client.download_u32(0x1A00, 2, mapping_entry).await.unwrap();
         // Set the number of valid mappings
         client.download_u8(0x1A00, 0, 2).await.unwrap();
@@ -160,9 +185,9 @@ async fn test_tpdo_assignment() {
 
         assert_eq!(CanId::std(0x181), msg.id);
         let field1 = u32::from_le_bytes(msg.data[0..4].try_into().unwrap());
-        let field2 = u32::from_le_bytes(msg.data[4..8].try_into().unwrap());
-        assert_eq!(222, field1);
-        assert_eq!(333, field2);
+        let field2 = i24::from_le_bytes(msg.data[4..7].try_into().unwrap());
+        assert_eq!(333, field1);
+        assert_eq!(i24::new(-65432), field2);
     };
 
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
@@ -632,13 +657,10 @@ async fn test_pdo_defaults() {
         assert_eq!(true, tpdo1_cfg.enabled);
         assert_eq!(CanId::std(0x201), tpdo1_cfg.cob_id);
         assert_eq!(254, tpdo1_cfg.transmission_type);
-        assert_eq!(2, tpdo1_cfg.mappings.len());
+        assert_eq!(1, tpdo1_cfg.mappings.len());
         assert_eq!(0x2000, tpdo1_cfg.mappings[0].index);
         assert_eq!(1, tpdo1_cfg.mappings[0].sub);
         assert_eq!(32, tpdo1_cfg.mappings[0].size);
-        assert_eq!(0x300C, tpdo1_cfg.mappings[1].index);
-        assert_eq!(11, tpdo1_cfg.mappings[1].sub);
-        assert_eq!(24, tpdo1_cfg.mappings[1].size);
 
         let rpdo0_cfg = client.read_rpdo_config(0).await.unwrap();
         assert_eq!(true, rpdo0_cfg.enabled);

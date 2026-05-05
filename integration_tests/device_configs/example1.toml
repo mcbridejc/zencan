@@ -19,7 +19,6 @@ add_node_id = true
 transmission_type = 254
 mappings = [
     { index=0x2000, sub=1, size=32 },
-    { index=0x300C, sub=11, size=24 },
 ]
 
 [pdos.rpdo.0]
