@@ -21,6 +21,7 @@ serde = { workspace = true, optional = true }
 snafu.workspace = true
 tokio = { version = "1.47.1", features = ["net"], optional = true }
 toml = { workspace = true, optional = true }
+arbitrary-int.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 socketcan = { workspace = true, optional = true }

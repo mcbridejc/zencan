@@ -26,7 +26,6 @@ futures.workspace = true
 log = { version = "0.4", optional = true }
 static_cell = "2.1.1"
 portable-atomic = "1.11.1"
-arbitrary-int.workspace = true
 
 [features]
 default = ["log", "std"]

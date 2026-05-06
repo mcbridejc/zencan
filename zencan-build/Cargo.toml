@@ -18,7 +18,6 @@ proc-macro2 = "1.0"
 quote = "1.0"
 snafu = "0.8"
 syn = "2.0"
-arbitrary-int.workspace = true
 
 [dev-dependencies]
 assertables = "9.8.0"

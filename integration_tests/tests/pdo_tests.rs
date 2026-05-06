@@ -3,17 +3,17 @@
 
 use std::time::Duration;
 
-use arbitrary_int::{i24, u24};
 use integration_tests::{object_dict1, prelude::*};
 use serial_test::serial;
 use tokio::time::timeout;
 use zencan_client::nmt_master::NmtMaster;
 use zencan_common::{
+    i24,
     messages::{CanId, CanMessage, SyncObject},
     node_configuration::PdoConfig,
     pdo::PdoMapping,
     traits::{AsyncCanReceiver, AsyncCanSender},
-    NodeId,
+    u24, NodeId,
 };
 use zencan_node::object_dict::ObjectAccess as _;
 
