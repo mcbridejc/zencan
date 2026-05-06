@@ -821,7 +821,6 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
         use zencan_node::common::sdo::AbortCode;
         #[allow(unused_imports)]
         use zencan_node::object_dict::{
-            u24, i24,
             CallbackObject,
             CallbackSubObject,
             ObjectFlags,
@@ -836,7 +835,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             NullTermByteField,
         };
         #[allow(unused_imports)]
-        use zencan_node::common::{TimeOfDay, TimeDifference};
+        use zencan_node::common::{i24, u24, TimeOfDay, TimeDifference};
         #[allow(unused_imports)]
         use zencan_node::SDO_BUFFER_SIZE;
         #[allow(unused_imports)]

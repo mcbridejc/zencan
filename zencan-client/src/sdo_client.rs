@@ -1,16 +1,16 @@
 use std::time::Duration;
 
-use arbitrary_int::{i24, u24};
 use snafu::Snafu;
 use zencan_common::{
     constants::{object_ids, values::SAVE_CMD},
+    i24,
     lss::LssIdentity,
     messages::CanId,
     node_configuration::PdoConfig,
     pdo::PdoMapping,
     sdo::{AbortCode, BlockSegment, SdoRequest, SdoResponse},
     traits::{AsyncCanReceiver, AsyncCanSender, CanSendError as _},
-    CanMessage, TimeDifference, TimeOfDay,
+    u24, CanMessage, TimeDifference, TimeOfDay,
 };
 
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_millis(150);

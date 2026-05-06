@@ -22,6 +22,7 @@ snafu.workspace = true
 socketcan = { workspace = true, optional = true }
 tokio = { version = "1.47.1", features = ["net"], optional = true }
 toml = { workspace = true, optional = true }
+arbitrary-int.workspace = true
 
 [dev-dependencies]
 assertables = "9.8.0"

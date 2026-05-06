@@ -29,6 +29,7 @@ zencan-macro = { path = "zencan-macro", version = "0.0.1" }
 zencan-node = { path = "zencan-node", version = "0.0.3" }
 
 # External
+arbitrary-int = "2.1.1"
 crc16 = "0.4.0"
 critical-section = { version = "1.2.0", default-features = false }
 defmt = "1.0.1"
@@ -42,4 +43,3 @@ serde = { version = "1.0.219", features = ["derive"] }
 snafu = { version = "0.8.5", default-features = false }
 socketcan = { version = "3.5.0", features = ["tokio"] }
 toml = "0.8.20"
-arbitrary-int = "2.1.1"

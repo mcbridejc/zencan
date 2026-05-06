@@ -2,9 +2,7 @@
 
 use core::cell::UnsafeCell;
 
-use zencan_common::{sdo::AbortCode, AtomicCell, TimeDifference, TimeOfDay};
-
-pub use arbitrary_int::{i24, u24};
+use zencan_common::{i24, sdo::AbortCode, u24, AtomicCell, TimeDifference, TimeOfDay};
 
 /// Allow transparent byte level access to a sub object
 pub trait SubObjectAccess: Sync + Send {

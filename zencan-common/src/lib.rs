@@ -32,6 +32,7 @@ mod socketcan;
 #[cfg_attr(docsrs, doc(cfg(feature = "socketcan")))]
 pub use socketcan::open_socketcan;
 
+pub use arbitrary_int::{i24, u24};
 pub use messages::{CanError, CanId, CanMessage};
 pub use node_id::NodeId;
 pub use time_types::{TimeDifference, TimeOfDay};
