@@ -154,7 +154,7 @@ pub enum DataType {
     /// An unsigned 24-bit integer
     UInt24 = 0x16,
     /// An unsigned 64-bit integer
-    UInt64 = 0x1d,
+    UInt64 = 0x1b,
     /// A contained for an unrecognized data type value
     Other(u16),
 }
@@ -179,7 +179,7 @@ impl From<u16> for DataType {
             0x11 => Real64,
             0x15 => Int64,
             0x16 => UInt24,
-            0x1d => UInt64,
+            0x1b => UInt64,
             _ => Other(value),
         }
     }
