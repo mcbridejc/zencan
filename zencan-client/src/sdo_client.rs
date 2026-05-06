@@ -9,7 +9,7 @@ use zencan_common::{
     node_configuration::PdoConfig,
     pdo::PdoMapping,
     sdo::{AbortCode, BlockSegment, SdoRequest, SdoResponse},
-    traits::{AsyncCanReceiver, AsyncCanSender, CanSendError as _},
+    traits::{AsyncCanReceiver, AsyncCanSender, CanSendError as _, ReadSize},
     u24, CanMessage, TimeDifference, TimeOfDay,
 };
 
@@ -144,41 +144,7 @@ macro_rules! access_methods {
             #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server")]
             pub async fn [<upload_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
                 let data = self.upload(index, sub).await?;
-                if data.len() != size_of::<$type>() {
-                    return UnexpectedSizeSnafu.fail();
-                }
-                Ok($type::from_le_bytes(data.try_into().unwrap()))
-            }
-
-            #[doc = concat!("Write a ", stringify!($type), " sub object on the SDO server\n\n")]
-            #[doc = concat!("This is an alias for download_", stringify!($type), " for a more intuitive API")]
-            pub async fn [<write_ $type>](&mut self, index: u16, sub: u8, value: $type) -> Result<()> {
-                self.[<download_ $type>](index, sub, value).await
-            }
-
-            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server")]
-            pub async fn [<download_ $type>](&mut self, index: u16, sub: u8, value: $type) -> Result<()> {
-                let data = value.to_le_bytes();
-                self.download(index, sub, &data).await
-            }
-        }
-    };
-}
-
-macro_rules! access_methods_arbitrary {
-    ($type: ty) => {
-
-        paste! {
-            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server\n\n")]
-            #[doc = concat!("This is an alias for upload_", stringify!($type), " for a more intuitive API")]
-            pub async fn [<read_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
-                self.[<upload_ $type>](index, sub).await
-            }
-
-            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server")]
-            pub async fn [<upload_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
-                let data = self.upload(index, sub).await?;
-                if data.len() != ($type::BITS / 8) {
+                if data.len() != <$type as ReadSize>::READ_SIZE {
                     return UnexpectedSizeSnafu.fail();
                 }
                 Ok($type::from_le_bytes(data.try_into().unwrap()))
@@ -594,15 +560,14 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     access_methods!(f32);
     access_methods!(u64);
     access_methods!(u32);
+    access_methods!(u24);
     access_methods!(u16);
     access_methods!(u8);
     access_methods!(i64);
     access_methods!(i32);
+    access_methods!(i24);
     access_methods!(i16);
     access_methods!(i8);
-
-    access_methods_arbitrary!(u24);
-    access_methods_arbitrary!(i24);
 
     /// Write to a TimeOfDay object on the SDO server
     pub async fn download_time_of_day(

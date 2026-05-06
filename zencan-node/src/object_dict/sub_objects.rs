@@ -2,7 +2,9 @@
 
 use core::cell::UnsafeCell;
 
-use zencan_common::{i24, sdo::AbortCode, u24, AtomicCell, TimeDifference, TimeOfDay};
+use zencan_common::{
+    i24, sdo::AbortCode, traits::ReadSize, u24, AtomicCell, TimeDifference, TimeOfDay,
+};
 
 /// Allow transparent byte level access to a sub object
 pub trait SubObjectAccess: Sync + Send {
@@ -168,32 +170,6 @@ macro_rules! impl_scalar_field {
         }
     };
 }
-
-trait ReadSize {
-    const READ_SIZE: usize;
-}
-
-macro_rules! impl_read_size_builtin {
-    ($($rust_type:ty),+ $(,)?) => {
-        $(
-            impl ReadSize for $rust_type {
-                const READ_SIZE: usize = core::mem::size_of::<$rust_type>();
-            }
-        )+
-    };
-}
-impl_read_size_builtin!(bool, u8, u16, u32, u64, i8, i16, i32, i64, f32, f64);
-
-macro_rules! impl_read_size_arbitrary {
-    ($($rust_type:ty),+ $(,)?) => {
-        $(
-            impl ReadSize for $rust_type {
-                const READ_SIZE: usize = <$rust_type>::BITS.div_ceil(8);
-            }
-        )+
-    };
-}
-impl_read_size_arbitrary!(u24, i24);
 
 impl_scalar_field!(u8);
 impl_scalar_field!(u16);

@@ -55,29 +55,28 @@ fn get_sub_field_name(sub: &SubDefinition) -> Result<syn::Ident, CompileError> {
 }
 
 /// Get the struct attribute type used to store this type
-fn get_storage_type(data_type: DCDataType) -> (syn::Type, usize) {
+fn get_storage_type(data_type: DCDataType) -> syn::Type {
     match data_type {
-        DCDataType::Boolean => (syn::parse_quote!(ScalarField<bool>), 1),
-        DCDataType::Int8 => (syn::parse_quote!(ScalarField<i8>), 1),
-        DCDataType::Int16 => (syn::parse_quote!(ScalarField<i16>), 2),
-        DCDataType::Int24 => (syn::parse_quote!(ScalarField<i24>), 3),
-        DCDataType::Int32 => (syn::parse_quote!(ScalarField<i32>), 4),
-        DCDataType::Int64 => (syn::parse_quote!(ScalarField<i64>), 8),
-        DCDataType::UInt8 => (syn::parse_quote!(ScalarField<u8>), 1),
-        DCDataType::UInt16 => (syn::parse_quote!(ScalarField<u16>), 2),
-        DCDataType::UInt24 => (syn::parse_quote!(ScalarField<u24>), 3),
-        DCDataType::UInt32 => (syn::parse_quote!(ScalarField<u32>), 4),
-        DCDataType::UInt64 => (syn::parse_quote!(ScalarField<u64>), 8),
-        DCDataType::Real32 => (syn::parse_quote!(ScalarField<f32>), 4),
-        DCDataType::Real64 => (syn::parse_quote!(ScalarField<f64>), 8),
-        DCDataType::VisibleString(n) | DCDataType::UnicodeString(n) => (
-            syn::parse_str(&format!("NullTermByteField::<{}>", n)).unwrap(),
-            n,
-        ),
-        DCDataType::OctetString(n) => (syn::parse_str(&format!("ByteField::<{}>", n)).unwrap(), n),
-        DCDataType::TimeOfDay => (syn::parse_quote!(ScalarField<TimeOfDay>), 6),
-        DCDataType::TimeDifference => (syn::parse_quote!(ScalarField<TimeDifference>), 6),
-        DCDataType::Domain => (syn::parse_quote!(CallbackSubObject), 0),
+        DCDataType::Boolean => syn::parse_quote!(ScalarField<bool>),
+        DCDataType::Int8 => syn::parse_quote!(ScalarField<i8>),
+        DCDataType::Int16 => syn::parse_quote!(ScalarField<i16>),
+        DCDataType::Int24 => syn::parse_quote!(ScalarField<i24>),
+        DCDataType::Int32 => syn::parse_quote!(ScalarField<i32>),
+        DCDataType::Int64 => syn::parse_quote!(ScalarField<i64>),
+        DCDataType::UInt8 => syn::parse_quote!(ScalarField<u8>),
+        DCDataType::UInt16 => syn::parse_quote!(ScalarField<u16>),
+        DCDataType::UInt24 => syn::parse_quote!(ScalarField<u24>),
+        DCDataType::UInt32 => syn::parse_quote!(ScalarField<u32>),
+        DCDataType::UInt64 => syn::parse_quote!(ScalarField<u64>),
+        DCDataType::Real32 => syn::parse_quote!(ScalarField<f32>),
+        DCDataType::Real64 => syn::parse_quote!(ScalarField<f64>),
+        DCDataType::VisibleString(n) | DCDataType::UnicodeString(n) => {
+            syn::parse_str(&format!("NullTermByteField::<{}>", n)).unwrap()
+        }
+        DCDataType::OctetString(n) => syn::parse_str(&format!("ByteField::<{}>", n)).unwrap(),
+        DCDataType::TimeOfDay => syn::parse_quote!(ScalarField<TimeOfDay>),
+        DCDataType::TimeDifference => syn::parse_quote!(ScalarField<TimeDifference>),
+        DCDataType::Domain => syn::parse_quote!(CallbackSubObject),
     }
 }
 
@@ -203,7 +202,7 @@ fn generate_object_definition(obj: &ObjectDefinition) -> Result<TokenStream, Com
         Object::Record(def) => {
             for sub in &def.subs {
                 let field_name = get_sub_field_name(sub)?;
-                let (field_type, _) = get_storage_type(sub.data_type);
+                let field_type = get_storage_type(sub.data_type);
                 field_tokens.extend(quote! {
                     pub #field_name: #field_type,
                 });
@@ -212,7 +211,7 @@ fn generate_object_definition(obj: &ObjectDefinition) -> Result<TokenStream, Com
             }
         }
         Object::Array(def) => {
-            let (field_type, _) = get_storage_type(def.data_type);
+            let field_type = get_storage_type(def.data_type);
             let array_size = def.array_size;
             field_tokens.extend(quote! {
                 pub array: [#field_type; #array_size],
@@ -221,7 +220,7 @@ fn generate_object_definition(obj: &ObjectDefinition) -> Result<TokenStream, Com
             highest_sub_index = array_size as u8;
         }
         Object::Var(def) => {
-            let (field_type, _) = get_storage_type(def.data_type);
+            let field_type = get_storage_type(def.data_type);
             field_tokens.extend(quote! {
                 pub value: #field_type,
             });
