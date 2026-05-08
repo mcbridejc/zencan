@@ -2,6 +2,10 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-cli crate.
 
+## v0.0.4 - 2026-05-08
+
+- Add SYNC send support to BusManager (thanks to @SebKuzminsky)
+
 ## v0.0.3 - 2026-01-20
 
 ### Changed

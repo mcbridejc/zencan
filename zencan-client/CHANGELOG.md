@@ -2,9 +2,18 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-client crate.
 
-## Unreleased
+## v0.0.4 - 2026-05-08
 
-## v0.0.3 - 2025-01-20
+### Added
+
+- Support for i24 and u24 data types (thanks to @rohel1)
+
+### Changed
+
+- Make socketcan optional to allow building on mac and windows (thanks to @Carbohydrate-42)
+- Add `sync` command to send a SYNC object (thanks to @SebKuzminsky)
+
+## v0.0.3 - 2026-01-20
 
 ### Added
 
