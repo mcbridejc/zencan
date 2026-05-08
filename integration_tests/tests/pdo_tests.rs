@@ -58,7 +58,8 @@ async fn test_rpdo_assignment() {
         let readback_cob_id_word = client.upload_u32(0x1400, 1).await.unwrap();
         assert_eq!(cob_id_word, readback_cob_id_word);
 
-        // Check initial values of RPDO mappings
+        // Check initial values of RPDO0 mappings
+        // These are set to 0x2000sub2 and 0x300Csub12 by default in example1.toml
         assert_eq!(2, client.upload_u8(0x1600, 0).await.unwrap());
         let default_mapping_entry_1: u32 = (0x2000 << 16) | (2 << 8) | 32;
         let default_mapping_entry_2: u32 = (0x300C << 16) | (12 << 8) | 24;
@@ -72,7 +73,7 @@ async fn test_rpdo_assignment() {
         );
         assert_eq!(u24::new(0), client.upload_u24(0x300C, 12).await.unwrap());
 
-        // Set RPDO1 to map to object 0x2000, subindex 1, length 32 bits
+        // Modify RPDO0 to map to object 0x2000, subindex 1, length 32 bits
         let mapping_entry: u32 = (0x2000 << 16) | (1 << 8) | 32;
         client.download_u32(0x1600, 1, mapping_entry).await.unwrap();
         // // Set the number of valid mappings
@@ -82,11 +83,13 @@ async fn test_rpdo_assignment() {
         nmt.nmt_start(0).await.unwrap();
 
         // Now send a PDO message and it should update the mapped object
+        let mut pdo_data = [0u8; 8];
+        // First 4 bytes are 0x2000sub2
+        pdo_data[0..4].copy_from_slice(&500u32.to_le_bytes());
+        // Next 3 bytes are 0x300Csub12
+        pdo_data[4..7].copy_from_slice(&u24::new(0x010203).to_le_bytes());
         pdo_sender
-            .send(CanMessage::new(
-                CanId::Std(0x201),
-                &(0x01020300000000u64 + 500u64).to_le_bytes(),
-            ))
+            .send(CanMessage::new(CanId::Std(0x201), &pdo_data))
             .await
             .unwrap();
 
