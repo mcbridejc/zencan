@@ -76,7 +76,7 @@ async fn test_rpdo_assignment() {
         let mapping_entry: u32 = (0x2000 << 16) | (1 << 8) | 32;
         client.download_u32(0x1600, 1, mapping_entry).await.unwrap();
         // // Set the number of valid mappings
-        client.download_u8(0x1600, 0, 3).await.unwrap();
+        client.download_u8(0x1600, 0, 2).await.unwrap();
 
         // Put in operational mode
         nmt.nmt_start(0).await.unwrap();
