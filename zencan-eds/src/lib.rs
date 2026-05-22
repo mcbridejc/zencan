@@ -22,6 +22,7 @@ pub enum LoadError {
 pub struct ElectronicDataSheet {
     pub file_info: FileInfo,
     pub device_info: DeviceInfo,
+    pub dummy_usage: DummyUsage,
     pub mandatory_objects: Vec<Object>,
     pub optional_objects: Vec<Object>,
     pub manufacturer_objects: Vec<Object>,
@@ -68,6 +69,11 @@ pub struct DeviceInfo {
     pub lss_supported: bool,
     pub ng_slave: bool,
     pub ng_master: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DummyUsage {
+    pub values: HashMap<DataType, bool>,
 }
 
 fn str_to_access_type(s: &str) -> Result<AccessType, LoadError> {
@@ -343,9 +349,41 @@ impl ElectronicDataSheet {
             ng_master: di_cfg.get_bool("LSS_Supported").unwrap_or(false),
         };
 
+        let section = "DummyUsage";
+        let du_cfg = Section::from_map(map, section)?;
+        let mut dummy_usage = DummyUsage::default();
+        for (k, v) in du_cfg.map {
+            let suffix = match k.strip_prefix("Dummy") {
+                Some(value) => Ok(value),
+                None => EdsFormatSnafu {
+                    message: format!("Invalid field format '{}' in '{}'", k, section),
+                }
+                .fail(),
+            }?
+            .parse()
+            .unwrap_or(0);
+            let object_type = match DataType::try_from(suffix) {
+                Ok(value) => Ok(value),
+                Err(_) => EdsFormatSnafu {
+                    message: format!("Invalid field format '{}' in '{}'", k, section),
+                }
+                .fail(),
+            }?;
+
+            if let Some(v) = v {
+                let supported = v.parse::<u32>().context(ParseIntSnafu {
+                    message: format!("Parsing '{}' in section '{}'", k, "DummyUsage"),
+                })? == 1;
+                dummy_usage.values.insert(object_type, supported);
+            } else {
+                dummy_usage.values.insert(object_type, false);
+            }
+        }
+
         Ok(ElectronicDataSheet {
             file_info,
             device_info,
+            dummy_usage,
             mandatory_objects: read_object_list(map, "MandatoryObjects")?,
             optional_objects: read_object_list(map, "OptionalObjects")?,
             manufacturer_objects: read_object_list(map, "ManufacturerObjects")?,
