@@ -2,7 +2,7 @@ use configparser::ini::Ini;
 use snafu::{ResultExt as _, Snafu};
 use std::{collections::HashMap, path::Path};
 
-use zencan_common::objects::{AccessType, DataType};
+use zencan_common::objects::{AccessType, DataType, ObjectCode};
 
 #[derive(Debug, Snafu)]
 pub enum LoadError {
@@ -70,30 +70,6 @@ pub struct DeviceInfo {
     pub ng_master: bool,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
-#[repr(u16)]
-pub enum ObjectType {
-    #[default]
-    Null = 0,
-    Var = 7,
-    Array = 8,
-    Record = 9,
-    Unknown(u16),
-}
-
-impl From<u16> for ObjectType {
-    fn from(value: u16) -> Self {
-        use ObjectType::*;
-        match value {
-            0 => Null,
-            7 => Var,
-            8 => Array,
-            9 => Record,
-            _ => Unknown(value),
-        }
-    }
-}
-
 fn str_to_access_type(s: &str) -> Result<AccessType, LoadError> {
     let s = s.to_lowercase();
     match s.as_str() {
@@ -112,7 +88,7 @@ fn str_to_access_type(s: &str) -> Result<AccessType, LoadError> {
 pub struct Object {
     pub parameter_name: String,
     pub object_number: u32,
-    pub object_type: ObjectType,
+    pub object_code: ObjectCode,
     pub subs: HashMap<u8, SubObject>,
     pub sub_number: u8,
 }
@@ -269,14 +245,21 @@ fn read_object_list(
         let obj_section = Section::from_map(map, &format!("{:x}", obj_num))?;
         let sub_number = obj_section.get_u32_hex_opt("SubNumber")?.unwrap_or(0) as u8;
         let parameter_name = obj_section.get_string("ParameterName")?;
-        let object_type = ObjectType::from(obj_section.get_u32_hex("ObjectType")? as u16);
+        let object_code_u8 = obj_section.get_u32_hex("ObjectType")? as u8;
+        let object_code = match ObjectCode::try_from(object_code_u8) {
+            Ok(value) => Ok(value),
+            Err(_) => EdsFormatSnafu {
+                message: format!("Invalid object code '{}' in '{}'", object_code_u8, obj_num),
+            }
+            .fail(),
+        }?;
         if sub_number == 0 {
             // There are no explicit subobjects; the top level config dict describes both the
             // top-level object and sub-object 0
             let object = Object {
                 object_number: obj_num,
                 parameter_name,
-                object_type,
+                object_code,
                 sub_number,
                 subs: HashMap::from([(0, get_sub_object(&obj_section)?)]),
             };
@@ -286,7 +269,7 @@ fn read_object_list(
             let mut object = Object {
                 object_number: obj_num,
                 parameter_name,
-                object_type,
+                object_code,
                 sub_number,
                 subs: HashMap::new(),
             };
