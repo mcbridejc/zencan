@@ -30,8 +30,8 @@ pub struct ElectronicDataSheet {
 #[derive(Clone, Debug, Default)]
 pub struct FileInfo {
     pub file_name: String,
-    pub file_version: u32,
-    pub file_revision: u32,
+    pub file_version: u8,
+    pub file_revision: u8,
     pub eds_version: String,
     pub description: String,
     pub creation_time: String,
@@ -60,8 +60,8 @@ pub struct DeviceInfo {
     pub simple_boot_up_master: bool,
     pub simple_boot_up_slave: bool,
     pub granularity: u32,
-    pub rpdo_count: u32,
-    pub tpdo_count: u32,
+    pub rpdo_count: u16,
+    pub tpdo_count: u16,
     pub lss_supported: bool,
     pub ng_slave: bool,
     pub ng_master: bool,
@@ -111,7 +111,7 @@ pub struct Object {
     pub object_number: u32,
     pub object_type: ObjectType,
     pub subs: HashMap<u8, SubObject>,
-    pub sub_number: u16,
+    pub sub_number: u8,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -264,7 +264,7 @@ fn read_object_list(
     for i in 1..num_objects + 1 {
         let obj_num = top_section.get_u32_hex(&i.to_string())?;
         let obj_section = Section::from_map(map, &format!("{:x}", obj_num))?;
-        let sub_number = obj_section.get_u32_hex_opt("SubNumber")?.unwrap_or(0) as u16;
+        let sub_number = obj_section.get_u32_hex_opt("SubNumber")?.unwrap_or(0) as u8;
         let parameter_name = obj_section.get_string("ParameterName")?;
         let object_type = ObjectType::from(obj_section.get_u32_hex("ObjectType")? as u16);
         if sub_number == 0 {
@@ -317,8 +317,8 @@ impl ElectronicDataSheet {
 
         let file_info = FileInfo {
             file_name: file_info_cfg.get_string("FileName")?,
-            file_version: file_info_cfg.get_u32("FileVersion")?,
-            file_revision: file_info_cfg.get_u32("FileRevision")?,
+            file_version: file_info_cfg.get_u32("FileVersion")? as u8,
+            file_revision: file_info_cfg.get_u32("FileRevision")? as u8,
             eds_version: file_info_cfg.get_string("EDSVersion")?,
             description: file_info_cfg.get_string("Description")?,
             creation_time: file_info_cfg.get_string("CreationTime")?,
@@ -347,8 +347,8 @@ impl ElectronicDataSheet {
             simple_boot_up_master: di_cfg.get_bool("SimpleBootUpMaster")?,
             simple_boot_up_slave: di_cfg.get_bool("SimpleBootUpSlave")?,
             granularity: di_cfg.get_u32("Granularity")?,
-            rpdo_count: di_cfg.get_u32("NrOfRXPDO")?,
-            tpdo_count: di_cfg.get_u32("NrOfTXPDO")?,
+            rpdo_count: di_cfg.get_u32("NrOfRXPDO")? as u16,
+            tpdo_count: di_cfg.get_u32("NrOfTXPDO")? as u16,
             lss_supported: di_cfg.get_bool("LSS_Supported")?,
             ng_slave: di_cfg.get_bool("NG_Slave").unwrap_or(false),
             ng_master: di_cfg.get_bool("LSS_Supported").unwrap_or(false),
