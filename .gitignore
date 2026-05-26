@@ -6,5 +6,21 @@ Cargo.lock
 # IDE project dirs
 .idea/
 
+# AI assistant local state and caches
+.claude/
+.codex/
+.continue/
+.cursor/
+.gemini/
+.kilocode/
+.opencode/
+.qwen/
+.roo/
+.windsurf/
+.aider.chat.history.md
+.aider.input.history
+.aider.tags.cache.v*
+CLAUDE.local.md
+
 # Syncthing files
 .stfolder
