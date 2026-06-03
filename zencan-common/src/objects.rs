@@ -68,6 +68,22 @@ pub enum AccessType {
     Const,
 }
 
+impl TryFrom<&str> for AccessType {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        use AccessType::*;
+        let value = value.to_lowercase();
+        match value.as_str() {
+            "ro" => Ok(Ro),
+            "wo" => Ok(Wo),
+            "rw" => Ok(Rw),
+            "const" => Ok(Const),
+            _ => Err(()),
+        }
+    }
+}
+
 impl AccessType {
     /// Returns true if an object with this access type can be read
     pub fn is_readable(&self) -> bool {
