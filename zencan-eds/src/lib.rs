@@ -1,6 +1,6 @@
 use ini::{Ini, Properties};
 use snafu::{ResultExt as _, Snafu};
-use std::{collections::HashMap, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
 use zencan_common::objects::{AccessType, DataType, ObjectCode};
 
@@ -73,7 +73,7 @@ pub struct DeviceInfo {
 
 #[derive(Clone, Debug, Default)]
 pub struct DummyUsage {
-    pub values: HashMap<DataType, bool>,
+    pub values: BTreeMap<DataType, bool>,
 }
 
 fn str_to_access_type(s: &str) -> Result<AccessType, LoadError> {
@@ -95,7 +95,7 @@ pub struct Object {
     pub parameter_name: String,
     pub object_number: u32,
     pub object_code: ObjectCode,
-    pub subs: HashMap<u8, SubObject>,
+    pub subs: BTreeMap<u8, SubObject>,
     pub sub_number: u8,
 }
 
@@ -280,7 +280,7 @@ fn read_object_list(ini: &Ini, name: &str) -> Result<Vec<Object>, LoadError> {
                 parameter_name,
                 object_code,
                 sub_number,
-                subs: HashMap::from([(0, get_sub_object(&obj_section)?)]),
+                subs: BTreeMap::from([(0, get_sub_object(&obj_section)?)]),
             };
             list.push(object);
         } else {
@@ -290,7 +290,7 @@ fn read_object_list(ini: &Ini, name: &str) -> Result<Vec<Object>, LoadError> {
                 parameter_name,
                 object_code,
                 sub_number,
-                subs: HashMap::new(),
+                subs: BTreeMap::new(),
             };
             for sub_num in 0..255 {
                 let sub_section =

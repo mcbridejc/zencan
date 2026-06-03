@@ -112,7 +112,7 @@ impl PdoMappable {
 }
 
 /// Indicate the type of data stored in an object
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u16)]
 pub enum DataType {
     /// A true false value, encoded as a single byte, with 0 for false and 1 for true
