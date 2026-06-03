@@ -23,6 +23,7 @@ pub struct ElectronicDataSheet {
     pub file_info: FileInfo,
     pub device_info: DeviceInfo,
     pub dummy_usage: DummyUsage,
+    pub comments: Comments,
     pub mandatory_objects: Vec<Object>,
     pub optional_objects: Vec<Object>,
     pub manufacturer_objects: Vec<Object>,
@@ -74,6 +75,11 @@ pub struct DeviceInfo {
 #[derive(Clone, Debug, Default)]
 pub struct DummyUsage {
     pub values: BTreeMap<DataType, bool>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Comments {
+    pub lines: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -259,10 +265,12 @@ impl ElectronicDataSheet {
             ElectronicDataSheet::parse_device_info(&Section::from_name(&ini, "DeviceInfo")?)?;
         let dummy_usage =
             ElectronicDataSheet::parse_dummy_usage(&Section::from_name(&ini, "DummyUsage")?)?;
+        let comments = ElectronicDataSheet::parse_comments(&Section::from_name(&ini, "Comments")?)?;
         Ok(ElectronicDataSheet {
             file_info,
             device_info,
             dummy_usage,
+            comments,
             mandatory_objects: ElectronicDataSheet::parse_objects(&ini, "MandatoryObjects")?,
             optional_objects: ElectronicDataSheet::parse_objects(&ini, "OptionalObjects")?,
             manufacturer_objects: ElectronicDataSheet::parse_objects(&ini, "ManufacturerObjects")?,
@@ -331,6 +339,19 @@ impl ElectronicDataSheet {
             dummy_usage.values.insert(DataType::from(index), supported);
         }
         Ok(dummy_usage)
+    }
+
+    fn parse_comments(section: &Section) -> Result<Comments, LoadError> {
+        let line_count = section.get_u32("Lines")? as u16;
+        let mut comments = Comments {
+            ..Default::default()
+        };
+        for line_number in 1..line_count + 1 {
+            comments
+                .lines
+                .push(section.get_string(&format!("Line{}", line_number))?);
+        }
+        Ok(comments)
     }
 
     fn parse_objects(ini: &Ini, name: &str) -> Result<Vec<Object>, LoadError> {
