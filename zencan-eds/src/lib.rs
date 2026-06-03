@@ -565,19 +565,46 @@ impl ElectronicDataSheet {
 
 #[cfg(test)]
 mod tests {
-    // use std::io::Write;
+    use super::*;
+    use std::io::Write;
 
-    // use super::*;
+    #[test]
+    fn test_load() {
+        const EDS: &[u8] = include_bytes!("example.eds");
 
-    // #[test]
-    // fn test_load() {
-    //     const EDS: &[u8] = include_bytes!("example.eds");
+        let mut eds_file = tempfile::NamedTempFile::new().unwrap();
+        eds_file.write_all(EDS).unwrap();
 
-    //     let mut eds_file = tempfile::NamedTempFile::new().unwrap();
-    //     eds_file.write_all(EDS).unwrap();
+        let eds = ElectronicDataSheet::from_file(eds_file.path()).unwrap();
+        assert!(eds.manufacturer_objects.is_empty());
+        println!("{:#?}", eds);
+    }
 
-    //     let eds = ElectronicDataSheet::load(eds_file.path()).unwrap();
-    //     println!("Eds: {:?}", eds);
-    //     assert!(false, "EDS loaded; just failing to read the output");
-    // }
+    #[test]
+    fn test_var() {
+        let buf = "
+[1002]
+ParameterName=test
+DataType=0x0001
+AccessType=ro
+";
+        let ini = Ini::load_from_str(buf).unwrap();
+        let section = Section::from_name(&ini, "1002").unwrap();
+
+        let var = ElectronicDataSheet::parse_var(&section);
+        assert!(var.is_ok());
+        let var = var.unwrap();
+        assert_eq!(var.object_number, 0x1002);
+        assert_eq!(var.parameter_name, "test");
+        assert_eq!(var.object_code, ObjectCode::Var);
+        let sub0 = var.subs.get(&0).unwrap();
+        assert_eq!(sub0.data_type, DataType::Boolean);
+        assert_eq!(sub0.access_type, AccessType::Ro);
+
+        let arr = ElectronicDataSheet::parse_array(&ini, &section);
+        assert!(arr.is_err());
+
+        let rec = ElectronicDataSheet::parse_record(&ini, &section);
+        assert!(rec.is_err());
+    }
 }
