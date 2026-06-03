@@ -103,6 +103,106 @@ pub struct SubObject {
     pub pdo_mapping: Option<bool>,
 }
 
+impl Object {
+    pub fn new(
+        parameter_name: String,
+        object_number: u16,
+        object_code: ObjectCode,
+        sub_number: u8,
+        subs: BTreeMap<u8, SubObject>,
+    ) -> Result<Self, LoadError> {
+        use ObjectCode::*;
+        match object_code {
+            Null => panic!("Null objects are not supported"),
+            Domain | Var => Ok(Object {
+                parameter_name,
+                object_number,
+                object_code,
+                sub_number,
+                subs,
+            }),
+            DefType | DefStruct => todo!("not yet implemented"),
+            Array | Record => {
+                if subs.len() != sub_number as usize {
+                    return EdsFormatSnafu {
+                        message: format!(
+                            "Invalid number of subojects in '[{:X}]': expected {}, found {}",
+                            object_number,
+                            sub_number,
+                            subs.len()
+                        ),
+                    }
+                    .fail();
+                }
+
+                let (first_subindex, first_subobj) = subs.first_key_value().ok_or(
+                    EdsFormatSnafu {
+                        message: format!(
+                            "Unable to extract first subobject of '[{:X}]'",
+                            object_number
+                        ),
+                    }
+                    .build(),
+                )?;
+                if *first_subindex != 0 {
+                    return EdsFormatSnafu {
+                        message: format!(
+                            "Invalid subindex for first subobject of '[{:X}]': expected 0, found {}",
+                            object_number, first_subindex
+                        ),
+                    }
+                    .fail();
+                }
+                let highest_subindex = first_subobj
+                    .default_value
+                    .clone()
+                    .ok_or(
+                        EdsFormatSnafu {
+                            message: format!(
+                                "Missing required field 'DefaultValue' for first subobject of '[{:X}]'",
+                                object_number
+                            ),
+                        }
+                        .build(),
+                    )?
+                    .parse_hex()
+                    .context(ParseIntSnafu {
+                        message: format!(
+                            "Invalid default value for subobject {} of '[{:X}]'",
+                            first_subindex, object_number
+                        ),
+                    })? as u8;
+
+                let (last_subindex, _) = subs.last_key_value().ok_or(
+                    EdsFormatSnafu {
+                        message: format!(
+                            "Unable to extract last subobject of '[{:X}]'",
+                            object_number
+                        ),
+                    }
+                    .build(),
+                )?;
+                if *last_subindex != highest_subindex {
+                    return EdsFormatSnafu {
+                        message: format!(
+                            "Invalid subindex for last subobject of '[{:X}]': expected highest subindex {}, found {}",
+                            object_number, highest_subindex, last_subindex
+                        ),
+                    }
+                    .fail();
+                }
+                Ok(Object {
+                    parameter_name,
+                    object_number,
+                    object_code,
+                    sub_number,
+                    subs,
+                })
+            }
+        }
+    }
+}
+
 struct Section<'a> {
     properties: &'a Properties,
     name: String,
@@ -427,12 +527,13 @@ impl ElectronicDataSheet {
             .context(ParseIntSnafu {
                 message: "".to_string(),
             })?;
-        Ok(Object {
-            parameter_name: section.get_string("ParameterName")?,
+        Ok(Object::new(
+            section.get_string("ParameterName")?,
             object_number,
-            object_code: ObjectCode::Domain,
-            ..Default::default()
-        })
+            ObjectCode::Domain,
+            0,
+            BTreeMap::new(),
+        ))?
     }
 
     fn parse_var(section: &Section) -> Result<Object, LoadError> {
@@ -443,13 +544,13 @@ impl ElectronicDataSheet {
             .context(ParseIntSnafu {
                 message: "".to_string(),
             })?;
-        Ok(Object {
-            parameter_name: section.get_string("ParameterName")?,
+        Ok(Object::new(
+            section.get_string("ParameterName")?,
             object_number,
-            object_code: ObjectCode::Var,
-            sub_number: 0,
-            subs: BTreeMap::from([(0, ElectronicDataSheet::parse_subobject(section)?)]),
-        })
+            ObjectCode::Var,
+            0,
+            BTreeMap::from([(0, ElectronicDataSheet::parse_subobject(section)?)]),
+        ))?
     }
 
     fn parse_array(ini: &Ini, section: &Section) -> Result<Object, LoadError> {
@@ -486,13 +587,13 @@ impl ElectronicDataSheet {
                         );
                     }
                 }
-                Ok(Object {
-                    parameter_name: section.get_string("ParameterName")?,
+                Ok(Object::new(
+                    section.get_string("ParameterName")?,
                     object_number,
-                    object_code: ObjectCode::Array,
+                    ObjectCode::Array,
                     sub_number,
                     subs,
-                })
+                ))?
             }
         }
     }
@@ -528,13 +629,13 @@ impl ElectronicDataSheet {
                         );
                     }
                 }
-                Ok(Object {
-                    parameter_name: section.get_string("ParameterName")?,
+                Ok(Object::new(
+                    section.get_string("ParameterName")?,
                     object_number,
-                    object_code: ObjectCode::Record,
+                    ObjectCode::Record,
                     sub_number,
                     subs,
-                })
+                ))?
             }
         }
     }
