@@ -122,7 +122,18 @@ trait ParseHex {
 impl<T: AsRef<str>> ParseHex for T {
     fn parse_hex(&self) -> Result<u32, std::num::ParseIntError> {
         let s = self.as_ref();
-        u32::from_str_radix(s.strip_prefix("0x").unwrap(), 16)
+        u32::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16)
+    }
+}
+
+trait ParseOct {
+    fn parse_oct(&self) -> Result<u32, std::num::ParseIntError>;
+}
+
+impl<T: AsRef<str>> ParseOct for T {
+    fn parse_oct(&self) -> Result<u32, std::num::ParseIntError> {
+        let s = self.as_ref();
+        u32::from_str_radix(s.strip_prefix("0").unwrap_or(s), 8)
     }
 }
 
@@ -140,91 +151,102 @@ impl<'a> Section<'a> {
         })
     }
 
-    pub fn get_string(&self, field: &str) -> Result<String, LoadError> {
-        match self.properties.get(field.to_lowercase()) {
-            Some(value) => Ok(value.to_string()),
+    /// Read a field as a String
+    ///
+    /// Get the string stored in the field.
+    /// Returns Ok(None) if the field is empty.
+    /// Returns an error if the field is missing.
+    pub fn get_string_opt(&self, field: &str) -> Result<Option<String>, LoadError> {
+        match self.properties.get(field) {
+            Some(v) => {
+                if v.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(v.to_string()))
+                }
+            }
             None => EdsFormatSnafu {
                 message: format!("Missing required field '{}' in '{}'", field, self.name),
             }
             .fail(),
+        }
+    }
+
+    /// Read a field as a String
+    ///
+    /// Get the string stored in the field (empty string when empty field).
+    /// Returns an error if the field is missing.
+    pub fn get_string(&self, field: &str) -> Result<String, LoadError> {
+        match self.get_string_opt(field)? {
+            Some(v) => Ok(v),
+            None => Ok("".to_string()),
         }
     }
 
     /// Read a field as an unsigned int
     ///
-    /// The field must contain a valid integer value or an error is returned
-    pub fn get_u32(&self, field: &str) -> Result<u32, LoadError> {
-        match self.properties.get(field.to_lowercase()) {
-            Some(value) => Ok(value.to_string()),
-            None => EdsFormatSnafu {
-                message: format!("Missing required field '{}' in '{}'", field, self.name),
-            }
-            .fail(),
-        }?
-        .parse()
-        .context(ParseIntSnafu {
-            message: format!("Parsing '{}' in section '{}'", field, self.name),
-        })
-    }
-
-    pub fn get_u32_hex(&self, field: &str) -> Result<u32, LoadError> {
-        match self.properties.get(field.to_lowercase()) {
-            Some(value) => Ok(value.to_string()),
-            None => EdsFormatSnafu {
-                message: format!("Missing required field '{}' in '{}'", field, self.name),
-            }
-            .fail(),
-        }?
-        .parse_hex()
-        .context(ParseIntSnafu {
-            message: format!("Parsing '{}' in section '{}'", field, self.name),
-        })
-    }
-
-    pub fn get_u32_hex_opt(&self, field: &str) -> Result<Option<u32>, LoadError> {
-        let str_value = match self.properties.get(field.to_lowercase()) {
-            Some(value) => Ok(value),
-            None => return Ok(None),
-        }?;
-
-        if str_value.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(str_value.parse_hex().context(ParseIntSnafu {
-            message: format!("Parsing '{}' in section '{}'", field, self.name),
-        })?))
-    }
-
-    /// Read an optional field as an unsigned int
-    ///
-    /// If the field is empty, None is returned. If the field has a non-empty value that is not a
-    /// valid integer, it will return a LoadError::ParseIntError.
+    /// Get the integer value (from decimal, hexadecimal or octal format) stored in a field.
+    /// Returns Ok(None) if the field is empty.
+    /// Returns an error if the field is missing or if the value can't be parsed to a integer.
     pub fn get_u32_opt(&self, field: &str) -> Result<Option<u32>, LoadError> {
-        let str_value = match self.properties.get(field.to_lowercase()) {
-            Some(value) => Ok(value),
-            None => return Ok(None),
-        }?;
-
-        if str_value.is_empty() {
-            return Ok(None);
+        match self.get_string_opt(field)? {
+            Some(v) => {
+                let parse_err = ParseIntSnafu {
+                    message: format!(
+                        "Parsing '{}' from field '{}' in section '{}'",
+                        v, field, self.name
+                    ),
+                };
+                if v.starts_with("0x") {
+                    v.parse_hex().map(|i| Some(i)).context(parse_err)
+                } else if v.starts_with("0") && v != "0" {
+                    v.parse_oct().map(|i| Some(i)).context(parse_err)
+                } else {
+                    v.parse::<u32>().map(|i| Some(i)).context(parse_err)
+                }
+            }
+            None => Ok(None),
         }
-
-        Ok(Some(str_value.parse().context(ParseIntSnafu {
-            message: format!("Parsing '{}' in section '{}'", field, self.name),
-        })?))
     }
 
+    /// Read a field as an unsigned int
+    ///
+    /// Get the integer value (from decimal, hexadecimal or octal format) stored in a field.
+    /// Returns an error if the field is missing or empty, or if the value can't be parsed to a integer.
+    pub fn get_u32(&self, field: &str) -> Result<u32, LoadError> {
+        self.get_u32_opt(field)?.ok_or(
+            EdsFormatSnafu {
+                message: format!("Empty field '{}' in '{}'", field, self.name),
+            }
+            .build(),
+        )
+    }
+
+    /// Read a field as a boolean
+    ///
+    /// Get the boolean value stored in the field.
+    /// Returns Ok(None) if the field is empty.
+    /// Returns an error if the field is missing or if the value can't be parsed to a boolean.
+    pub fn _get_bool_opt(&self, field: &str) -> Result<Option<bool>, LoadError> {
+        // Boolean is stored as 0 or 1
+        // Read as u32, and cast
+        self.get_u32_opt(field).map(|v| v.map(|i| i == 1))
+    }
+
+    /// Read a field as a boolean
+    ///
+    /// Get the boolean value stored in the field.
+    /// Returns an error if the field is missing or empty, or if the value can't be parsed to a boolean.
     pub fn get_bool(&self, field: &str) -> Result<bool, LoadError> {
         // Boolean is stored as 0 or 1
         // Read as u32, and cast
-        Ok(self.get_u32(field)? == 1)
+        self.get_u32(field).map(|i| i == 1)
     }
 }
 
 fn get_sub_object(section: &Section) -> Result<SubObject, LoadError> {
     Ok(SubObject {
-        data_type: DataType::from(section.get_u32_hex("DataType")? as u16),
+        data_type: DataType::from(section.get_u32("DataType")? as u16),
         access_type: str_to_access_type(&section.get_string("AccessType")?)?,
         low_limit: section.get_string("LowLimit").ok(),
         high_limit: section.get_string("HighLimit").ok(),
@@ -238,11 +260,11 @@ fn read_object_list(ini: &Ini, name: &str) -> Result<Vec<Object>, LoadError> {
     let obj_section = Section::from_name(&ini, name)?;
     let num_objects = obj_section.get_u32("SupportedObjects")?;
     for i in 1..num_objects + 1 {
-        let obj_num = obj_section.get_u32_hex(&i.to_string())?;
+        let obj_num = obj_section.get_u32(&i.to_string())?;
         let obj_section = Section::from_name(&ini, &format!("{:x}", obj_num))?;
-        let sub_number = obj_section.get_u32_hex_opt("SubNumber")?.unwrap_or(0) as u8;
+        let sub_number = obj_section.get_u32_opt("SubNumber")?.unwrap_or(0) as u8;
         let parameter_name = obj_section.get_string("ParameterName")?;
-        let object_code_u8 = obj_section.get_u32_hex("ObjectType")? as u8;
+        let object_code_u8 = obj_section.get_u32("ObjectType")? as u8;
         let object_code = match ObjectCode::try_from(object_code_u8) {
             Ok(value) => Ok(value),
             Err(_) => EdsFormatSnafu {
