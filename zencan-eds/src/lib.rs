@@ -68,8 +68,6 @@ pub struct DeviceInfo {
     pub rpdo_count: u16,
     pub tpdo_count: u16,
     pub lss_supported: bool,
-    pub ng_slave: bool,
-    pub ng_master: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -417,8 +415,6 @@ impl ElectronicDataSheet {
             rpdo_count: section.get_u32("NrOfRXPDO")? as u16,
             tpdo_count: section.get_u32("NrOfTXPDO")? as u16,
             lss_supported: section.get_bool("LSS_Supported")?,
-            ng_slave: section.get_bool("NG_Slave")?,
-            ng_master: section.get_bool("LSS_Supported")?,
         })
     }
 

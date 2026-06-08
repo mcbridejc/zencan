@@ -36,7 +36,6 @@ GroupMessaging=0
 NrOfRXPDO=4
 NrOfTXPDO=4
 LSS_Supported=0
-NG_Slave=0
 
 [DummyUsage]
 Dummy0001=0
