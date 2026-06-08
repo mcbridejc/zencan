@@ -357,18 +357,15 @@ impl ElectronicDataSheet {
     }
 
     fn from_ini(ini: Ini) -> Result<ElectronicDataSheet, LoadError> {
-        let file_info =
-            ElectronicDataSheet::parse_file_info(&Section::from_name(&ini, "FileInfo")?)?;
-        let device_info =
-            ElectronicDataSheet::parse_device_info(&Section::from_name(&ini, "DeviceInfo")?)?;
-        let dummy_usage =
-            ElectronicDataSheet::parse_dummy_usage(&Section::from_name(&ini, "DummyUsage")?)?;
-        let comments = ElectronicDataSheet::parse_comments(&Section::from_name(&ini, "Comments")?)?;
+        let file_info_section = Section::from_name(&ini, "FileInfo")?;
+        let device_info_section = Section::from_name(&ini, "DeviceInfo")?;
+        let dummy_usage_section = Section::from_name(&ini, "DummyUsage")?;
+        let comments_section = Section::from_name(&ini, "Comments")?;
         Ok(ElectronicDataSheet {
-            file_info,
-            device_info,
-            dummy_usage,
-            comments,
+            file_info: ElectronicDataSheet::parse_file_info(&file_info_section)?,
+            device_info: ElectronicDataSheet::parse_device_info(&device_info_section)?,
+            dummy_usage: ElectronicDataSheet::parse_dummy_usage(&dummy_usage_section)?,
+            comments: ElectronicDataSheet::parse_comments(&comments_section)?,
             mandatory_objects: ElectronicDataSheet::parse_objects(&ini, "MandatoryObjects")?,
             optional_objects: ElectronicDataSheet::parse_objects(&ini, "OptionalObjects")?,
             manufacturer_objects: ElectronicDataSheet::parse_objects(&ini, "ManufacturerObjects")?,
