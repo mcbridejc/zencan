@@ -643,15 +643,16 @@ impl ElectronicDataSheet {
     fn parse_subobject(section: &Section) -> Result<SubObject, LoadError> {
         let access_type_field = "AccessType";
         let access_type_raw = section.get_string(access_type_field)?;
-        let access_type = AccessType::try_from(access_type_raw.as_ref()).map_err(|_| {
-            EdsFormatSnafu {
-                message: format!(
-                    "Invalid value '{}' for field '{}' in '{}'",
-                    access_type_raw, access_type_field, section.name
-                ),
-            }
-            .build()
-        })?;
+        let access_type =
+            AccessType::try_from(access_type_raw.to_lowercase().as_ref()).map_err(|_| {
+                EdsFormatSnafu {
+                    message: format!(
+                        "Invalid value '{}' for field '{}' in '{}'",
+                        access_type_raw, access_type_field, section.name
+                    ),
+                }
+                .build()
+            })?;
         Ok(SubObject {
             parameter_name: section.get_string("ParameterName")?,
             data_type: DataType::from(section.get_u32("DataType")? as u16),

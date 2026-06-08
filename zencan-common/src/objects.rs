@@ -71,10 +71,10 @@ pub enum AccessType {
 impl TryFrom<&str> for AccessType {
     type Error = ();
 
+    /// Attempts to create `AccessType` from lowercase str.
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         use AccessType::*;
-        let value = value.to_lowercase();
-        match value.as_str() {
+        match value {
             "ro" => Ok(Ro),
             "wo" => Ok(Wo),
             "rw" => Ok(Rw),
