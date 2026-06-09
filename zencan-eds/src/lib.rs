@@ -577,7 +577,7 @@ impl ElectronicDataSheet {
                             message: "".to_string(),
                         })?;
                 let mut subs = BTreeMap::new();
-                for subindex in 0..0xFF {
+                for subindex in 0..=0xff {
                     if let Ok(sub_section) =
                         Section::from_name(ini, &format!("{}sub{:X}", section.name, subindex))
                     {
@@ -616,7 +616,7 @@ impl ElectronicDataSheet {
                     .map(|i| i as u16)
                     .context(ParseIntSnafu { message: "" })?;
                 let mut subs = BTreeMap::new();
-                for subindex in 0..0xFF {
+                for subindex in 0..=0xff {
                     if let Ok(sub_section) =
                         Section::from_name(ini, &format!("{}sub{:X}", section.name, subindex))
                     {
