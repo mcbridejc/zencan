@@ -18,6 +18,7 @@ VendorNumber=
 ProductName=New Product
 ProductNumber=
 RevisionNumber=0
+OrderCode=
 BaudRate_10=0
 BaudRate_20=0
 BaudRate_50=0
@@ -35,7 +36,6 @@ GroupMessaging=0
 NrOfRXPDO=4
 NrOfTXPDO=4
 LSS_Supported=0
-NG_Slave=0
 
 [DummyUsage]
 Dummy0001=0
@@ -169,7 +169,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0005
 AccessType=rw
-DefaultValue=
+DefaultValue=0x10
 PDOMapping=0
 
 [1003sub1]
@@ -832,7 +832,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0005
 AccessType=rw
-DefaultValue=0
+DefaultValue=0x8
 PDOMapping=0
 
 [1600sub1]
@@ -919,7 +919,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0005
 AccessType=rw
-DefaultValue=0
+DefaultValue=0x8
 PDOMapping=0
 
 [1601sub1]
@@ -1006,7 +1006,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0005
 AccessType=rw
-DefaultValue=0
+DefaultValue=0x8
 PDOMapping=0
 
 [1602sub1]
@@ -1093,7 +1093,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0005
 AccessType=rw
-DefaultValue=0
+DefaultValue=0x8
 PDOMapping=0
 
 [1603sub1]
@@ -1420,7 +1420,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0005
 AccessType=rw
-DefaultValue=0
+DefaultValue=0x8
 PDOMapping=0
 
 [1A00sub1]
@@ -1507,7 +1507,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0005
 AccessType=rw
-DefaultValue=0
+DefaultValue=0x8
 PDOMapping=0
 
 [1A01sub1]
@@ -1594,7 +1594,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0005
 AccessType=rw
-DefaultValue=0
+DefaultValue=0x8
 PDOMapping=0
 
 [1A02sub1]
@@ -1681,7 +1681,7 @@ ObjectType=0x7
 ;StorageLocation=RAM
 DataType=0x0005
 AccessType=rw
-DefaultValue=0
+DefaultValue=0x8
 PDOMapping=0
 
 [1A03sub1]

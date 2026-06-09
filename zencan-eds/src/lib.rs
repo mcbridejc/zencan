@@ -1,8 +1,8 @@
-use configparser::ini::Ini;
+use ini::{Ini, Properties};
 use snafu::{ResultExt as _, Snafu};
-use std::{collections::HashMap, path::Path};
+use std::{collections::BTreeMap, path::Path, str::FromStr};
 
-use zencan_common::objects::{AccessType, DataType};
+use zencan_common::objects::{AccessType, DataType, ObjectCode};
 
 #[derive(Debug, Snafu)]
 pub enum LoadError {
@@ -16,12 +16,17 @@ pub enum LoadError {
         message: String,
         source: std::num::ParseIntError,
     },
+    UnsupportedObject {
+        object_type: ObjectCode,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ElectronicDataSheet {
     pub file_info: FileInfo,
     pub device_info: DeviceInfo,
+    pub dummy_usage: DummyUsage,
+    pub comments: Comments,
     pub mandatory_objects: Vec<Object>,
     pub optional_objects: Vec<Object>,
     pub manufacturer_objects: Vec<Object>,
@@ -30,8 +35,8 @@ pub struct ElectronicDataSheet {
 #[derive(Clone, Debug, Default)]
 pub struct FileInfo {
     pub file_name: String,
-    pub file_version: u32,
-    pub file_revision: u32,
+    pub file_version: u8,
+    pub file_revision: u8,
     pub eds_version: String,
     pub description: String,
     pub creation_time: String,
@@ -48,7 +53,8 @@ pub struct DeviceInfo {
     pub vendor_number: Option<u32>,
     pub product_name: String,
     pub product_number: Option<u32>,
-    pub revision_number: u32,
+    pub revision_number: Option<u32>,
+    pub order_code: String,
     pub baudrate_10: bool,
     pub baudrate_20: bool,
     pub baudrate_50: bool,
@@ -60,74 +66,149 @@ pub struct DeviceInfo {
     pub simple_boot_up_master: bool,
     pub simple_boot_up_slave: bool,
     pub granularity: u32,
-    pub rpdo_count: u32,
-    pub tpdo_count: u32,
+    pub dynamic_channels_supported: u32,
+    pub group_messaging: bool,
+    pub rpdo_count: u16,
+    pub tpdo_count: u16,
     pub lss_supported: bool,
-    pub ng_slave: bool,
-    pub ng_master: bool,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
-#[repr(u16)]
-pub enum ObjectType {
-    #[default]
-    Null = 0,
-    Var = 7,
-    Array = 8,
-    Record = 9,
-    Unknown(u16),
+#[derive(Clone, Debug, Default)]
+pub struct DummyUsage {
+    pub values: BTreeMap<DataType, bool>,
 }
 
-impl From<u16> for ObjectType {
-    fn from(value: u16) -> Self {
-        use ObjectType::*;
-        match value {
-            0 => Null,
-            7 => Var,
-            8 => Array,
-            9 => Record,
-            _ => Unknown(value),
-        }
-    }
-}
-
-fn str_to_access_type(s: &str) -> Result<AccessType, LoadError> {
-    let s = s.to_lowercase();
-    match s.as_str() {
-        "ro" => Ok(AccessType::Ro),
-        "wo" => Ok(AccessType::Wo),
-        "rw" => Ok(AccessType::Rw),
-        "const" => Ok(AccessType::Const),
-        _ => EdsFormatSnafu {
-            message: format!("Invalid AccessType: '{}'", s),
-        }
-        .fail(),
-    }
+#[derive(Clone, Debug, Default)]
+pub struct Comments {
+    pub lines: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Object {
     pub parameter_name: String,
-    pub object_number: u32,
-    pub object_type: ObjectType,
-    pub subs: HashMap<u8, SubObject>,
-    pub sub_number: u16,
+    pub object_number: u16,
+    pub object_code: ObjectCode,
+    pub sub_number: u8,
+    pub subs: BTreeMap<u8, SubObject>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct SubObject {
+    pub parameter_name: String,
     pub data_type: DataType,
     pub access_type: AccessType,
     pub low_limit: Option<String>,
     pub high_limit: Option<String>,
-    pub default_value: String,
+    pub default_value: Option<String>,
     /// True if this object can be mapped into a PDO
-    pub pdo_mapping: bool,
+    pub pdo_mapping: Option<bool>,
+}
+
+impl Object {
+    pub fn new(
+        parameter_name: String,
+        object_number: u16,
+        object_code: ObjectCode,
+        sub_number: u8,
+        subs: BTreeMap<u8, SubObject>,
+    ) -> Result<Self, LoadError> {
+        use ObjectCode::*;
+        match object_code {
+            Null | DefType | DefStruct => UnsupportedObjectSnafu {
+                object_type: object_code,
+            }
+            .fail(),
+            Domain | Var => Ok(Object {
+                parameter_name,
+                object_number,
+                object_code,
+                sub_number,
+                subs,
+            }),
+            Array | Record => {
+                if subs.len() != sub_number as usize {
+                    return EdsFormatSnafu {
+                        message: format!(
+                            "Invalid number of subojects in '[{:X}]': expected {}, found {}",
+                            object_number,
+                            sub_number,
+                            subs.len()
+                        ),
+                    }
+                    .fail();
+                }
+
+                let (first_subindex, first_subobj) = subs.first_key_value().ok_or(
+                    EdsFormatSnafu {
+                        message: format!(
+                            "Unable to extract first subobject of '[{:X}]'",
+                            object_number
+                        ),
+                    }
+                    .build(),
+                )?;
+                if *first_subindex != 0 {
+                    return EdsFormatSnafu {
+                        message: format!(
+                            "Invalid subindex for first subobject of '[{:X}]': expected 0, found {}",
+                            object_number, first_subindex
+                        ),
+                    }
+                    .fail();
+                }
+                let highest_subindex = first_subobj
+                    .default_value
+                    .clone()
+                    .ok_or(
+                        EdsFormatSnafu {
+                            message: format!(
+                                "Missing required field 'DefaultValue' for first subobject of '[{:X}]'",
+                                object_number
+                            ),
+                        }
+                        .build(),
+                    )?
+                    .parse_hex()
+                    .context(ParseIntSnafu {
+                        message: format!(
+                            "Invalid default value for subobject {} of '[{:X}]'",
+                            first_subindex, object_number
+                        ),
+                    })? as u8;
+
+                let (last_subindex, _) = subs.last_key_value().ok_or(
+                    EdsFormatSnafu {
+                        message: format!(
+                            "Unable to extract last subobject of '[{:X}]'",
+                            object_number
+                        ),
+                    }
+                    .build(),
+                )?;
+                if *last_subindex != highest_subindex {
+                    return EdsFormatSnafu {
+                        message: format!(
+                            "Invalid subindex for last subobject of '[{:X}]': expected highest subindex {}, found {}",
+                            object_number, highest_subindex, last_subindex
+                        ),
+                    }
+                    .fail();
+                }
+                Ok(Object {
+                    parameter_name,
+                    object_number,
+                    object_code,
+                    sub_number,
+                    subs,
+                })
+            }
+        }
+    }
 }
 
 struct Section<'a> {
-    map: &'a HashMap<String, Option<String>>,
-    section: String,
+    properties: &'a Properties,
+    name: String,
 }
 
 trait ParseHex {
@@ -137,266 +218,577 @@ trait ParseHex {
 impl<T: AsRef<str>> ParseHex for T {
     fn parse_hex(&self) -> Result<u32, std::num::ParseIntError> {
         let s = self.as_ref();
-        u32::from_str_radix(s.strip_prefix("0x").unwrap(), 16)
+        u32::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16)
+    }
+}
+
+trait ParseOct {
+    fn parse_oct(&self) -> Result<u32, std::num::ParseIntError>;
+}
+
+impl<T: AsRef<str>> ParseOct for T {
+    fn parse_oct(&self) -> Result<u32, std::num::ParseIntError> {
+        let s = self.as_ref();
+        u32::from_str_radix(s.strip_prefix("0").unwrap_or(s), 8)
     }
 }
 
 impl<'a> Section<'a> {
-    pub fn from_map(
-        map: &'a HashMap<String, HashMap<String, Option<String>>>,
-        section: &str,
-    ) -> Result<Self, LoadError> {
-        let section_map = match map.get(&section.to_lowercase()) {
-            Some(value) => value,
-            None => {
-                return EdsFormatSnafu {
-                    message: format!("Missing required section '{}'", section),
-                }
-                .fail()
+    pub fn from_name(ini: &'a Ini, name: &str) -> Result<Section<'a>, LoadError> {
+        let properties = ini.section(Some(name)).ok_or(
+            IniFormatSnafu {
+                message: format!("Missing section '{}'", name),
             }
-        };
-        Ok(Self {
-            map: section_map,
-            section: section.to_string(),
+            .build(),
+        )?;
+        Ok(Section {
+            properties,
+            name: name.to_string(),
         })
     }
 
-    pub fn get_string(&self, field: &str) -> Result<String, LoadError> {
-        match self.map.get(&field.to_lowercase()) {
-            Some(value) => Ok(value.as_ref().unwrap().clone()),
+    /// Read a field as a String
+    ///
+    /// Get the string stored in the field.
+    /// Returns Ok(None) if the field is empty.
+    /// Returns an error if the field is missing.
+    pub fn get_string_opt(&self, field: &str) -> Result<Option<String>, LoadError> {
+        match self.properties.get(field) {
+            Some(v) => {
+                if v.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(v.to_string()))
+                }
+            }
             None => EdsFormatSnafu {
-                message: format!("Missing required field '{}' in '{}'", field, self.section),
+                message: format!("Missing required field '{}' in '{}'", field, self.name),
             }
             .fail(),
+        }
+    }
+
+    /// Read a field as a String
+    ///
+    /// Get the string stored in the field (empty string when empty field).
+    /// Returns an error if the field is missing.
+    pub fn get_string(&self, field: &str) -> Result<String, LoadError> {
+        Ok(self.get_string_opt(field)?.unwrap_or_default())
+    }
+
+    /// Read a field as an unsigned int
+    ///
+    /// Get the integer value (from decimal, hexadecimal or octal format) stored in a field.
+    /// Returns Ok(None) if the field is empty.
+    /// Returns an error if the field is missing or if the value can't be parsed to a integer.
+    pub fn get_u32_opt(&self, field: &str) -> Result<Option<u32>, LoadError> {
+        match self.get_string_opt(field)? {
+            Some(v) => {
+                let parse_err = ParseIntSnafu {
+                    message: format!(
+                        "Parsing '{}' from field '{}' in section '{}'",
+                        v, field, self.name
+                    ),
+                };
+                if v.starts_with("0x") {
+                    v.parse_hex().map(Some).context(parse_err)
+                } else if v.starts_with("0") && v != "0" {
+                    v.parse_oct().map(Some).context(parse_err)
+                } else {
+                    v.parse::<u32>().map(Some).context(parse_err)
+                }
+            }
+            None => Ok(None),
         }
     }
 
     /// Read a field as an unsigned int
     ///
-    /// The field must contain a valid integer value or an error is returned
+    /// Get the integer value (from decimal, hexadecimal or octal format) stored in a field.
+    /// Returns an error if the field is missing or empty, or if the value can't be parsed to a integer.
     pub fn get_u32(&self, field: &str) -> Result<u32, LoadError> {
-        match self.map.get(&field.to_lowercase()) {
-            Some(value) => Ok(value.as_ref().unwrap()),
-            None => EdsFormatSnafu {
-                message: format!("Missing required field '{}' in '{}'", field, self.section),
+        self.get_u32_opt(field)?.ok_or(
+            EdsFormatSnafu {
+                message: format!("Empty field '{}' in '{}'", field, self.name),
             }
-            .fail(),
-        }?
-        .parse()
-        .context(ParseIntSnafu {
-            message: format!("Parsing '{}' in section '{}'", field, self.section),
-        })
+            .build(),
+        )
     }
 
-    pub fn get_u32_hex(&self, field: &str) -> Result<u32, LoadError> {
-        match self.map.get(&field.to_lowercase()) {
-            Some(value) => Ok(value.as_ref().unwrap()),
-            None => EdsFormatSnafu {
-                message: format!("Missing required field '{}' in '{}'", field, self.section),
-            }
-            .fail(),
-        }?
-        .parse_hex()
-        .context(ParseIntSnafu {
-            message: format!("Parsing '{}' in section '{}'", field, self.section),
-        })
-    }
-
-    pub fn get_u32_hex_opt(&self, field: &str) -> Result<Option<u32>, LoadError> {
-        let str_value = match self.map.get(&field.to_lowercase()) {
-            Some(value) => Ok(value.as_ref().unwrap()),
-            None => return Ok(None),
-        }?;
-
-        if str_value.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(str_value.parse_hex().context(ParseIntSnafu {
-            message: format!("Parsing '{}' in section '{}'", field, self.section),
-        })?))
-    }
-
-    /// Read an optional field as an unsigned int
+    /// Read a field as a boolean
     ///
-    /// If the field is empty, None is returned. If the field has a non-empty value that is not a
-    /// valid integer, it will return a LoadError::ParseIntError.
-    pub fn get_u32_opt(&self, field: &str) -> Result<Option<u32>, LoadError> {
-        let str_value = match self.map.get(&field.to_lowercase()) {
-            Some(value) => Ok(value.as_ref().unwrap()),
-            None => return Ok(None),
-        }?;
-
-        if str_value.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(str_value.parse().context(ParseIntSnafu {
-            message: format!("Parsing '{}' in section '{}'", field, self.section),
-        })?))
+    /// Get the boolean value stored in the field.
+    /// Returns Ok(None) if the field is empty.
+    /// Returns an error if the field is missing or if the value can't be parsed to a boolean.
+    pub fn _get_bool_opt(&self, field: &str) -> Result<Option<bool>, LoadError> {
+        // Boolean is stored as 0 or 1
+        // Read as u32, and cast
+        self.get_u32_opt(field).map(|v| v.map(|i| i == 1))
     }
 
+    /// Read a field as a boolean
+    ///
+    /// Get the boolean value stored in the field.
+    /// Returns an error if the field is missing or empty, or if the value can't be parsed to a boolean.
     pub fn get_bool(&self, field: &str) -> Result<bool, LoadError> {
         // Boolean is stored as 0 or 1
         // Read as u32, and cast
-        Ok(self.get_u32(field)? == 1)
+        self.get_u32(field).map(|i| i == 1)
     }
 }
 
-fn get_sub_object(section: &Section) -> Result<SubObject, LoadError> {
-    Ok(SubObject {
-        data_type: DataType::from(section.get_u32_hex("DataType")? as u16),
-        access_type: str_to_access_type(&section.get_string("AccessType")?)?,
-        low_limit: section.get_string("LowLimit").ok(),
-        high_limit: section.get_string("HighLimit").ok(),
-        default_value: section.get_string("DefaultValue")?,
-        pdo_mapping: section.get_bool("PDOMapping")?,
-    })
-}
+impl FromStr for ElectronicDataSheet {
+    type Err = LoadError;
 
-fn read_object_list(
-    map: &HashMap<String, HashMap<String, Option<String>>>,
-    name: &str,
-) -> Result<Vec<Object>, LoadError> {
-    let mut list = Vec::new();
-    let top_section = Section::from_map(map, name)?;
-    let num_objects = top_section.get_u32("SupportedObjects")?;
-    for i in 1..num_objects + 1 {
-        let obj_num = top_section.get_u32_hex(&i.to_string())?;
-        let obj_section = Section::from_map(map, &format!("{:x}", obj_num))?;
-        let sub_number = obj_section.get_u32_hex_opt("SubNumber")?.unwrap_or(0) as u16;
-        let parameter_name = obj_section.get_string("ParameterName")?;
-        let object_type = ObjectType::from(obj_section.get_u32_hex("ObjectType")? as u16);
-        if sub_number == 0 {
-            // There are no explicit subobjects; the top level config dict describes both the
-            // top-level object and sub-object 0
-            let object = Object {
-                object_number: obj_num,
-                parameter_name,
-                object_type,
-                sub_number,
-                subs: HashMap::from([(0, get_sub_object(&obj_section)?)]),
-            };
-            list.push(object);
-        } else {
-            // There are multiple sub objects
-            let mut object = Object {
-                object_number: obj_num,
-                parameter_name,
-                object_type,
-                sub_number,
-                subs: HashMap::new(),
-            };
-            for sub_num in 0..255 {
-                let sub_section = Section::from_map(map, &format!("{:x}sub{:x}", obj_num, sub_num));
-                if sub_section.is_err() {
-                    // Not all subs are necessarily defined; e.g. there may be a sub1 and a sub3,
-                    // but no sub2
-                    continue;
-                }
-                let sub_section = sub_section.unwrap();
-                object
-                    .subs
-                    .insert(sub_num as u8, get_sub_object(&sub_section)?);
-                if object.subs.len() == sub_number as usize {
-                    break;
-                }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let ini = Ini::load_from_str(s).map_err(|_| {
+            IniFormatSnafu {
+                message: "Unable to load init file",
             }
-            list.push(object);
-        }
+            .build()
+        })?;
+        Self::from_ini(&ini)
     }
-
-    Ok(list)
 }
 
 impl ElectronicDataSheet {
-    pub fn from_config_map(
-        map: &HashMap<String, HashMap<String, Option<String>>>,
-    ) -> Result<ElectronicDataSheet, LoadError> {
-        let file_info_cfg = Section::from_map(map, "FileInfo")?;
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, LoadError> {
+        let ini = Ini::load_from_file(path).map_err(|_| {
+            IniFormatSnafu {
+                message: "Unable to load init file",
+            }
+            .build()
+        })?;
+        Self::from_ini(&ini)
+    }
 
-        let file_info = FileInfo {
-            file_name: file_info_cfg.get_string("FileName")?,
-            file_version: file_info_cfg.get_u32("FileVersion")?,
-            file_revision: file_info_cfg.get_u32("FileRevision")?,
-            eds_version: file_info_cfg.get_string("EDSVersion")?,
-            description: file_info_cfg.get_string("Description")?,
-            creation_time: file_info_cfg.get_string("CreationTime")?,
-            creation_date: file_info_cfg.get_string("CreationDate")?,
-            created_by: file_info_cfg.get_string("CreatedBy")?,
-            modification_time: file_info_cfg.get_string("ModificationTime")?,
-            modification_date: file_info_cfg.get_string("ModificationDate")?,
-            modified_by: file_info_cfg.get_string("ModifiedBy")?,
-        };
-
-        let di_cfg = Section::from_map(map, "DeviceInfo")?;
-        let device_info = DeviceInfo {
-            vendor_name: di_cfg.get_string("VendorName")?,
-            vendor_number: di_cfg.get_u32_opt("VendorNumber")?,
-            product_name: di_cfg.get_string("ProductName")?,
-            product_number: di_cfg.get_u32_opt("ProductNumber")?,
-            revision_number: di_cfg.get_u32("RevisionNumber")?,
-            baudrate_10: di_cfg.get_bool("BaudRate_10")?,
-            baudrate_20: di_cfg.get_bool("BaudRate_20")?,
-            baudrate_50: di_cfg.get_bool("BaudRate_50")?,
-            baudrate_125: di_cfg.get_bool("BaudRate_125")?,
-            baudrate_250: di_cfg.get_bool("BaudRate_250")?,
-            baudrate_500: di_cfg.get_bool("BaudRate_500")?,
-            baudrate_800: di_cfg.get_bool("BaudRate_800")?,
-            baudrate_1000: di_cfg.get_bool("BaudRate_1000")?,
-            simple_boot_up_master: di_cfg.get_bool("SimpleBootUpMaster")?,
-            simple_boot_up_slave: di_cfg.get_bool("SimpleBootUpSlave")?,
-            granularity: di_cfg.get_u32("Granularity")?,
-            rpdo_count: di_cfg.get_u32("NrOfRXPDO")?,
-            tpdo_count: di_cfg.get_u32("NrOfTXPDO")?,
-            lss_supported: di_cfg.get_bool("LSS_Supported")?,
-            ng_slave: di_cfg.get_bool("NG_Slave").unwrap_or(false),
-            ng_master: di_cfg.get_bool("LSS_Supported").unwrap_or(false),
-        };
-
-        Ok(ElectronicDataSheet {
-            file_info,
-            device_info,
-            mandatory_objects: read_object_list(map, "MandatoryObjects")?,
-            optional_objects: read_object_list(map, "OptionalObjects")?,
-            manufacturer_objects: read_object_list(map, "ManufacturerObjects")?,
+    fn from_ini(ini: &Ini) -> Result<Self, LoadError> {
+        let file_info_section = Section::from_name(ini, "FileInfo")?;
+        let device_info_section = Section::from_name(ini, "DeviceInfo")?;
+        let dummy_usage_section = Section::from_name(ini, "DummyUsage")?;
+        let comments_section = Section::from_name(ini, "Comments")?;
+        Ok(Self {
+            file_info: Self::parse_file_info(&file_info_section)?,
+            device_info: Self::parse_device_info(&device_info_section)?,
+            dummy_usage: Self::parse_dummy_usage(&dummy_usage_section)?,
+            comments: Self::parse_comments(&comments_section)?,
+            mandatory_objects: Self::parse_objects(ini, "MandatoryObjects")?,
+            optional_objects: Self::parse_objects(ini, "OptionalObjects")?,
+            manufacturer_objects: Self::parse_objects(ini, "ManufacturerObjects")?,
         })
     }
 
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str<S: Into<String>>(eds_file: S) -> Result<ElectronicDataSheet, LoadError> {
-        let s = eds_file.into();
-        let mut config = Ini::new();
-        let map = config
-            .read(s)
-            .map_err(|e| IniFormatSnafu { message: e }.build())?;
-        Self::from_config_map(&map)
+    fn parse_file_info(section: &Section) -> Result<FileInfo, LoadError> {
+        Ok(FileInfo {
+            file_name: section.get_string("FileName")?,
+            file_version: section.get_u32("FileVersion")? as u8,
+            file_revision: section.get_u32("FileRevision")? as u8,
+            eds_version: section.get_string("EDSVersion")?,
+            description: section.get_string("Description")?,
+            creation_time: section.get_string("CreationTime")?,
+            creation_date: section.get_string("CreationDate")?,
+            created_by: section.get_string("CreatedBy")?,
+            modification_time: section.get_string("ModificationTime")?,
+            modification_date: section.get_string("ModificationDate")?,
+            modified_by: section.get_string("ModifiedBy")?,
+        })
     }
 
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<ElectronicDataSheet, LoadError> {
-        let mut config = Ini::new();
-        let map = config
-            .load(path)
-            .map_err(|e| IniFormatSnafu { message: e }.build())?;
-        Self::from_config_map(&map)
+    fn parse_device_info(section: &Section) -> Result<DeviceInfo, LoadError> {
+        Ok(DeviceInfo {
+            vendor_name: section.get_string("VendorName")?,
+            vendor_number: section.get_u32_opt("VendorNumber")?,
+            product_name: section.get_string("ProductName")?,
+            product_number: section.get_u32_opt("ProductNumber")?,
+            revision_number: section.get_u32_opt("RevisionNumber")?,
+            order_code: section.get_string("OrderCode")?,
+            baudrate_10: section.get_bool("BaudRate_10")?,
+            baudrate_20: section.get_bool("BaudRate_20")?,
+            baudrate_50: section.get_bool("BaudRate_50")?,
+            baudrate_125: section.get_bool("BaudRate_125")?,
+            baudrate_250: section.get_bool("BaudRate_250")?,
+            baudrate_500: section.get_bool("BaudRate_500")?,
+            baudrate_800: section.get_bool("BaudRate_800")?,
+            baudrate_1000: section.get_bool("BaudRate_1000")?,
+            simple_boot_up_master: section.get_bool("SimpleBootUpMaster")?,
+            simple_boot_up_slave: section.get_bool("SimpleBootUpSlave")?,
+            granularity: section.get_u32("Granularity")?,
+            dynamic_channels_supported: section.get_u32("DynamicChannelsSupported")?,
+            group_messaging: section.get_bool("GroupMessaging")?,
+            rpdo_count: section.get_u32("NrOfRXPDO")? as u16,
+            tpdo_count: section.get_u32("NrOfTXPDO")? as u16,
+            lss_supported: section.get_bool("LSS_Supported")?,
+        })
+    }
+
+    fn parse_dummy_usage(section: &Section) -> Result<DummyUsage, LoadError> {
+        let mut dummy_usage = DummyUsage::default();
+        for (k, v) in section.properties.iter() {
+            let err = EdsFormatSnafu {
+                message: format!("Invalid field format '{}' in '{}'", k, section.name),
+            };
+            let index = k
+                .strip_prefix("Dummy")
+                .ok_or(err.clone().build())?
+                .parse::<u16>()
+                .map_err(|_| err.build())?;
+            let supported = v.parse::<u32>().context(ParseIntSnafu {
+                message: format!("Parsing '{}' in section '{}'", k, "DummyUsage"),
+            })? == 1;
+            dummy_usage.values.insert(DataType::from(index), supported);
+        }
+        Ok(dummy_usage)
+    }
+
+    fn parse_comments(section: &Section) -> Result<Comments, LoadError> {
+        let line_count = section.get_u32("Lines")? as u16;
+        let mut comments = Comments {
+            ..Default::default()
+        };
+        for line_number in 1..line_count + 1 {
+            comments
+                .lines
+                .push(section.get_string(&format!("Line{}", line_number))?);
+        }
+        Ok(comments)
+    }
+
+    fn parse_objects(ini: &Ini, name: &str) -> Result<Vec<Object>, LoadError> {
+        let section = Section::from_name(ini, name)?;
+        let objects = Self::parse_object_list(&section)?;
+        let mut list = Vec::new();
+        for index in objects {
+            let section = Section::from_name(ini, &format!("{:X}", index))?;
+            list.push(Self::parse_object(ini, &section)?);
+        }
+        Ok(list)
+    }
+
+    fn parse_object_list(section: &Section) -> Result<Vec<u32>, LoadError> {
+        let count_field = "SupportedObjects";
+        let count = section.get_u32_opt(count_field)?.ok_or(
+            EdsFormatSnafu {
+                message: format!(
+                    "Missing required field '{}' in '{}'",
+                    count_field, section.name
+                ),
+            }
+            .build(),
+        )?;
+        let mut indexes = Vec::new();
+        for i in 1..count + 1 {
+            let index = section.get_u32_opt(&i.to_string())?.ok_or(
+                EdsFormatSnafu {
+                    message: format!("Missing expected field '{}' in '{}'", i, section.name),
+                }
+                .build(),
+            )?;
+            indexes.push(index);
+        }
+        Ok(indexes)
+    }
+
+    fn parse_object(ini: &Ini, section: &Section) -> Result<Object, LoadError> {
+        let object_code = match section.get_u32_opt("ObjectType") {
+            Ok(val) => match val {
+                None => Ok(ObjectCode::Var),
+                Some(v) => match ObjectCode::try_from(v as u8) {
+                    Ok(v) => Ok(v),
+                    Err(_) => EdsFormatSnafu {
+                        message: format!("Invalid object code '{}' in '{}'", v, section.name),
+                    }
+                    .fail(),
+                },
+            },
+            Err(e) => match e {
+                LoadError::EdsFormatError { message: _ } => Ok(ObjectCode::Var),
+                _ => Err(e),
+            },
+        }?;
+
+        use ObjectCode::*;
+        match object_code {
+            Null | DefType | DefStruct => UnsupportedObjectSnafu {
+                object_type: object_code,
+            }
+            .fail(),
+            Domain => Self::parse_domain(section),
+            Var => Self::parse_var(section),
+            Array => Self::parse_array(ini, section),
+            Record => Self::parse_record(ini, section),
+        }
+    }
+
+    fn parse_domain(section: &Section) -> Result<Object, LoadError> {
+        let object_number = section
+            .name
+            .parse_hex()
+            .map(|i| i as u16)
+            .context(ParseIntSnafu {
+                message: "".to_string(),
+            })?;
+        Ok(Object::new(
+            section.get_string("ParameterName")?,
+            object_number,
+            ObjectCode::Domain,
+            0,
+            BTreeMap::new(),
+        ))?
+    }
+
+    fn parse_var(section: &Section) -> Result<Object, LoadError> {
+        let object_number = section
+            .name
+            .parse_hex()
+            .map(|i| i as u16)
+            .context(ParseIntSnafu {
+                message: "".to_string(),
+            })?;
+        Ok(Object::new(
+            section.get_string("ParameterName")?,
+            object_number,
+            ObjectCode::Var,
+            0,
+            BTreeMap::from([(0, Self::parse_subobject(section)?)]),
+        ))?
+    }
+
+    fn parse_array(ini: &Ini, section: &Section) -> Result<Object, LoadError> {
+        let sub_number_field = "SubNumber";
+        let compact_subobj_field = "CompactSubObj";
+        let sub_number = section.get_u32(sub_number_field).unwrap_or(0) as u8;
+        let compact_sub_obj = section.get_u32(compact_subobj_field).unwrap_or(0) as u8;
+        match (sub_number != 0, compact_sub_obj != 0) {
+            (false, false) | (true, true) => EdsFormatSnafu {
+                message: format!(
+                    "Mismatch between '{}' and '{}' in '{}': expected exactly one of them",
+                    sub_number_field, compact_subobj_field, section.name
+                ),
+            }
+            .fail(),
+            (false, true) => todo!("compact array is not supported"),
+            (true, false) => {
+                let object_number =
+                    section
+                        .name
+                        .parse_hex()
+                        .map(|i| i as u16)
+                        .context(ParseIntSnafu {
+                            message: "".to_string(),
+                        })?;
+                let mut subs = BTreeMap::new();
+                for subindex in 0..=0xff {
+                    if let Ok(sub_section) =
+                        Section::from_name(ini, &format!("{}sub{:X}", section.name, subindex))
+                    {
+                        subs.insert(subindex, Self::parse_subobject(&sub_section)?);
+                    }
+                }
+                Ok(Object::new(
+                    section.get_string("ParameterName")?,
+                    object_number,
+                    ObjectCode::Array,
+                    sub_number,
+                    subs,
+                ))?
+            }
+        }
+    }
+
+    fn parse_record(ini: &Ini, section: &Section) -> Result<Object, LoadError> {
+        let sub_number_field = "SubNumber";
+        let compact_sub_obj_field = "CompactSubObj";
+        let sub_number = section.get_u32(sub_number_field).unwrap_or(0) as u8;
+        let compact_sub_obj = section.get_u32(compact_sub_obj_field).unwrap_or(0) as u8;
+        match (sub_number != 0, compact_sub_obj != 0) {
+            (false, false) | (true, true) => EdsFormatSnafu {
+                message: format!(
+                    "Mismatch between '{}' and '{}' in section '{}': expected exactly one of them",
+                    sub_number_field, compact_sub_obj_field, section.name
+                ),
+            }
+            .fail(),
+            (false, true) => todo!("compact record is not supported"),
+            (true, false) => {
+                let object_number = section
+                    .name
+                    .parse_hex()
+                    .map(|i| i as u16)
+                    .context(ParseIntSnafu { message: "" })?;
+                let mut subs = BTreeMap::new();
+                for subindex in 0..=0xff {
+                    if let Ok(sub_section) =
+                        Section::from_name(ini, &format!("{}sub{:X}", section.name, subindex))
+                    {
+                        subs.insert(subindex, Self::parse_subobject(&sub_section)?);
+                    }
+                }
+                Ok(Object::new(
+                    section.get_string("ParameterName")?,
+                    object_number,
+                    ObjectCode::Record,
+                    sub_number,
+                    subs,
+                ))?
+            }
+        }
+    }
+
+    fn parse_subobject(section: &Section) -> Result<SubObject, LoadError> {
+        let access_type_field = "AccessType";
+        let access_type_raw = section.get_string(access_type_field)?;
+        let access_type =
+            AccessType::try_from(access_type_raw.to_lowercase().as_ref()).map_err(|_| {
+                EdsFormatSnafu {
+                    message: format!(
+                        "Invalid value '{}' for field '{}' in '{}'",
+                        access_type_raw, access_type_field, section.name
+                    ),
+                }
+                .build()
+            })?;
+        Ok(SubObject {
+            parameter_name: section.get_string("ParameterName")?,
+            data_type: DataType::from(section.get_u32("DataType")? as u16),
+            access_type,
+            low_limit: section.get_string("LowLimit").ok(),
+            high_limit: section.get_string("HighLimit").ok(),
+            default_value: section.get_string("DefaultValue").ok(),
+            pdo_mapping: section.get_bool("PDOMapping").ok(),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    // use std::io::Write;
+    use super::*;
+    use std::io::Write;
 
-    // use super::*;
+    #[test]
+    fn test_load() {
+        const EDS: &[u8] = include_bytes!("example.eds");
 
-    // #[test]
-    // fn test_load() {
-    //     const EDS: &[u8] = include_bytes!("example.eds");
+        let mut eds_file = tempfile::NamedTempFile::new().unwrap();
+        eds_file.write_all(EDS).unwrap();
 
-    //     let mut eds_file = tempfile::NamedTempFile::new().unwrap();
-    //     eds_file.write_all(EDS).unwrap();
+        let eds = ElectronicDataSheet::from_file(eds_file.path()).unwrap();
+        assert!(eds.manufacturer_objects.is_empty());
+        println!("{:#?}", eds);
+    }
 
-    //     let eds = ElectronicDataSheet::load(eds_file.path()).unwrap();
-    //     println!("Eds: {:?}", eds);
-    //     assert!(false, "EDS loaded; just failing to read the output");
-    // }
+    #[test]
+    fn test_var() {
+        let buf = "
+[1002]
+ParameterName=test
+DataType=0x0001
+AccessType=ro
+";
+        let ini = Ini::load_from_str(buf).unwrap();
+        let section = Section::from_name(&ini, "1002").unwrap();
+
+        let obj = ElectronicDataSheet::parse_object(&ini, &section).unwrap();
+        assert_eq!(obj.object_code, ObjectCode::Var);
+        assert_eq!(obj.object_number, 0x1002);
+        assert_eq!(obj.parameter_name, "test");
+        assert_eq!(obj.sub_number, 0);
+        let sub = obj.subs.get(&0).unwrap();
+        assert_eq!(sub.data_type, DataType::Boolean);
+        assert_eq!(sub.access_type, AccessType::Ro);
+    }
+
+    #[test]
+    fn test_from_str() {
+        let s = "
+[FileInfo]
+FileName=project.eds
+FileVersion=1
+FileRevision=1
+LastEDS=
+EDSVersion=4.0
+Description=
+CreationTime=9:23AM
+CreationDate=08-29-2024
+CreatedBy=
+ModificationTime=9:23AM
+ModificationDate=08-29-2024
+ModifiedBy=
+
+[DeviceInfo]
+VendorName=
+VendorNumber=
+ProductName=New Product
+ProductNumber=
+RevisionNumber=0
+OrderCode=
+BaudRate_10=0
+BaudRate_20=0
+BaudRate_50=0
+BaudRate_125=0
+BaudRate_250=0
+BaudRate_500=0
+BaudRate_800=0
+BaudRate_1000=0
+SimpleBootUpMaster=0
+SimpleBootUpSlave=0
+Granularity=8
+DynamicChannelsSupported=0
+CompactPDO=0
+GroupMessaging=0
+NrOfRXPDO=4
+NrOfTXPDO=4
+LSS_Supported=0
+
+[DummyUsage]
+Dummy0001=0
+Dummy0002=0
+Dummy0003=0
+Dummy0004=0
+Dummy0005=0
+Dummy0006=0
+Dummy0007=0
+
+[Comments]
+Lines=0
+
+[MandatoryObjects]
+SupportedObjects=0
+
+[OptionalObjects]
+SupportedObjects=0
+
+[ManufacturerObjects]
+SupportedObjects=0
+";
+        let eds = ElectronicDataSheet::from_str(s);
+        assert!(eds.is_ok());
+
+        let eds = eds.unwrap();
+        assert_eq!(eds.file_info.creation_time, "9:23AM");
+        assert_eq!(eds.file_info.creation_date, "08-29-2024");
+        assert!(eds.comments.lines.is_empty());
+        assert!(eds.mandatory_objects.is_empty());
+        assert!(eds.optional_objects.is_empty());
+        assert!(eds.manufacturer_objects.is_empty());
+        println!("{:#?}", eds);
+    }
+
+    #[test]
+    fn test_unsupported_obj() {
+        let s = "
+[3142]
+ObjectType=0x0
+";
+        let ini = Ini::load_from_str(s).unwrap();
+        let section = Section::from_name(&ini, "3142").unwrap();
+        let obj = ElectronicDataSheet::parse_object(&ini, &section)
+            .err()
+            .unwrap();
+        assert!(matches!(
+            obj,
+            LoadError::UnsupportedObject {
+                object_type: ObjectCode::Null
+            }
+        ))
+    }
 }

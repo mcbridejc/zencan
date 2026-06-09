@@ -68,6 +68,22 @@ pub enum AccessType {
     Const,
 }
 
+impl TryFrom<&str> for AccessType {
+    type Error = ();
+
+    /// Attempts to create `AccessType` from lowercase str.
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        use AccessType::*;
+        match value {
+            "ro" => Ok(Ro),
+            "wo" => Ok(Wo),
+            "rw" => Ok(Rw),
+            "const" => Ok(Const),
+            _ => Err(()),
+        }
+    }
+}
+
 impl AccessType {
     /// Returns true if an object with this access type can be read
     pub fn is_readable(&self) -> bool {
@@ -112,7 +128,7 @@ impl PdoMappable {
 }
 
 /// Indicate the type of data stored in an object
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u16)]
 pub enum DataType {
     /// A true false value, encoded as a single byte, with 0 for false and 1 for true

@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-configparser = "3.1"
+rust-ini = "0.21"
 snafu.workspace = true
 
 zencan-common = { path = "../zencan-common" }
