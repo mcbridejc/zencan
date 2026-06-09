@@ -687,20 +687,89 @@ AccessType=ro
         let ini = Ini::load_from_str(buf).unwrap();
         let section = Section::from_name(&ini, "1002").unwrap();
 
-        let var = ElectronicDataSheet::parse_var(&section);
-        assert!(var.is_ok());
-        let var = var.unwrap();
-        assert_eq!(var.object_number, 0x1002);
-        assert_eq!(var.parameter_name, "test");
-        assert_eq!(var.object_code, ObjectCode::Var);
-        let sub0 = var.subs.get(&0).unwrap();
-        assert_eq!(sub0.data_type, DataType::Boolean);
-        assert_eq!(sub0.access_type, AccessType::Ro);
+        let obj = ElectronicDataSheet::parse_object(&ini, &section).unwrap();
+        assert_eq!(obj.object_code, ObjectCode::Var);
+        assert_eq!(obj.object_number, 0x1002);
+        assert_eq!(obj.parameter_name, "test");
+        assert_eq!(obj.sub_number, 0);
+        let sub = obj.subs.get(&0).unwrap();
+        assert_eq!(sub.data_type, DataType::Boolean);
+        assert_eq!(sub.access_type, AccessType::Ro);
+    }
 
-        let arr = ElectronicDataSheet::parse_array(&ini, &section);
-        assert!(arr.is_err());
+    #[test]
+    fn test_from_str() {
+        let s = "
+[FileInfo]
+FileName=project.eds
+FileVersion=1
+FileRevision=1
+LastEDS=
+EDSVersion=4.0
+Description=
+CreationTime=9:23AM
+CreationDate=08-29-2024
+CreatedBy=
+ModificationTime=9:23AM
+ModificationDate=08-29-2024
+ModifiedBy=
 
-        let rec = ElectronicDataSheet::parse_record(&ini, &section);
-        assert!(rec.is_err());
+[DeviceInfo]
+VendorName=
+VendorNumber=
+ProductName=New Product
+ProductNumber=
+RevisionNumber=0
+OrderCode=
+BaudRate_10=0
+BaudRate_20=0
+BaudRate_50=0
+BaudRate_125=0
+BaudRate_250=0
+BaudRate_500=0
+BaudRate_800=0
+BaudRate_1000=0
+SimpleBootUpMaster=0
+SimpleBootUpSlave=0
+Granularity=8
+DynamicChannelsSupported=0
+CompactPDO=0
+GroupMessaging=0
+NrOfRXPDO=4
+NrOfTXPDO=4
+LSS_Supported=0
+
+[DummyUsage]
+Dummy0001=0
+Dummy0002=0
+Dummy0003=0
+Dummy0004=0
+Dummy0005=0
+Dummy0006=0
+Dummy0007=0
+
+[Comments]
+Lines=0
+
+[MandatoryObjects]
+SupportedObjects=0
+
+[OptionalObjects]
+SupportedObjects=0
+
+[ManufacturerObjects]
+SupportedObjects=0
+";
+        let eds = ElectronicDataSheet::from_str(s);
+        assert!(eds.is_ok());
+
+        let eds = eds.unwrap();
+        assert_eq!(eds.file_info.creation_time, "9:23AM");
+        assert_eq!(eds.file_info.creation_date, "08-29-2024");
+        assert!(eds.comments.lines.is_empty());
+        assert!(eds.mandatory_objects.is_empty());
+        assert!(eds.optional_objects.is_empty());
+        assert!(eds.manufacturer_objects.is_empty());
+        println!("{:#?}", eds);
     }
 }
