@@ -1,6 +1,6 @@
 use ini::{Ini, Properties};
 use snafu::{ResultExt as _, Snafu};
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 use zencan_common::objects::{AccessType, DataType, ObjectCode};
 
@@ -332,6 +332,20 @@ impl<'a> Section<'a> {
     }
 }
 
+impl FromStr for ElectronicDataSheet {
+    type Err = LoadError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let ini = Ini::load_from_str(s).map_err(|_| {
+            IniFormatSnafu {
+                message: "Unable to load init file",
+            }
+            .build()
+        })?;
+        Self::from_ini(&ini)
+    }
+}
+
 impl ElectronicDataSheet {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<ElectronicDataSheet, LoadError> {
         let ini = Ini::load_from_file(path).map_err(|_| {
@@ -341,16 +355,6 @@ impl ElectronicDataSheet {
             .build()
         })?;
         Self::from_ini(&ini)
-    }
-
-    pub fn from_str(s: &str) -> Result<ElectronicDataSheet, LoadError> {
-        let ini = Ini::load_from_str(s).map_err(|_| {
-            IniFormatSnafu {
-                message: "Unable to load init file",
-            }
-            .build()
-        })?;
-        Self::from_ini(ini)
     }
 
     fn from_ini(ini: &Ini) -> Result<ElectronicDataSheet, LoadError> {
