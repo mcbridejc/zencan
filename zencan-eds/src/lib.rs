@@ -16,6 +16,9 @@ pub enum LoadError {
         message: String,
         source: std::num::ParseIntError,
     },
+    UnsupportedObject {
+        object_type: ObjectCode,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -111,7 +114,10 @@ impl Object {
     ) -> Result<Self, LoadError> {
         use ObjectCode::*;
         match object_code {
-            Null => panic!("Null objects are not supported"),
+            Null | DefType | DefStruct => UnsupportedObjectSnafu {
+                object_type: object_code,
+            }
+            .fail(),
             Domain | Var => Ok(Object {
                 parameter_name,
                 object_number,
@@ -119,7 +125,6 @@ impl Object {
                 sub_number,
                 subs,
             }),
-            DefType | DefStruct => todo!("not yet implemented"),
             Array | Record => {
                 if subs.len() != sub_number as usize {
                     return EdsFormatSnafu {
@@ -503,16 +508,11 @@ impl ElectronicDataSheet {
 
         use ObjectCode::*;
         match object_code {
-            Null => EdsFormatSnafu {
-                message: format!(
-                    "Invalid object code '{}' in '{}'",
-                    object_code as u8, section.name
-                ),
+            Null | DefType | DefStruct => UnsupportedObjectSnafu {
+                object_type: object_code,
             }
             .fail(),
             Domain => ElectronicDataSheet::parse_domain(section),
-            DefType => todo!("not yet implemented"),
-            DefStruct => todo!("not yet implemented"),
             Var => ElectronicDataSheet::parse_var(section),
             Array => ElectronicDataSheet::parse_array(ini, section),
             Record => ElectronicDataSheet::parse_record(ini, section),
@@ -777,5 +777,24 @@ SupportedObjects=0
         assert!(eds.optional_objects.is_empty());
         assert!(eds.manufacturer_objects.is_empty());
         println!("{:#?}", eds);
+    }
+
+    #[test]
+    fn test_unsupported_obj() {
+        let s = "
+[3142]
+ObjectType=0x0
+";
+        let ini = Ini::load_from_str(s).unwrap();
+        let section = Section::from_name(&ini, "3142").unwrap();
+        let obj = ElectronicDataSheet::parse_object(&ini, &section)
+            .err()
+            .unwrap();
+        assert!(matches!(
+            obj,
+            LoadError::UnsupportedObject {
+                object_type: ObjectCode::Null
+            }
+        ))
     }
 }
