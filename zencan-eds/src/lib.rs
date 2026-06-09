@@ -340,7 +340,7 @@ impl ElectronicDataSheet {
             }
             .build()
         })?;
-        Self::from_ini(ini)
+        Self::from_ini(&ini)
     }
 
     pub fn from_str(s: &str) -> Result<ElectronicDataSheet, LoadError> {
@@ -353,19 +353,19 @@ impl ElectronicDataSheet {
         Self::from_ini(ini)
     }
 
-    fn from_ini(ini: Ini) -> Result<ElectronicDataSheet, LoadError> {
-        let file_info_section = Section::from_name(&ini, "FileInfo")?;
-        let device_info_section = Section::from_name(&ini, "DeviceInfo")?;
-        let dummy_usage_section = Section::from_name(&ini, "DummyUsage")?;
-        let comments_section = Section::from_name(&ini, "Comments")?;
+    fn from_ini(ini: &Ini) -> Result<ElectronicDataSheet, LoadError> {
+        let file_info_section = Section::from_name(ini, "FileInfo")?;
+        let device_info_section = Section::from_name(ini, "DeviceInfo")?;
+        let dummy_usage_section = Section::from_name(ini, "DummyUsage")?;
+        let comments_section = Section::from_name(ini, "Comments")?;
         Ok(ElectronicDataSheet {
             file_info: ElectronicDataSheet::parse_file_info(&file_info_section)?,
             device_info: ElectronicDataSheet::parse_device_info(&device_info_section)?,
             dummy_usage: ElectronicDataSheet::parse_dummy_usage(&dummy_usage_section)?,
             comments: ElectronicDataSheet::parse_comments(&comments_section)?,
-            mandatory_objects: ElectronicDataSheet::parse_objects(&ini, "MandatoryObjects")?,
-            optional_objects: ElectronicDataSheet::parse_objects(&ini, "OptionalObjects")?,
-            manufacturer_objects: ElectronicDataSheet::parse_objects(&ini, "ManufacturerObjects")?,
+            mandatory_objects: ElectronicDataSheet::parse_objects(ini, "MandatoryObjects")?,
+            optional_objects: ElectronicDataSheet::parse_objects(ini, "OptionalObjects")?,
+            manufacturer_objects: ElectronicDataSheet::parse_objects(ini, "ManufacturerObjects")?,
         })
     }
 
@@ -445,11 +445,11 @@ impl ElectronicDataSheet {
     }
 
     fn parse_objects(ini: &Ini, name: &str) -> Result<Vec<Object>, LoadError> {
-        let section = Section::from_name(&ini, name)?;
+        let section = Section::from_name(ini, name)?;
         let objects = ElectronicDataSheet::parse_object_list(&section)?;
         let mut list = Vec::new();
         for index in objects {
-            let section = Section::from_name(&ini, &format!("{:X}", index))?;
+            let section = Section::from_name(ini, &format!("{:X}", index))?;
             list.push(ElectronicDataSheet::parse_object(ini, &section)?);
         }
         Ok(list)
@@ -569,7 +569,7 @@ impl ElectronicDataSheet {
                 let mut subs = BTreeMap::new();
                 for subindex in 0..0xFF {
                     if let Ok(sub_section) =
-                        Section::from_name(&ini, &format!("{}sub{:X}", section.name, subindex))
+                        Section::from_name(ini, &format!("{}sub{:X}", section.name, subindex))
                     {
                         subs.insert(
                             subindex,
@@ -611,7 +611,7 @@ impl ElectronicDataSheet {
                 let mut subs = BTreeMap::new();
                 for subindex in 0..0xFF {
                     if let Ok(sub_section) =
-                        Section::from_name(&ini, &format!("{}sub{:X}", section.name, subindex))
+                        Section::from_name(ini, &format!("{}sub{:X}", section.name, subindex))
                     {
                         subs.insert(
                             subindex,
