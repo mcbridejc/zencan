@@ -268,10 +268,7 @@ impl<'a> Section<'a> {
     /// Get the string stored in the field (empty string when empty field).
     /// Returns an error if the field is missing.
     pub fn get_string(&self, field: &str) -> Result<String, LoadError> {
-        match self.get_string_opt(field)? {
-            Some(v) => Ok(v),
-            None => Ok("".to_string()),
-        }
+        Ok(self.get_string_opt(field)?.unwrap_or_default())
     }
 
     /// Read a field as an unsigned int
@@ -289,11 +286,11 @@ impl<'a> Section<'a> {
                     ),
                 };
                 if v.starts_with("0x") {
-                    v.parse_hex().map(|i| Some(i)).context(parse_err)
+                    v.parse_hex().map(Some).context(parse_err)
                 } else if v.starts_with("0") && v != "0" {
-                    v.parse_oct().map(|i| Some(i)).context(parse_err)
+                    v.parse_oct().map(Some).context(parse_err)
                 } else {
-                    v.parse::<u32>().map(|i| Some(i)).context(parse_err)
+                    v.parse::<u32>().map(Some).context(parse_err)
                 }
             }
             None => Ok(None),
