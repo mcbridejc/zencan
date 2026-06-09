@@ -484,14 +484,20 @@ impl ElectronicDataSheet {
     }
 
     fn parse_object(ini: &Ini, section: &Section) -> Result<Object, LoadError> {
-        let object_code = match section.get_u32_opt("ObjectType")?.map(|i| i as u8) {
-            None => Ok(ObjectCode::Var),
-            Some(v) => match ObjectCode::try_from(v) {
-                Ok(v) => Ok(v),
-                Err(_) => EdsFormatSnafu {
-                    message: format!("Invalid object code '{}' in '{}'", v, section.name),
-                }
-                .fail(),
+        let object_code = match section.get_u32_opt("ObjectType") {
+            Ok(val) => match val {
+                None => Ok(ObjectCode::Var),
+                Some(v) => match ObjectCode::try_from(v as u8) {
+                    Ok(v) => Ok(v),
+                    Err(_) => EdsFormatSnafu {
+                        message: format!("Invalid object code '{}' in '{}'", v, section.name),
+                    }
+                    .fail(),
+                },
+            },
+            Err(e) => match e {
+                LoadError::EdsFormatError { message: _ } => Ok(ObjectCode::Var),
+                _ => Err(e),
             },
         }?;
 
