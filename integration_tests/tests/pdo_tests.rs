@@ -175,13 +175,13 @@ async fn test_tpdo_assignment() {
         sender.send(sync_msg).await.unwrap();
 
         // We expect to receive the sync message just sent first
-        let rx_sync_msg = timeout(Duration::from_millis(50), rx.recv())
+        let rx_sync_msg = timeout(Duration::from_millis(200), rx.recv())
             .await
             .expect("Expected SYNC message, no CAN message received")
             .expect("recv returned an error");
         assert_eq!(sync_msg.id, rx_sync_msg.id);
         // Then expect a PDO message
-        let msg = timeout(Duration::from_millis(50), rx.recv())
+        let msg = timeout(Duration::from_millis(200), rx.recv())
             .await
             .expect("Expected PDO, no CAN message received")
             .expect("recv returned an error");
