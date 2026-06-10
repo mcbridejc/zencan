@@ -45,39 +45,39 @@ async fn test_rpdo_assignment() {
 
     let test_task = move |mut ctx: TestContext| async move {
         // Readback the largest sub index
-        assert_eq!(2, client.upload_u8(0x1400, 0).await.unwrap());
+        assert_eq!(2, client.read_u8(0x1400, 0).await.unwrap());
 
         // Check initial value of RPDO1 cob_id
-        assert_eq!(0x300, client.upload_u32(0x1400, 1).await.unwrap());
+        assert_eq!(0x300, client.read_u32(0x1400, 1).await.unwrap());
 
         // Set COB-ID and readback
         // Invalid bit cleared, and ID == 0x201.
         let cob_id_word: u32 = 0x201;
-        client.download_u32(0x1400, 1, cob_id_word).await.unwrap();
+        client.write_u32(0x1400, 1, cob_id_word).await.unwrap();
 
-        let readback_cob_id_word = client.upload_u32(0x1400, 1).await.unwrap();
+        let readback_cob_id_word = client.read_u32(0x1400, 1).await.unwrap();
         assert_eq!(cob_id_word, readback_cob_id_word);
 
         // Check initial values of RPDO0 mappings
         // These are set to 0x2000sub2 and 0x300Csub12 by default in example1.toml
-        assert_eq!(2, client.upload_u8(0x1600, 0).await.unwrap());
+        assert_eq!(2, client.read_u8(0x1600, 0).await.unwrap());
         let default_mapping_entry_1: u32 = (0x2000 << 16) | (2 << 8) | 32;
         let default_mapping_entry_2: u32 = (0x300C << 16) | (12 << 8) | 24;
         assert_eq!(
             default_mapping_entry_1,
-            client.upload_u32(0x1600, 1).await.unwrap()
+            client.read_u32(0x1600, 1).await.unwrap()
         );
         assert_eq!(
             default_mapping_entry_2,
-            client.upload_u32(0x1600, 2).await.unwrap()
+            client.read_u32(0x1600, 2).await.unwrap()
         );
-        assert_eq!(u24::new(0), client.upload_u24(0x300C, 12).await.unwrap());
+        assert_eq!(u24::new(0), client.read_u24(0x300C, 12).await.unwrap());
 
         // Modify RPDO0 to map to object 0x2000, subindex 1, length 32 bits
         let mapping_entry: u32 = (0x2000 << 16) | (1 << 8) | 32;
-        client.download_u32(0x1600, 1, mapping_entry).await.unwrap();
+        client.write_u32(0x1600, 1, mapping_entry).await.unwrap();
         // // Set the number of valid mappings
-        client.download_u8(0x1600, 0, 2).await.unwrap();
+        client.write_u8(0x1600, 0, 2).await.unwrap();
 
         // Put in operational mode
         nmt.nmt_start(0).await.unwrap();
@@ -96,10 +96,10 @@ async fn test_rpdo_assignment() {
         // Delay a bit, because node process() method has to be called for PDO to apply
         ctx.wait_for_process(1).await;
         // Readback the mapped object; the PDO message above should have updated it
-        assert_eq!(500, client.upload_u32(0x2000, 1).await.unwrap());
+        assert_eq!(500, client.read_u32(0x2000, 1).await.unwrap());
         assert_eq!(
             u24::new(0x010203),
-            client.upload_u24(0x300C, 12).await.unwrap()
+            client.read_u24(0x300C, 12).await.unwrap()
         );
     };
 
@@ -151,20 +151,20 @@ async fn test_tpdo_assignment() {
             .await
             .unwrap();
 
-        client.download_u32(0x2001, 1, 333).await.unwrap();
+        client.write_u32(0x2001, 1, 333).await.unwrap();
         client
-            .download_i24(0x300C, 11, i24::new(-65432))
+            .write_i24(0x300C, 11, i24::new(-65432))
             .await
             .unwrap();
 
         // Set the TPDO mapping to 0x2001, subindex 1, length 32 bits
         let mapping_entry: u32 = (0x2001 << 16) | (1 << 8) | 32;
-        client.download_u32(0x1A00, 1, mapping_entry).await.unwrap();
+        client.write_u32(0x1A00, 1, mapping_entry).await.unwrap();
         // Set the second TPDO mapping entry to 0x300C, subindex 11, length 24 bits
         let mapping_entry: u32 = (0x300C << 16) | (11 << 8) | 24;
-        client.download_u32(0x1A00, 2, mapping_entry).await.unwrap();
+        client.write_u32(0x1A00, 2, mapping_entry).await.unwrap();
         // Set the number of valid mappings
-        client.download_u8(0x1A00, 0, 2).await.unwrap();
+        client.write_u8(0x1A00, 0, 2).await.unwrap();
 
         // Node has to be in Operating mode to send PDOs
         nmt.nmt_start(0).await.unwrap();
@@ -287,9 +287,9 @@ async fn test_tpdo_event_flags() {
             .unwrap();
 
         // Set some known values into the mapped application objects
-        client.download_u32(0x2000, 1, 222).await.unwrap();
-        client.download_u32(0x2001, 1, 333).await.unwrap();
-        client.download_u32(0x3000, 0, 444).await.unwrap();
+        client.write_u32(0x2000, 1, 222).await.unwrap();
+        client.write_u32(0x2001, 1, 333).await.unwrap();
+        client.write_u32(0x3000, 0, 444).await.unwrap();
 
         // Node has to be in Operating mode to send PDOs
         nmt.nmt_start(0).await.unwrap();
@@ -450,9 +450,9 @@ async fn test_tpdo_sync_initiated_transmission() {
             .unwrap();
 
         // Set some known values into the mapped application objects
-        client.download_u32(0x2000, 1, 222).await.unwrap();
-        client.download_u32(0x2001, 1, 333).await.unwrap();
-        client.download_u32(0x3000, 0, 444).await.unwrap();
+        client.write_u32(0x2000, 1, 222).await.unwrap();
+        client.write_u32(0x2001, 1, 333).await.unwrap();
+        client.write_u32(0x3000, 0, 444).await.unwrap();
 
         // Node has to be in Operating mode to send PDOs
         nmt.nmt_start(0).await.unwrap();
@@ -612,17 +612,17 @@ async fn test_pdo_configuration() {
         client.configure_tpdo(0, &config).await?;
 
         // Check that the expected objects got the expected values
-        assert_eq!(2, client.upload_u8(0x1A00, 0).await?);
+        assert_eq!(2, client.read_u8(0x1A00, 0).await?);
         assert_eq!(
             (0x2000 << 16) | 1 << 8 | 32,
-            client.upload_u32(0x1A00, 1).await?
+            client.read_u32(0x1A00, 1).await?
         );
         assert_eq!(
             (0x2001 << 16) | 1 << 8 | 32,
-            client.upload_u32(0x1A00, 2).await?
+            client.read_u32(0x1A00, 2).await?
         );
-        assert_eq!(254, client.upload_u8(0x1800, 2).await?);
-        assert_eq!(0x301, client.upload_u32(0x1800, 1).await?);
+        assert_eq!(254, client.read_u8(0x1800, 2).await?);
+        assert_eq!(0x301, client.read_u32(0x1800, 1).await?);
 
         Ok::<_, Box<dyn std::error::Error>>(())
     };

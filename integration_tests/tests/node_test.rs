@@ -311,10 +311,10 @@ async fn test_store_and_restore_objects() {
             .download(0x2003, 0, "SAVEME".as_bytes())
             .await
             .unwrap();
-        client.download_u32(0x2000, 1, 900).await.unwrap();
+        client.write_u32(0x2000, 1, 900).await.unwrap();
 
         // Trigger a save
-        client.download_u32(0x1010, 1, SAVE_CMD).await.unwrap();
+        client.write_u32(0x1010, 1, SAVE_CMD).await.unwrap();
 
         ctx.wait_for_process(1).await;
 
@@ -329,7 +329,7 @@ async fn test_store_and_restore_objects() {
             .download(0x2003, 0, "NOTSAVED".as_bytes())
             .await
             .unwrap();
-        client.download_u32(0x2000, 1, 500).await.unwrap();
+        client.write_u32(0x2000, 1, 500).await.unwrap();
 
         zencan_node::restore_stored_objects(&OD_TABLE, &serialized_data.read().unwrap());
 
@@ -341,7 +341,7 @@ async fn test_store_and_restore_objects() {
             "NOTSAVED".as_bytes()
         );
         // Should have saved
-        assert_eq!(client.upload_u32(0x2000, 1).await.unwrap(), 900);
+        assert_eq!(client.read_u32(0x2000, 1).await.unwrap(), 900);
     };
 
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
@@ -370,7 +370,7 @@ async fn test_empty_string_read() {
     let _logger = BusLogger::new(bus.new_receiver());
 
     let test_task = move |_ctx| async move {
-        let empty_string = client.upload_utf8(0x3005, 0).await.unwrap();
+        let empty_string = client.read_utf8(0x3005, 0).await.unwrap();
         assert_eq!("", empty_string);
     };
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;

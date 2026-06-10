@@ -135,14 +135,8 @@ macro_rules! access_methods {
     ($type: ty) => {
 
         paste! {
-            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server\n\n")]
-            #[doc = concat!("This is an alias for upload_", stringify!($type), " for a more intuitive API")]
-            pub async fn [<read_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
-                self.[<upload_ $type>](index, sub).await
-            }
-
             #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server")]
-            pub async fn [<upload_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
+            pub async fn [<read_ $type>](&mut self, index: u16, sub: u8) -> Result<$type> {
                 let data = self.upload(index, sub).await?;
                 if data.len() != <$type as ReadSize>::READ_SIZE {
                     return UnexpectedSizeSnafu.fail();
@@ -150,14 +144,8 @@ macro_rules! access_methods {
                 Ok($type::from_le_bytes(data.try_into().unwrap()))
             }
 
-            #[doc = concat!("Write a ", stringify!($type), " sub object on the SDO server\n\n")]
-            #[doc = concat!("This is an alias for download_", stringify!($type), " for a more intuitive API")]
+            #[doc = concat!("Write a ", stringify!($type), " sub object from the SDO server")]
             pub async fn [<write_ $type>](&mut self, index: u16, sub: u8, value: $type) -> Result<()> {
-                self.[<download_ $type>](index, sub, value).await
-            }
-
-            #[doc = concat!("Read a ", stringify!($type), " sub object from the SDO server")]
-            pub async fn [<download_ $type>](&mut self, index: u16, sub: u8, value: $type) -> Result<()> {
                 let data = value.to_le_bytes();
                 self.download(index, sub, &data).await
             }
@@ -570,38 +558,12 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     access_methods!(i8);
 
     /// Write to a TimeOfDay object on the SDO server
-    pub async fn download_time_of_day(
-        &mut self,
-        index: u16,
-        sub: u8,
-        data: TimeOfDay,
-    ) -> Result<()> {
-        let data = data.to_le_bytes();
-        self.download(index, sub, &data).await
-    }
-
-    /// Write to a TimeOfDay object on the SDO server
-    ///
-    /// Alias for `download_time_of_day`. This is a convenience function to allow for a more intuitive API.
     pub async fn write_time_of_day(&mut self, index: u16, sub: u8, data: TimeOfDay) -> Result<()> {
         let data = data.to_le_bytes();
         self.download(index, sub, &data).await
     }
 
     /// Write to a TimeDifference object on the SDO server
-    pub async fn download_time_difference(
-        &mut self,
-        index: u16,
-        sub: u8,
-        data: TimeDifference,
-    ) -> Result<()> {
-        let data = data.to_le_bytes();
-        self.download(index, sub, &data).await
-    }
-
-    /// Write to a TimeDifference object on the SDO server
-    ///
-    /// Alias for `download_time_difference`. This is a convenience function to allow for a more intuitive API.
     pub async fn write_time_difference(
         &mut self,
         index: u16,
@@ -613,17 +575,13 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     }
 
     /// Read a string from the SDO server
-    pub async fn upload_utf8(&mut self, index: u16, sub: u8) -> Result<String> {
+    pub async fn read_utf8(&mut self, index: u16, sub: u8) -> Result<String> {
         let data = self.upload(index, sub).await?;
         Ok(String::from_utf8_lossy(&data).into())
     }
-    /// Alias for `upload_utf8`
-    pub async fn read_utf8(&mut self, index: u16, sub: u8) -> Result<String> {
-        self.upload_utf8(index, sub).await
-    }
 
     /// Read a TimeOfDay object from the SDO server
-    pub async fn upload_time_of_day(&mut self, index: u16, sub: u8) -> Result<TimeOfDay> {
+    pub async fn read_time_of_day(&mut self, index: u16, sub: u8) -> Result<TimeOfDay> {
         let data = self.upload(index, sub).await?;
         if data.len() != TimeOfDay::SIZE {
             UnexpectedSizeSnafu.fail()
@@ -633,29 +591,13 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     }
 
     /// Read a TimeOfDay object from the SDO server
-    ///
-    /// Alias for `upload_time_of_day`. This is a convenience function to allow for a more intuitive
-    /// API.
-    pub async fn read_time_of_day(&mut self, index: u16, sub: u8) -> Result<TimeOfDay> {
-        self.upload_time_of_day(index, sub).await
-    }
-
-    /// Read a TimeOfDay object from the SDO server
-    pub async fn upload_time_difference(&mut self, index: u16, sub: u8) -> Result<TimeDifference> {
+    pub async fn read_time_difference(&mut self, index: u16, sub: u8) -> Result<TimeDifference> {
         let data = self.upload(index, sub).await?;
         if data.len() != TimeDifference::SIZE {
             UnexpectedSizeSnafu.fail()
         } else {
             Ok(TimeDifference::from_le_bytes(data.try_into().unwrap()))
         }
-    }
-
-    /// Read a TimeOfDay object from the SDO server
-    ///
-    /// Alias for `upload_time_of_day`. This is a convenience function to allow for a more intuitive
-    /// API.
-    pub async fn read_time_difference(&mut self, index: u16, sub: u8) -> Result<TimeDifference> {
-        self.upload_time_difference(index, sub).await
     }
 
     /// Read an object as a visible string
@@ -670,10 +612,10 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     ///
     /// All nodes should implement this object
     pub async fn read_identity(&mut self) -> Result<LssIdentity> {
-        let vendor_id = self.upload_u32(object_ids::IDENTITY, 1).await?;
-        let product_code = self.upload_u32(object_ids::IDENTITY, 2).await?;
-        let revision_number = self.upload_u32(object_ids::IDENTITY, 3).await?;
-        let serial = self.upload_u32(object_ids::IDENTITY, 4).await?;
+        let vendor_id = self.read_u32(object_ids::IDENTITY, 1).await?;
+        let product_code = self.read_u32(object_ids::IDENTITY, 2).await?;
+        let revision_number = self.read_u32(object_ids::IDENTITY, 3).await?;
+        let serial = self.read_u32(object_ids::IDENTITY, 4).await?;
         Ok(LssIdentity::new(
             vendor_id,
             product_code,
@@ -684,8 +626,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
 
     /// Write object 0x1010sub1 to command all objects be saved
     pub async fn save_objects(&mut self) -> Result<()> {
-        self.download_u32(object_ids::SAVE_OBJECTS, 1, SAVE_CMD)
-            .await
+        self.write_u32(object_ids::SAVE_OBJECTS, 1, SAVE_CMD).await
     }
 
     /// Read the device name object
