@@ -245,6 +245,13 @@ access_type = "rw"
 pdo_mapping = "both"
 
 [[objects]]
+index = 0x300D
+parameter_name = "Boolean var"
+object_type = "var"
+data_type = "boolean"
+access_type = "rw"
+
+[[objects]]
 index = 0x3010
 parameter_name = "Application Callback Var"
 object_type = "var"

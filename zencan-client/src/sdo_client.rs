@@ -608,6 +608,21 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
         Ok(String::from_utf8_lossy(&bytes).into())
     }
 
+    /// Read an object as a boolean
+    pub async fn read_bool(&mut self, index: u16, sub: u8) -> Result<bool> {
+        let bytes = self.upload(index, sub).await?;
+        if bytes.len() != 1 {
+            return UnexpectedSizeSnafu.fail();
+        }
+        Ok(bytes[0] != 0)
+    }
+
+    /// Write an object as a boolean
+    pub async fn write_bool(&mut self, index: u16, sub: u8, value: bool) -> Result<()> {
+        let data = if value { [1u8] } else { [0u8] };
+        self.download(index, sub, &data).await
+    }
+
     /// Read the identity object
     ///
     /// All nodes should implement this object
