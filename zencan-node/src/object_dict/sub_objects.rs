@@ -184,6 +184,15 @@ impl_scalar_field!(i64);
 impl_scalar_field!(f32);
 impl_scalar_field!(f64);
 
+impl ScalarField<bool> {
+    /// Create a new field
+    pub const fn new(value: bool) -> Self {
+        Self {
+            value: AtomicCell::new(value),
+        }
+    }
+}
+
 // bool doesn't support from_le_bytes so it needs a special implementation
 impl SubObjectAccess for ScalarField<bool> {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {

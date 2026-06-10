@@ -500,6 +500,37 @@ async fn test_time_field_access() {
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
 
+#[serial]
+#[tokio::test]
+async fn test_boolean_object_access() {
+    use object_dict1::*;
+
+    let _ = env_logger::try_init();
+
+    const NODE_ID: u8 = 1;
+    let mut bus = SimBus::new();
+    bus.add_node(&NODE_MBOX);
+    let callbacks = Callbacks::new();
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        callbacks,
+        &NODE_MBOX,
+        &NODE_STATE,
+        &OD_TABLE,
+    );
+    let mut client = get_sdo_client(&mut bus, NODE_ID);
+
+    let _logger = BusLogger::new(bus.new_receiver());
+
+    let test_task = move |_ctx| async move {
+        client.write_bool(0x300D, 0, true).await.unwrap();
+        assert_eq!(true, OBJECT300D.get_value());
+        client.write_bool(0x300D, 0, false).await.unwrap();
+        assert_eq!(false, OBJECT300D.get_value());
+    };
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
+}
+
 /// Test that the Node properly calls the sync callback when the sync object is received
 #[serial]
 #[tokio::test]

@@ -316,9 +316,9 @@ fn get_default_tokens(
             match data_type {
                 DCDataType::Boolean => {
                     if *i != 0 {
-                        Ok(quote!(ScalarField<bool>::new(true)))
+                        Ok(quote!(ScalarField::<bool>::new(true)))
                     } else {
-                        Ok(quote!(ScalarField<bool>::new(false)))
+                        Ok(quote!(ScalarField::<bool>::new(false)))
                     }
                 }
                 DCDataType::Int8 => Ok(quote!(ScalarField::<i8>::new(#i as i8))),
