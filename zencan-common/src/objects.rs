@@ -336,6 +336,17 @@ impl SubInfo {
     }
 
     /// Convenience function for creating a new sub-info by type
+    pub const fn new_boolean() -> Self {
+        Self {
+            size: 1,
+            data_type: DataType::Boolean,
+            access_type: AccessType::Ro,
+            pdo_mapping: PdoMappable::None,
+            persist: false,
+        }
+    }
+
+    /// Convenience function for creating a new sub-info by type
     pub const fn new_visibile_str(size: usize) -> Self {
         Self {
             size,
