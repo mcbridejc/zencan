@@ -666,7 +666,7 @@ mod tests {
                 1 => Some((SubInfo::new_u32().rw_access(), &self.val1)),
                 2 => Some((SubInfo::new_u8().rw_access(), &self.val2)),
                 3 => Some((
-                    SubInfo::new_visibile_str(self.val3.len()).rw_access(),
+                    SubInfo::new_visible_str(self.val3.len()).rw_access(),
                     &self.val3,
                 )),
                 _ => None,

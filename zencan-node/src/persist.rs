@@ -374,7 +374,7 @@ mod tests {
             fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
                 match sub {
                     0 => Some((
-                        SubInfo::new_visibile_str(self.string.len()).persist(true),
+                        SubInfo::new_visible_str(self.string.len()).persist(true),
                         &self.string,
                     )),
                     _ => None,
