@@ -230,7 +230,7 @@ impl ObjectAccess for BootloaderSection {
         match sub {
             0 => Ok(SubInfo::MAX_SUB_NUMBER),
             1 => Ok(SubInfo::new_u8().ro_access()),
-            2 => Ok(SubInfo::new_visibile_str(self.name.len()).ro_access()),
+            2 => Ok(SubInfo::new_visible_str(self.name.len()).ro_access()),
             3 => Ok(SubInfo::new_u32().wo_access()),
             4 => Ok(SubInfo {
                 size: self.size as usize,

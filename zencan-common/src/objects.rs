@@ -347,7 +347,7 @@ impl SubInfo {
     }
 
     /// Convenience function for creating a new sub-info by type
-    pub const fn new_visibile_str(size: usize) -> Self {
+    pub const fn new_visible_str(size: usize) -> Self {
         Self {
             size,
             data_type: DataType::VisibleString,
