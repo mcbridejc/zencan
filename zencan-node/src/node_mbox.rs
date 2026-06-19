@@ -166,8 +166,8 @@ impl NodeMbox {
                 continue;
             }
             if id == rpdo.cob_id() {
-                let mut data = [0u8; 8];
-                data[0..msg.data().len()].copy_from_slice(msg.data());
+                // Unwrap safety: msg data cannot be longer than 8 byte size of the Vec
+                let data = heapless::Vec::from_slice(msg.data()).unwrap();
                 rpdo.buffered_value.store(Some(data));
                 return Ok(());
             }

@@ -187,6 +187,8 @@ async fn test_tpdo_assignment() {
             .expect("recv returned an error");
 
         assert_eq!(CanId::std(0x181), msg.id);
+        assert_eq!(7, msg.dlc);
+        assert_eq!(7, msg.data().len());
         let field1 = u32::from_le_bytes(msg.data[0..4].try_into().unwrap());
         let field2 = i24::from_le_bytes(msg.data[4..7].try_into().unwrap());
         assert_eq!(333, field1);
@@ -478,6 +480,7 @@ async fn test_tpdo_sync_initiated_transmission() {
         let msg = rx.try_recv().expect("No message received after TPDO event");
         println!("received after sync {sync_counter}: {msg:#x?}");
         assert_eq!(CanId::std(0x181), msg.id);
+        assert_eq!(8, msg.data().len());
         assert_eq!(
             222,
             u32::from_le_bytes(msg.data()[0..4].try_into().unwrap())
@@ -495,13 +498,10 @@ async fn test_tpdo_sync_initiated_transmission() {
         let msg = rx.try_recv().expect("No message received after TPDO event");
         println!("received after sync {sync_counter}: {msg:#x?}");
         assert_eq!(CanId::std(0x182), msg.id);
+        assert_eq!(4, msg.data().len());
         assert_eq!(
             444,
             u32::from_le_bytes(msg.data()[0..4].try_into().unwrap())
-        );
-        assert_eq!(
-            000,
-            u32::from_le_bytes(msg.data()[4..8].try_into().unwrap())
         );
         // should only have gotten one message
         assert!(rx.try_recv().is_none());
@@ -547,13 +547,10 @@ async fn test_tpdo_sync_initiated_transmission() {
         let msg = rx.try_recv().expect("No message received after TPDO event");
         println!("received after sync {sync_counter}: {msg:#x?}");
         assert_eq!(CanId::std(0x182), msg.id);
+        assert_eq!(4, msg.data().len());
         assert_eq!(
             444,
             u32::from_le_bytes(msg.data()[0..4].try_into().unwrap())
-        );
-        assert_eq!(
-            000,
-            u32::from_le_bytes(msg.data()[4..8].try_into().unwrap())
         );
 
         // Nothing else in queue yet
