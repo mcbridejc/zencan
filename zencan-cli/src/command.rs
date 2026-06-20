@@ -48,7 +48,7 @@ pub struct ReadArgs {
     pub data_type: Option<SdoDataType>,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
 pub enum SdoDataType {
     U32,
     U16,
@@ -73,6 +73,7 @@ pub struct WriteArgs {
     /// How to interpret the value
     pub data_type: SdoDataType,
     /// The value to write
+    #[arg(allow_negative_numbers = true)]
     pub value: String,
 }
 
@@ -217,4 +218,27 @@ pub enum LssCommands {
         #[clap(action=clap::ArgAction::Set)]
         enable: u8,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands, SdoDataType};
+    use clap::Parser;
+
+    #[test]
+    fn test_negative_sdo_write_args() {
+        let cli = Cli::try_parse_from(["zencan-cli", "write", "1", "0x2000", "1", "i32", "-4"])
+            .expect("negative signed SDO write value should parse");
+
+        match cli.command {
+            Commands::Write(args) => {
+                assert_eq!(args.node_id, 1);
+                assert_eq!(args.index, 0x2000);
+                assert_eq!(args.sub, 1);
+                assert_eq!(args.data_type, SdoDataType::I32);
+                assert_eq!(args.value, "-4");
+            }
+            other => panic!("expected write command, got {other:?}"),
+        }
+    }
 }
