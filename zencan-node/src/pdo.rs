@@ -43,15 +43,15 @@
 use crate::{
     node_state::NmtStateAccess,
     object_dict::{
-        find_object_entry, ConstField, ODEntry, ObjectAccess, ProvidesSubObjects, SubObjectAccess,
+        find_object_entry, ConstField, ODEntry, ObjectAccess, ProvidesSubObjects, SubInfo,
+        SubObjectAccess,
     },
 };
 use zencan_common::{
-    nmt::NmtState,
-    objects::{AccessType, DataType, ObjectCode, PdoMappable, SubInfo},
-    pdo::PdoMapping,
-    sdo::AbortCode,
-    AtomicCell, CanId, NodeId,
+    can::CanId,
+    object_model::{AccessType, DataType, ObjectCode, PdoMappable, PdoMapping},
+    protocol::{AbortCode, NmtState, NodeId},
+    AtomicCell,
 };
 
 /// Specifies the number of mapping parameters supported per PDO

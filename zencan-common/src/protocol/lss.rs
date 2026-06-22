@@ -4,7 +4,11 @@
 //! the Layer Setting Services (LSS) protocol. The LSS protocol is used for configuring the node ID
 //! on unconfigured nodes, and for discovering the identity of unconfigured nodes.
 
-use crate::messages::{CanId, CanMessage, MessageError, LSS_REQ_ID, LSS_RESP_ID};
+use super::{
+    cob_id::{LSS_REQ_ID, LSS_RESP_ID},
+    errors::MessageError,
+};
+use crate::can::{CanId, CanMessage};
 
 /// Defines all possible values for the LSS command specifier field
 #[derive(Debug, Clone, Copy)]

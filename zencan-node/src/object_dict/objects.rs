@@ -2,12 +2,12 @@
 
 use zencan_common::{
     i24,
-    objects::{AccessType, DataType, ObjectCode, SubInfo},
-    sdo::AbortCode,
+    object_model::{AccessType, DataType, ObjectCode},
+    protocol::AbortCode,
     u24, AtomicCell,
 };
 
-use super::{ObjectFlagAccess, SubObjectAccess};
+use super::{ObjectFlagAccess, SubInfo, SubObjectAccess};
 
 /// A trait for accessing objects
 ///

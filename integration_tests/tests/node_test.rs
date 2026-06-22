@@ -8,7 +8,10 @@ use rand::Rng as _;
 use serial_test::serial;
 use zencan_client::nmt_master::NmtMaster;
 use zencan_common::{
-    messages::SyncObject, traits::AsyncCanSender, AtomicCell, TimeDifference, TimeOfDay,
+    can::AsyncCanSender,
+    object_model::{TimeDifference, TimeOfDay},
+    protocol::SyncObject,
+    AtomicCell,
 };
 
 #[serial]

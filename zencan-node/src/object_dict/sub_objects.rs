@@ -3,7 +3,10 @@
 use core::cell::UnsafeCell;
 
 use zencan_common::{
-    i24, sdo::AbortCode, traits::ReadSize, u24, AtomicCell, TimeDifference, TimeOfDay,
+    i24,
+    object_model::{ReadSize, TimeDifference, TimeOfDay},
+    protocol::AbortCode,
+    u24, AtomicCell,
 };
 
 /// Allow transparent byte level access to a sub object
@@ -643,9 +646,9 @@ impl SubObjectAccess for CallbackSubObject {
 
 #[cfg(test)]
 mod tests {
-    use zencan_common::objects::{ObjectCode, SubInfo};
+    use zencan_common::object_model::ObjectCode;
 
-    use crate::object_dict::{ObjectAccess, ProvidesSubObjects};
+    use crate::object_dict::{ObjectAccess, ProvidesSubObjects, SubInfo};
 
     use super::*;
 

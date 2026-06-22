@@ -1,9 +1,9 @@
 use zencan_common::{
-    objects::{DataType, ObjectId, SubInfo},
-    sdo::{AbortCode, SdoRequest, SdoResponse},
+    object_model::{DataType, ObjectId},
+    protocol::{AbortCode, SdoRequest, SdoResponse},
 };
 
-use crate::object_dict::{find_object_entry, ODEntry};
+use crate::object_dict::{find_object_entry, ODEntry, SubInfo};
 
 use crate::sdo_server::{sdo_comms::ReceiverState, SdoComms};
 
@@ -996,8 +996,8 @@ mod tests {
         ProvidesSubObjects, SubObjectAccess,
     };
     use zencan_common::{
-        objects::{AccessType, DataType, ObjectCode},
-        sdo::BlockSegment,
+        object_model::{AccessType, DataType, ObjectCode},
+        protocol::BlockSegment,
     };
 
     use crate::SDO_BUFFER_SIZE;

@@ -1,9 +1,7 @@
+//! Utilities for opening a linux socketcan device
 use std::sync::Arc;
 
-use crate::{
-    messages::{CanError, CanId, CanMessage},
-    traits::{AsyncCanReceiver, AsyncCanSender, CanSendError},
-};
+use super::{AsyncCanReceiver, AsyncCanSender, CanError, CanId, CanMessage, CanSendError};
 use snafu::{ResultExt, Snafu};
 use socketcan::{CanFrame, CanSocket, EmbeddedFrame, Frame, ShouldRetry, Socket};
 use tokio::io::{unix::AsyncFd, Interest};

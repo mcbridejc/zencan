@@ -8,13 +8,12 @@ use std::{
 
 use clap::Parser;
 use tokio::time::timeout;
-use zencan_node::{common::messages::SyncObject, Node};
 use zencan_node::{
     common::{
-        traits::{AsyncCanReceiver, AsyncCanSender},
-        NodeId,
+        can::{AsyncCanReceiver, AsyncCanSender},
+        protocol::{NodeId, SyncObject},
     },
-    Callbacks,
+    Callbacks, Node,
 };
 
 #[cfg(target_os = "linux")]

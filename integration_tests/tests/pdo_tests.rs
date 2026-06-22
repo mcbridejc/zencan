@@ -14,12 +14,12 @@ use serial_test::serial;
 use tokio::time::timeout;
 use zencan_client::nmt_master::NmtMaster;
 use zencan_common::{
+    can::{AsyncCanReceiver, AsyncCanSender, CanId, CanMessage},
     i24,
-    messages::{CanId, CanMessage, SyncObject},
     node_configuration::PdoConfig,
-    pdo::{PdoCommParameter, PdoMapping},
-    traits::{AsyncCanReceiver, AsyncCanSender},
-    u24, NodeId,
+    object_model::{PdoCommParameter, PdoMapping},
+    protocol::{NodeId, SyncObject},
+    u24,
 };
 use zencan_node::{object_dict::ObjectAccess as _, pdo::MappingEntry};
 

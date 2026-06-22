@@ -21,8 +21,9 @@ use shlex::Shlex;
 use zencan_cli::command::{Cli, Commands, LssCommands, NmtAction, SdoDataType};
 use zencan_client::{
     common::{
-        lss::LssState, node_configuration::NodeConfig, node_id::ConfiguredNodeId,
-        traits::AsyncCanSender, NodeId,
+        can::AsyncCanSender,
+        node_configuration::NodeConfig,
+        protocol::{ConfiguredNodeId, LssState, NodeId},
     },
     BusManager,
 };

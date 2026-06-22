@@ -2,7 +2,7 @@ use ini::{Ini, Properties};
 use snafu::{ResultExt as _, Snafu};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
 
-use zencan_common::objects::{AccessType, DataType, ObjectCode};
+use zencan_common::object_model::{AccessType, DataType, ObjectCode};
 
 #[derive(Debug, Snafu)]
 pub enum LoadError {

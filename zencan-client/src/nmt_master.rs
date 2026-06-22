@@ -2,9 +2,8 @@
 use std::time::Instant;
 
 use zencan_common::{
-    messages::{CanMessage, NmtCommand, NmtCommandSpecifier, ZencanMessage},
-    nmt::NmtState,
-    traits::{AsyncCanReceiver, AsyncCanSender},
+    can::{AsyncCanReceiver, AsyncCanSender, CanMessage},
+    protocol::{NmtCommand, NmtCommandSpecifier, NmtState, ZencanMessage},
 };
 
 type Result<T> = std::result::Result<T, ()>;

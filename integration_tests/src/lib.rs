@@ -14,6 +14,6 @@ pub mod prelude {
     pub use super::sim_bus::{SimBus, SimBusReceiver, SimBusSender};
     pub use super::utils::{get_sdo_client, test_with_background_process, BusLogger, TestContext};
     pub use zencan_client::{RawAbortCode, SdoClientError};
-    pub use zencan_common::{sdo::AbortCode, NodeId};
+    pub use zencan_common::protocol::{AbortCode, NodeId};
     pub use zencan_node::{Callbacks, Node};
 }

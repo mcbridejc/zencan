@@ -1,6 +1,6 @@
 use zencan_common::{
     device_config::{DeviceConfig, PdoDefaultConfig},
-    pdo::PdoMapping,
+    object_model::PdoMapping,
 };
 
 /// Exercise loading defaults for zencan defined objects

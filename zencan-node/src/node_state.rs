@@ -1,5 +1,5 @@
 //! Implements node state struct
-use zencan_common::nmt::NmtState;
+use zencan_common::protocol::NmtState;
 use zencan_common::AtomicCell;
 
 use crate::object_dict::ObjectFlagSync;

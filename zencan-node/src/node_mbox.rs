@@ -1,7 +1,8 @@
 //! Implements mailbox for receiving CAN messages
 use defmt_or_log::warn;
 use zencan_common::{
-    messages::{CanId, CanMessage, SyncObject},
+    can::{CanId, CanMessage},
+    protocol::{SyncObject, LSS_REQ_ID, NMT_CMD_ID, SYNC_ID},
     AtomicCell,
 };
 
@@ -139,20 +140,20 @@ impl NodeMbox {
     /// returned inside an Err.
     pub fn store_message(&self, msg: CanMessage) -> Result<(), CanMessage> {
         let id = msg.id();
-        if id == zencan_common::messages::NMT_CMD_ID {
+        if id == NMT_CMD_ID {
             self.nmt_mbox.store(Some(msg));
             self.process_notify();
             return Ok(());
         }
 
-        if id == zencan_common::messages::SYNC_ID {
+        if id == SYNC_ID {
             let sync_object = SyncObject::from(msg);
             self.sync_flag.store(Some(sync_object));
             self.process_notify();
             return Ok(());
         }
 
-        if id == zencan_common::messages::LSS_REQ_ID {
+        if id == LSS_REQ_ID {
             if let Ok(lss_req) = msg.data().try_into() {
                 if self.lss_receiver.handle_req(lss_req) {
                     self.process_notify();
@@ -226,10 +227,7 @@ mod tests {
     use core::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    use zencan_common::{
-        messages::SDO_REQ_BASE,
-        sdo::{BlockSegment, SdoRequest},
-    };
+    use zencan_common::protocol::{BlockSegment, SdoRequest, SDO_REQ_BASE};
 
     use crate::object_dict::ODEntry;
 
@@ -249,7 +247,7 @@ mod tests {
     fn create_test_objects() -> TestObjects {
         let od = Box::leak(Box::new([]));
         let nmt_state = Box::leak(Box::new(AtomicCell::new(
-            zencan_common::nmt::NmtState::Operational,
+            zencan_common::protocol::NmtState::Operational,
         )));
         let rpdos = Box::leak(Box::new([Pdo::new(od, nmt_state)]));
         let tpdos = Box::leak(Box::new([Pdo::new(od, nmt_state)]));

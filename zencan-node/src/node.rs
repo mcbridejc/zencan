@@ -4,12 +4,12 @@
 use core::{convert::Infallible, sync::atomic::Ordering};
 
 use zencan_common::{
-    constants::object_ids,
-    lss::LssIdentity,
-    messages::{
-        CanId, CanMessage, Heartbeat, NmtCommandSpecifier, SyncObject, ZencanMessage, LSS_RESP_ID,
+    can::{CanId, CanMessage},
+    object_model::object_ids,
+    protocol::{
+        Heartbeat, LssIdentity, NmtCommandSpecifier, NmtState, SyncObject, ZencanMessage,
+        LSS_RESP_ID,
     },
-    nmt::NmtState,
     AtomicCell, NodeId,
 };
 
@@ -534,13 +534,13 @@ impl<'a> Node<'a> {
 #[cfg(test)]
 mod tests {
     use zencan_common::{
-        nmt::NmtState,
-        objects::{ObjectCode, SubInfo},
-        CanMessage, NodeId,
+        can::CanMessage,
+        object_model::ObjectCode,
+        protocol::{NmtState, NodeId},
     };
 
     use crate::{
-        object_dict::{ODEntry, ProvidesSubObjects, ScalarField, SubObjectAccess},
+        object_dict::{ODEntry, ProvidesSubObjects, ScalarField, SubInfo, SubObjectAccess},
         priority_queue::PriorityQueue,
         Callbacks, Node, NodeMbox, NodeState,
     };

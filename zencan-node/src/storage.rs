@@ -4,14 +4,12 @@
 
 use core::{convert::Infallible, sync::atomic::Ordering};
 
+use crate::object_dict::{ObjectAccess, SubInfo};
 use portable_atomic::AtomicBool;
 use zencan_common::{
-    constants::values::SAVE_CMD,
-    objects::{ObjectCode, SubInfo},
-    sdo::AbortCode,
+    object_model::{values::SAVE_CMD, ObjectCode},
+    protocol::AbortCode,
 };
-
-use crate::object_dict::ObjectAccess;
 
 /// A callback function type for handling a store objects event
 pub type StoreObjectsCallback =

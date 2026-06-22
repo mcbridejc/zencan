@@ -2,7 +2,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use zencan_common::{traits::AsyncCanSender, CanMessage};
+use zencan_common::can::{AsyncCanSender, CanMessage};
 
 #[derive(Debug)]
 pub struct SharedSender<S: AsyncCanSender> {

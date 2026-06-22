@@ -5,7 +5,7 @@ use zencan_common::device_config::{
     DataType as DCDataType, DefaultValue, DeviceConfig, Object, ObjectDefinition, PdoDefaultConfig,
     SubDefinition,
 };
-use zencan_common::objects::{AccessType, ObjectCode, PdoMappable};
+use zencan_common::object_model::{AccessType, ObjectCode, PdoMappable};
 
 fn pdo_init_tokens(cfg: Option<&PdoDefaultConfig>) -> TokenStream {
     if let Some(PdoDefaultConfig {
@@ -107,62 +107,64 @@ fn get_rust_type_and_size(data_type: DCDataType) -> (syn::Type, usize) {
 #[allow(dead_code)]
 fn object_code_to_tokens(obj_code: ObjectCode) -> TokenStream {
     match obj_code {
-        ObjectCode::Null => quote!(zencan_node::common::objects::ObjectCode::Null),
-        ObjectCode::Record => quote!(zencan_node::common::objects::ObjectCode::Record),
-        ObjectCode::Array => quote!(zencan_node::common::objects::ObjectCode::Array),
-        ObjectCode::Var => quote!(zencan_node::common::objects::ObjectCode::Var),
-        ObjectCode::Domain => quote!(zencan_node::common::objects::ObjectCode::Domain),
-        ObjectCode::DefType => quote!(zencan_node::common::objects::ObjectCode::DefType),
-        ObjectCode::DefStruct => quote!(zencan_node::common::objects::ObjectCode::DefStruct),
+        ObjectCode::Null => quote!(zencan_node::common::object_model::ObjectCode::Null),
+        ObjectCode::Record => quote!(zencan_node::common::object_model::ObjectCode::Record),
+        ObjectCode::Array => quote!(zencan_node::common::object_model::ObjectCode::Array),
+        ObjectCode::Var => quote!(zencan_node::common::object_model::ObjectCode::Var),
+        ObjectCode::Domain => quote!(zencan_node::common::object_model::ObjectCode::Domain),
+        ObjectCode::DefType => quote!(zencan_node::common::object_model::ObjectCode::DefType),
+        ObjectCode::DefStruct => quote!(zencan_node::common::object_model::ObjectCode::DefStruct),
     }
 }
 
 /// Convert an AccessType enum to a tokenstream expressing the variant
 fn access_type_to_tokens(at: AccessType) -> TokenStream {
     match at {
-        AccessType::Ro => quote!(zencan_node::common::objects::AccessType::Ro),
-        AccessType::Wo => quote!(zencan_node::common::objects::AccessType::Wo),
-        AccessType::Rw => quote!(zencan_node::common::objects::AccessType::Rw),
-        AccessType::Const => quote!(zencan_node::common::objects::AccessType::Const),
+        AccessType::Ro => quote!(zencan_node::common::object_model::AccessType::Ro),
+        AccessType::Wo => quote!(zencan_node::common::object_model::AccessType::Wo),
+        AccessType::Rw => quote!(zencan_node::common::object_model::AccessType::Rw),
+        AccessType::Const => quote!(zencan_node::common::object_model::AccessType::Const),
     }
 }
 
 fn data_type_to_tokens(dt: DCDataType) -> TokenStream {
     match dt {
-        DCDataType::Boolean => quote!(zencan_node::common::objects::DataType::Boolean),
-        DCDataType::Int8 => quote!(zencan_node::common::objects::DataType::Int8),
-        DCDataType::Int16 => quote!(zencan_node::common::objects::DataType::Int16),
-        DCDataType::Int24 => quote!(zencan_node::common::objects::DataType::Int24),
-        DCDataType::Int32 => quote!(zencan_node::common::objects::DataType::Int32),
-        DCDataType::Int64 => quote!(zencan_node::common::objects::DataType::Int64),
-        DCDataType::UInt8 => quote!(zencan_node::common::objects::DataType::UInt8),
-        DCDataType::UInt16 => quote!(zencan_node::common::objects::DataType::UInt16),
-        DCDataType::UInt24 => quote!(zencan_node::common::objects::DataType::UInt24),
-        DCDataType::UInt32 => quote!(zencan_node::common::objects::DataType::UInt32),
-        DCDataType::UInt64 => quote!(zencan_node::common::objects::DataType::UInt64),
-        DCDataType::Real32 => quote!(zencan_node::common::objects::DataType::Real32),
-        DCDataType::Real64 => quote!(zencan_node::common::objects::DataType::Real64),
+        DCDataType::Boolean => quote!(zencan_node::common::object_model::DataType::Boolean),
+        DCDataType::Int8 => quote!(zencan_node::common::object_model::DataType::Int8),
+        DCDataType::Int16 => quote!(zencan_node::common::object_model::DataType::Int16),
+        DCDataType::Int24 => quote!(zencan_node::common::object_model::DataType::Int24),
+        DCDataType::Int32 => quote!(zencan_node::common::object_model::DataType::Int32),
+        DCDataType::Int64 => quote!(zencan_node::common::object_model::DataType::Int64),
+        DCDataType::UInt8 => quote!(zencan_node::common::object_model::DataType::UInt8),
+        DCDataType::UInt16 => quote!(zencan_node::common::object_model::DataType::UInt16),
+        DCDataType::UInt24 => quote!(zencan_node::common::object_model::DataType::UInt24),
+        DCDataType::UInt32 => quote!(zencan_node::common::object_model::DataType::UInt32),
+        DCDataType::UInt64 => quote!(zencan_node::common::object_model::DataType::UInt64),
+        DCDataType::Real32 => quote!(zencan_node::common::object_model::DataType::Real32),
+        DCDataType::Real64 => quote!(zencan_node::common::object_model::DataType::Real64),
         DCDataType::VisibleString(_) => {
-            quote!(zencan_node::common::objects::DataType::VisibleString)
+            quote!(zencan_node::common::object_model::DataType::VisibleString)
         }
         DCDataType::UnicodeString(_) => {
-            quote!(zencan_node::common::objects::DataType::UnicodeString)
+            quote!(zencan_node::common::object_model::DataType::UnicodeString)
         }
-        DCDataType::OctetString(_) => quote!(zencan_node::common::objects::DataType::OctetString),
-        DCDataType::TimeOfDay => quote!(zencan_node::common::objects::DataType::TimeOfDay),
+        DCDataType::OctetString(_) => {
+            quote!(zencan_node::common::object_model::DataType::OctetString)
+        }
+        DCDataType::TimeOfDay => quote!(zencan_node::common::object_model::DataType::TimeOfDay),
         DCDataType::TimeDifference => {
-            quote!(zencan_node::common::objects::DataType::TimeDifference)
+            quote!(zencan_node::common::object_model::DataType::TimeDifference)
         }
-        DCDataType::Domain => quote!(zencan_node::common::objects::DataType::Domain),
+        DCDataType::Domain => quote!(zencan_node::common::object_model::DataType::Domain),
     }
 }
 
 fn pdo_mappable_to_tokens(p: PdoMappable) -> TokenStream {
     match p {
-        PdoMappable::None => quote!(zencan_node::common::objects::PdoMappable::None),
-        PdoMappable::Tpdo => quote!(zencan_node::common::objects::PdoMappable::Tpdo),
-        PdoMappable::Rpdo => quote!(zencan_node::common::objects::PdoMappable::Rpdo),
-        PdoMappable::Both => quote!(zencan_node::common::objects::PdoMappable::Both),
+        PdoMappable::None => quote!(zencan_node::common::object_model::PdoMappable::None),
+        PdoMappable::Tpdo => quote!(zencan_node::common::object_model::PdoMappable::Tpdo),
+        PdoMappable::Rpdo => quote!(zencan_node::common::object_model::PdoMappable::Rpdo),
+        PdoMappable::Both => quote!(zencan_node::common::object_model::PdoMappable::Both),
     }
 }
 
@@ -409,7 +411,7 @@ fn get_object_impls(
                 }
             });
 
-            object_code = quote!(zencan_node::common::objects::ObjectCode::Var);
+            object_code = quote!(zencan_node::common::object_model::ObjectCode::Var);
         }
 
         Object::Array(def) => {
@@ -477,7 +479,7 @@ fn get_object_impls(
                 flag_number = array_size + 1;
             }
 
-            object_code = quote!(zencan_node::common::objects::ObjectCode::Array);
+            object_code = quote!(zencan_node::common::object_model::ObjectCode::Array);
         }
 
         Object::Record(def) => {
@@ -564,7 +566,7 @@ fn get_object_impls(
                 }
             });
 
-            object_code = quote!(zencan_node::common::objects::ObjectCode::Record);
+            object_code = quote!(zencan_node::common::object_model::ObjectCode::Record);
         }
     }
 
@@ -601,7 +603,7 @@ fn get_object_impls(
 
             #flag_method_tokens
 
-            fn object_code(&self) -> zencan_node::common::objects::ObjectCode {
+            fn object_code(&self) -> zencan_node::common::object_model::ObjectCode {
                 #object_code
             }
         }
@@ -807,7 +809,9 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
     let table_len = dev.objects.len();
     Ok(quote! {
         #[allow(unused_imports)]
-        use zencan_node::common::{AtomicCell, CanMessage};
+        use zencan_node::common::AtomicCell;
+        #[allow(unused_imports)]
+        use zencan_node::common::can::CanMessage;
         #[allow(unused_imports)]
         use core::cell::Cell;
         #[allow(unused_imports)]
@@ -815,9 +819,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
         #[allow(unused_imports)]
         use zencan_node::critical_section::Mutex;
         #[allow(unused_imports)]
-        use zencan_node::common::objects::SubInfo;
-        #[allow(unused_imports)]
-        use zencan_node::common::sdo::AbortCode;
+        use zencan_node::common::protocol::AbortCode;
         #[allow(unused_imports)]
         use zencan_node::object_dict::{
             CallbackObject,
@@ -826,6 +828,7 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             ODEntry,
             ObjectAccess,
             ProvidesSubObjects,
+            SubInfo,
             SubObjectAccess,
             ObjectFlagAccess,
             ScalarField,
@@ -834,7 +837,9 @@ pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, Compil
             NullTermByteField,
         };
         #[allow(unused_imports)]
-        use zencan_node::common::{i24, u24, TimeOfDay, TimeDifference};
+        use zencan_node::common::{i24, u24};
+        #[allow(unused_imports)]
+        use zencan_node::common::object_model::{TimeOfDay, TimeDifference};
         #[allow(unused_imports)]
         use zencan_node::SDO_BUFFER_SIZE;
         #[allow(unused_imports)]

@@ -3,9 +3,8 @@ use core::time::Duration;
 
 use tokio::time::timeout_at;
 use zencan_common::{
-    lss::{LssIdentity, LssRequest, LssResponse, LssState, LSS_FASTSCAN_CONFIRM},
-    traits::{AsyncCanReceiver, AsyncCanSender},
-    NodeId,
+    can::{AsyncCanReceiver, AsyncCanSender},
+    protocol::{LssIdentity, LssRequest, LssResponse, LssState, NodeId, LSS_FASTSCAN_CONFIRM},
 };
 
 use snafu::Snafu;

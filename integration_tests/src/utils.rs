@@ -3,7 +3,7 @@ use std::{future::Future, time::Instant};
 
 use crate::sim_bus::{SimBus, SimBusReceiver, SimBusSender};
 use zencan_client::SdoClient;
-use zencan_common::{messages::ZencanMessage, traits::AsyncCanReceiver};
+use zencan_common::{can::AsyncCanReceiver, protocol::ZencanMessage};
 use zencan_node::Node;
 
 pub fn get_sdo_client<'a>(

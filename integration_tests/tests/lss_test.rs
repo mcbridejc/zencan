@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use assertables::assert_contains;
 use zencan_client::LssMaster;
-use zencan_common::{lss::LssIdentity, NodeId};
+use zencan_common::protocol::{LssIdentity, NodeId};
 use zencan_node::{Callbacks, Node};
 
 use serial_test::serial;

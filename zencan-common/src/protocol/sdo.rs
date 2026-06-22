@@ -3,7 +3,7 @@
 //! Defines messages, constants, etc for SDO protocol
 use int_enum::IntEnum;
 
-use crate::messages::{CanId, CanMessage};
+use crate::can::{CanId, CanMessage};
 
 /// Specifies the possible server command specifier (SCS) values in SDO response packets
 enum ServerCommand {

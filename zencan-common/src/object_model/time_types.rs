@@ -6,6 +6,7 @@ use snafu::Snafu;
 
 const MILLIS_PER_DAY: u64 = 86_400_000;
 
+/// Error returned when creating a CANopen time value from date/time components.
 #[derive(Clone, Copy, Debug, Snafu)]
 pub enum TimeCreateError {
     /// The provided time is before the epoch and cannot be represented

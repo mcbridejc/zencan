@@ -2,15 +2,15 @@ use std::time::Duration;
 
 use snafu::Snafu;
 use zencan_common::{
-    constants::{object_ids, values::SAVE_CMD},
+    can::{AsyncCanReceiver, AsyncCanSender, CanId, CanMessage, CanSendError as _},
     i24,
-    lss::LssIdentity,
-    messages::CanId,
     node_configuration::PdoConfig,
-    pdo::{PdoCommParameter, PdoMapping},
-    sdo::{AbortCode, BlockSegment, SdoRequest, SdoResponse},
-    traits::{AsyncCanReceiver, AsyncCanSender, CanSendError as _, ReadSize},
-    u24, CanMessage, TimeDifference, TimeOfDay,
+    object_model::{
+        object_ids, values::SAVE_CMD, PdoCommParameter, PdoMapping, ReadSize, TimeDifference,
+        TimeOfDay,
+    },
+    protocol::{AbortCode, BlockSegment, LssIdentity, SdoRequest, SdoResponse},
+    u24,
 };
 
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_millis(150);

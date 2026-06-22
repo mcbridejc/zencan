@@ -8,31 +8,21 @@
 
 mod atomic_cell;
 pub use atomic_cell::AtomicCell;
-pub mod constants;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod device_config;
-pub mod lss;
-pub mod messages;
-pub mod nmt;
+
+pub mod can;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod node_configuration;
-pub mod node_id;
-pub mod objects;
-pub mod pdo;
-pub mod sdo;
-mod time_types;
-pub mod traits;
-
-#[cfg(all(feature = "socketcan", target_os = "linux"))]
-mod socketcan;
-
-#[cfg(all(feature = "socketcan", target_os = "linux"))]
-#[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
-pub use socketcan::{open_socketcan, SocketCanReceiver, SocketCanSender};
+pub mod object_model;
+pub mod protocol;
 
 pub use arbitrary_int::{i24, u24};
-pub use messages::{CanError, CanId, CanMessage};
-pub use node_id::NodeId;
-pub use time_types::{TimeDifference, TimeOfDay};
+#[cfg(all(feature = "socketcan", target_os = "linux"))]
+#[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
+pub use can::open_socketcan;
+pub use can::{CanError, CanId, CanMessage};
+pub use object_model::{TimeDifference, TimeOfDay};
+pub use protocol::NodeId;

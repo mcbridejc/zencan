@@ -391,12 +391,14 @@ fn main() -> ! {
 }
 
 /// Create an fdcan TxFrameHeader from a zencan CanMessage
-fn zencan_to_fdcan_header(msg: &zencan_node::common::CanMessage) -> fdcan::frame::TxFrameHeader {
+fn zencan_to_fdcan_header(
+    msg: &zencan_node::common::can::CanMessage,
+) -> fdcan::frame::TxFrameHeader {
     let id: fdcan::id::Id = match msg.id() {
-        zencan_node::common::messages::CanId::Extended(id) => {
+        zencan_node::common::can::CanId::Extended(id) => {
             fdcan::id::ExtendedId::new(id).unwrap().into()
         }
-        zencan_node::common::messages::CanId::Std(id) => {
+        zencan_node::common::can::CanId::Std(id) => {
             fdcan::id::StandardId::new(id).unwrap().into()
         }
     };
@@ -501,14 +503,13 @@ fn TIM16_FDCAN_IT0() {
 
             let id = match msg.id {
                 fdcan::id::Id::Standard(standard_id) => {
-                    zencan_node::common::messages::CanId::std(standard_id.as_raw())
+                    zencan_node::common::can::CanId::std(standard_id.as_raw())
                 }
                 fdcan::id::Id::Extended(extended_id) => {
-                    zencan_node::common::messages::CanId::extended(extended_id.as_raw())
+                    zencan_node::common::can::CanId::extended(extended_id.as_raw())
                 }
             };
-            let msg =
-                zencan_node::common::messages::CanMessage::new(id, &buffer[..msg.len as usize]);
+            let msg = zencan_node::common::can::CanMessage::new(id, &buffer[..msg.len as usize]);
             // Ignore error -- as an Err is returned for messages that are not consumed by the node
             // stack
             zencan::NODE_MBOX.store_message(msg).ok();

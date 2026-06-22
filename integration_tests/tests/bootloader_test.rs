@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use zencan_common::constants::values::{BOOTLOADER_ERASE_CMD, BOOTLOADER_RESET_CMD};
+use zencan_common::object_model::values::{BOOTLOADER_ERASE_CMD, BOOTLOADER_RESET_CMD};
 use zencan_node::BootloaderSectionCallbacks;
 
 use integration_tests::{object_dict2, object_dict3, prelude::*};

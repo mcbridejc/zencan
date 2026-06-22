@@ -7,11 +7,8 @@ use std::{
 };
 
 use integration_tests::{object_dict1, prelude::*};
-use zencan_common::{
-    objects::{ObjectCode, SubInfo},
-    AtomicCell,
-};
-use zencan_node::object_dict::{ObjectAccess, SubObjectAccess};
+use zencan_common::{object_model::ObjectCode, AtomicCell};
+use zencan_node::object_dict::{ObjectAccess, SubInfo, SubObjectAccess};
 
 #[tokio::test]
 #[serial_test::serial]

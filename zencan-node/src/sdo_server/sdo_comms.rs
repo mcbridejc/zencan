@@ -5,7 +5,7 @@ use core::{
 
 use portable_atomic::{AtomicU32, AtomicU8};
 use zencan_common::{
-    sdo::{BlockSegment, SdoRequest, SdoResponse},
+    protocol::{BlockSegment, SdoRequest, SdoResponse},
     AtomicCell,
 };
 

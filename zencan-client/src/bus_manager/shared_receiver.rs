@@ -9,7 +9,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 use tokio_util::sync::DropGuard;
-use zencan_common::{traits::AsyncCanReceiver, CanMessage};
+use zencan_common::can::{AsyncCanReceiver, CanMessage};
 
 #[derive(Clone, Copy, Debug)]
 pub struct NoMsgError;

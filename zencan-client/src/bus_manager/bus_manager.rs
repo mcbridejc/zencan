@@ -5,20 +5,19 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use futures::future::join_all;
 use tokio::task::JoinHandle;
-use zencan_common::constants::object_ids::{
+use zencan_common::object_model::object_ids::{
     RPDO_COMM_BASE, RPDO_MAP_BASE, TPDO_COMM_BASE, TPDO_MAP_BASE,
 };
-use zencan_common::lss::{LssIdentity, LssState};
-use zencan_common::messages::{NmtCommand, NmtCommandSpecifier, SyncObject, ZencanMessage};
-use zencan_common::nmt::NmtState;
-use zencan_common::node_id::ConfiguredNodeId;
-use zencan_common::pdo::PdoCommParameter;
-use zencan_common::sdo::AbortCode;
+use zencan_common::object_model::PdoCommParameter;
+use zencan_common::protocol::{
+    AbortCode, ConfiguredNodeId, LssIdentity, LssState, NmtCommand, NmtCommandSpecifier, NmtState,
+    SyncObject, ZencanMessage,
+};
 use zencan_common::{
+    can::{AsyncCanReceiver, AsyncCanSender, CanId},
     node_configuration::PdoConfig,
-    pdo::PdoMapping,
-    traits::{AsyncCanReceiver, AsyncCanSender},
-    CanId, NodeId,
+    object_model::PdoMapping,
+    NodeId,
 };
 
 use super::shared_sender::SharedSender;

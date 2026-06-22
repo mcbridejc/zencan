@@ -121,11 +121,11 @@ async fn twai_rx_task(mut twai_rx: TwaiRx<'static, Async>) {
         };
 
         let id = match rx_frame.id() {
-            Standard(id) => zencan_node::common::messages::CanId::std(id.as_raw()),
-            Extended(id) => zencan_node::common::messages::CanId::extended(id.as_raw()),
+            Standard(id) => zencan_node::common::can::CanId::std(id.as_raw()),
+            Extended(id) => zencan_node::common::can::CanId::extended(id.as_raw()),
         };
 
-        let msg = zencan_node::common::messages::CanMessage::new(id, rx_frame.data());
+        let msg = zencan_node::common::can::CanMessage::new(id, rx_frame.data());
         zencan::NODE_MBOX.store_message(msg).ok();
     }
 }

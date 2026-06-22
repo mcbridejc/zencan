@@ -2,7 +2,7 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
-    pdo::{PdoCommParameter, PdoMapping},
+    object_model::{PdoCommParameter, PdoMapping},
     CanId,
 };
 use serde::{de, Deserialize, Deserializer};

@@ -132,7 +132,7 @@
 //!
 //! ```ignore
 //! // Assuming we've received a message (id, and buffer) from somewhere, pass it to the mailbox
-//! let msg = zencan_node::common::messages::CanMessage::new(id, &buffer[..msg.len as usize]);
+//! let msg = zencan_node::common::can::CanMessage::new(id, &buffer[..msg.len as usize]);
 //! // Ignore error -- as an Err is returned for messages that are not consumed by the node
 //! // stack. You may handle those some other way, or simply drop them.
 //! zencan::NODE_MBOX.store_message(msg).ok();

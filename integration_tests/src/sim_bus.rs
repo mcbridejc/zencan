@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use zencan_common::messages::CanMessage;
-use zencan_common::traits::{AsyncCanReceiver, AsyncCanSender, CanSendError};
+use zencan_common::can::{AsyncCanReceiver, AsyncCanSender, CanMessage, CanSendError};
 use zencan_node::NodeMbox;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};

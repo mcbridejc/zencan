@@ -5,12 +5,11 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::object_dict::{
-    ConstByteRefField, ConstField, ObjectAccess, ProvidesSubObjects, SubObjectAccess,
+    ConstByteRefField, ConstField, ObjectAccess, ProvidesSubObjects, SubInfo, SubObjectAccess,
 };
 use zencan_common::{
-    constants::values::BOOTLOADER_ERASE_CMD,
-    objects::{ObjectCode, SubInfo},
-    sdo::AbortCode,
+    object_model::{values::BOOTLOADER_ERASE_CMD, AccessType, DataType, ObjectCode, PdoMappable},
+    protocol::AbortCode,
     AtomicCell,
 };
 
@@ -234,9 +233,9 @@ impl ObjectAccess for BootloaderSection {
             3 => Ok(SubInfo::new_u32().wo_access()),
             4 => Ok(SubInfo {
                 size: self.size as usize,
-                data_type: zencan_common::objects::DataType::Domain,
-                access_type: zencan_common::objects::AccessType::Rw,
-                pdo_mapping: zencan_common::objects::PdoMappable::None,
+                data_type: DataType::Domain,
+                access_type: AccessType::Rw,
+                pdo_mapping: PdoMappable::None,
                 persist: false,
             }),
             _ => Err(AbortCode::NoSuchSubIndex),

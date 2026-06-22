@@ -1,9 +1,8 @@
 #![cfg_attr(not(target_os = "linux"), allow(unused_imports))]
 use clap::Parser;
 use zencan_client::common::{
-    messages::{MessageError, ZencanMessage},
-    traits::AsyncCanReceiver,
-    CanMessage,
+    can::{AsyncCanReceiver, CanMessage},
+    protocol::{MessageError, ZencanMessage},
 };
 
 #[derive(Parser)]

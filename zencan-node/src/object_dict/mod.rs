@@ -12,7 +12,7 @@
 //! - RECORD: A collection of sub-objects of heterogenous types. Sub-index 0 contains the highest
 //!   implemented sub index.
 //!
-//! The set of data types which are be stored are defined by the [`DataType`](crate::common::objects::DataType) enum.
+//! The set of data types which are be stored are defined by the [`DataType`](crate::common::object_model::DataType) enum.
 //!
 //! The object dictionary is generated at build time using the `zencan-build` crate, based on the
 //! device config TOML file. A goal of zencan is to minimize the amount of generated code, so the
@@ -52,9 +52,9 @@
 //! ## Example Custom Object Implementation
 //!
 //! ```rust
-//! use zencan_node::object_dict::{ConstField, ScalarField, ProvidesSubObjects, SubObjectAccess};
-//! use zencan_node::common::objects::{ObjectCode, SubInfo};
-//! use zencan_node::common::sdo::AbortCode;
+//! use zencan_node::object_dict::{ConstField, ScalarField, ProvidesSubObjects, SubInfo, SubObjectAccess};
+//! use zencan_node::common::object_model::ObjectCode;
+//! use zencan_node::common::protocol::AbortCode;
 //! // Example external API used to access a value for a sub field
 //! struct ExternalApi {}
 //!
@@ -167,10 +167,12 @@
 
 mod object_flags;
 mod objects;
+mod sub_info;
 mod sub_objects;
 
 // Pull up public sub module definitions. The submodules provide some code organization, but
 // shouldn't clutter the public API
 pub use object_flags::*;
 pub use objects::*;
+pub use sub_info::*;
 pub use sub_objects::*;

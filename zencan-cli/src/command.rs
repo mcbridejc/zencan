@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_num::maybe_hex;
 use std::{path::PathBuf, str::FromStr};
-use zencan_client::common::lss::LssIdentity;
+use zencan_client::common::protocol::LssIdentity;
 
 #[derive(Debug, Parser)]
 pub struct Cli {

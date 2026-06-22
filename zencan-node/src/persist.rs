@@ -317,9 +317,10 @@ pub fn restore_stored_comm_objects(od: &[ODEntry], stored_data: &[u8]) {
 mod tests {
     use super::*;
     use crate::object_dict::{
-        ConstField, NullTermByteField, ODEntry, ProvidesSubObjects, ScalarField, SubObjectAccess,
+        ConstField, NullTermByteField, ODEntry, ProvidesSubObjects, ScalarField, SubInfo,
+        SubObjectAccess,
     };
-    use zencan_common::objects::{DataType, ObjectCode, SubInfo};
+    use zencan_common::object_model::{DataType, ObjectCode};
 
     use crate::persist::serialize;
 

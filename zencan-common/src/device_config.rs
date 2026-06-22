@@ -82,7 +82,7 @@
 //! When read, sub-object 1 will return a 1 if a storage callback has been provided by the
 //! application, indicating that saving is supported.
 //!
-//! To trigger a save, write a u32 with the [magic value](crate::constants::values::SAVE_CMD).
+//! To trigger a save, write a u32 with the [magic value](crate::object_model::values::SAVE_CMD).
 //!
 //! ## 0x1017 - Heartbeat Producer Time
 //!
@@ -138,8 +138,7 @@
 use std::collections::HashMap;
 
 use crate::node_configuration::deserialize_pdo_map;
-use crate::objects::{AccessType, ObjectCode, PdoMappable};
-use crate::pdo::PdoMapping;
+use crate::object_model::{AccessType, ObjectCode, PdoMappable, PdoMapping};
 use serde::{de::Error, Deserialize};
 
 use snafu::ResultExt as _;
