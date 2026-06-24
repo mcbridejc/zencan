@@ -135,7 +135,7 @@ async fn test_tpdo_assignment() {
     let mut nmt = NmtMaster::new(bus.new_sender(), bus.new_receiver());
 
     let mut sender = bus.new_sender();
-    let test_task = move |_ctx| async move {
+    let test_task = move |mut ctx: TestContext| async move {
         // Set the TPDO COB ID
         client
             .download(TPDO_COMM1_ID, PDO_COMM_COB_SUBID, &0x181u32.to_le_bytes())
@@ -175,13 +175,14 @@ async fn test_tpdo_assignment() {
         sender.send(sync_msg).await.unwrap();
 
         // We expect to receive the sync message just sent first
-        let rx_sync_msg = timeout(Duration::from_millis(200), rx.recv())
+        let rx_sync_msg = timeout(Duration::from_millis(1), rx.recv())
             .await
             .expect("Expected SYNC message, no CAN message received")
             .expect("recv returned an error");
         assert_eq!(sync_msg.id, rx_sync_msg.id);
+        ctx.wait_for_process(1).await;
         // Then expect a PDO message
-        let msg = timeout(Duration::from_millis(200), rx.recv())
+        let msg = timeout(Duration::from_millis(1), rx.recv())
             .await
             .expect("Expected PDO, no CAN message received")
             .expect("recv returned an error");
