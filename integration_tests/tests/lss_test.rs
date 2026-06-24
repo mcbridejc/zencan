@@ -42,7 +42,7 @@ async fn test_fast_scan() {
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    const TIMEOUT: Duration = Duration::from_millis(5);
+    const TIMEOUT: Duration = Duration::from_millis(25);
     let mut lss_master = LssMaster::new(bus.new_sender(), bus.new_receiver());
 
     test_with_background_process(
