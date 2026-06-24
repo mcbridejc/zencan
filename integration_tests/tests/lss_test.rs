@@ -12,25 +12,21 @@ use integration_tests::{object_dict1, object_dict2, prelude::*};
 #[serial]
 #[tokio::test]
 async fn test_fast_scan() {
-    let (mbox1, state1, od1) = {
-        (
-            &object_dict1::NODE_MBOX,
-            &object_dict1::NODE_STATE,
-            &object_dict1::OD_TABLE,
-        )
-    };
-
-    let (mbox2, state2, od2) = {
-        (
-            &object_dict2::NODE_MBOX,
-            &object_dict2::NODE_STATE,
-            &object_dict2::OD_TABLE,
-        )
-    };
+    let od1 = object_dict1::get_od();
+    let od2 = object_dict2::get_od();
+    let (mbox1, state1) = (od1.node_mbox(), od1.node_state());
+    let (mbox2, state2) = (od2.node_mbox(), od2.node_state());
     // vendor/product/rev are set by device config
     // Manually set a serial number on each node
-    object_dict1::OBJECT1018.set_serial(9999);
-    object_dict2::OBJECT1018.set_serial(5432);
+
+    assert_eq!(5000, od2.object1018().get_vendor());
+    assert_eq!(0x1002, od2.object1018().get_product());
+    assert_eq!(2, od2.object1018().get_revision());
+
+    od1.object1018().set_serial(9999);
+    od2.object1018().set_serial(5432);
+
+    assert_eq!(9999, od1.object1018().get_serial());
 
     let mut bus = SimBus::new();
     bus.add_node(mbox1);
@@ -48,7 +44,7 @@ async fn test_fast_scan() {
     test_with_background_process(
         &mut [&mut node1, &mut node2],
         &mut bus,
-        move |_ctx| async move {
+        move |mut ctx: TestContext| async move {
             let found_id = lss_master
                 .fast_scan(TIMEOUT)
                 .await
@@ -59,6 +55,8 @@ async fn test_fast_scan() {
                 .set_node_id(100u8.try_into().unwrap())
                 .await
                 .expect("Failed setting node id");
+
+            ctx.wait_for_process(2).await;
 
             let found_id = lss_master
                 .fast_scan(TIMEOUT)

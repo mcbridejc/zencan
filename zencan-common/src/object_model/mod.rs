@@ -3,11 +3,17 @@
 //! Types for metadata describing the object dictionary and values stored in standard objects.
 
 mod constants;
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(feature = "std"))]
+mod object_spec;
 mod pdo;
 mod read_size;
 mod time_types;
 
 pub use constants::*;
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(feature = "std"))]
+pub use object_spec::*;
 pub use pdo::*;
 pub use read_size::*;
 pub use time_types::*;
@@ -65,8 +71,69 @@ impl TryFrom<u8> for ObjectCode {
     }
 }
 
+/// An enum of all possible sub object data types
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[allow(missing_docs)]
+pub enum DataType {
+    Boolean,
+    Int8,
+    Int16,
+    Int24,
+    Int32,
+    Int64,
+    #[default]
+    UInt8,
+    UInt16,
+    UInt24,
+    UInt32,
+    UInt64,
+    Real32,
+    Real64,
+    VisibleString(usize),
+    OctetString(usize),
+    UnicodeString(usize),
+    TimeOfDay,
+    TimeDifference,
+    Domain,
+}
+
+impl DataType {
+    /// Returns true if the type is one of the stringy types
+    pub fn is_str(&self) -> bool {
+        matches!(
+            self,
+            DataType::VisibleString(_) | DataType::OctetString(_) | DataType::UnicodeString(_)
+        )
+    }
+
+    /// Get the storage size of the data type
+    pub fn size(&self) -> usize {
+        match self {
+            DataType::Boolean => 1,
+            DataType::Int8 => 1,
+            DataType::Int16 => 2,
+            DataType::Int24 => 3,
+            DataType::Int32 => 4,
+            DataType::Int64 => 8,
+            DataType::UInt8 => 1,
+            DataType::UInt16 => 2,
+            DataType::UInt24 => 3,
+            DataType::UInt32 => 4,
+            DataType::UInt64 => 8,
+            DataType::Real32 => 4,
+            DataType::Real64 => 8,
+            DataType::VisibleString(size) => *size,
+            DataType::OctetString(size) => *size,
+            DataType::UnicodeString(size) => *size,
+            DataType::TimeOfDay => TimeOfDay::SIZE,
+            DataType::TimeDifference => TimeDifference::SIZE,
+            DataType::Domain => 0, // Domain size is variable
+        }
+    }
+}
+
 /// Access type enum
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum AccessType {
     /// Read-only
     #[default]
@@ -135,89 +202,5 @@ impl PdoMappable {
     /// Can be mapped to an RPDO
     pub fn supports_rpdo(&self) -> bool {
         matches!(self, PdoMappable::Rpdo | PdoMappable::Both)
-    }
-}
-
-/// Indicate the type of data stored in an object
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[repr(u16)]
-pub enum DataType {
-    /// A true false value, encoded as a single byte, with 0 for false and 1 for true
-    Boolean = 1,
-    #[default]
-    /// A signed 8-bit integer
-    Int8 = 2,
-    /// A signed 16-bit integer
-    Int16 = 3,
-    /// A signed 32-bit integer
-    Int32 = 4,
-    /// An unsigned 8-bit integer
-    UInt8 = 5,
-    /// An unsigned 16-bit integer
-    UInt16 = 6,
-    /// An unsigned 32-bit integer
-    UInt32 = 7,
-    /// A 32-bit floating point value
-    Real32 = 0x8,
-    /// An ASCII/utf-8 string
-    VisibleString = 0x9,
-    /// A byte string
-    OctetString = 0xa,
-    /// A unicode string
-    UnicodeString = 0xb,
-    /// Currently Unimplemented
-    TimeOfDay = 0xc,
-    /// Currently Unimplemented
-    TimeDifference = 0xd,
-    /// An arbitrary byte access type for e.g. data streams, or large chunks of
-    /// data. Size is typically not known at build time.
-    Domain = 0xf,
-    /// A signed 24-bit integer
-    Int24 = 0x10,
-    /// A 64-bit floating point value
-    Real64 = 0x11,
-    /// A signed 64-bit integer
-    Int64 = 0x15,
-    /// An unsigned 24-bit integer
-    UInt24 = 0x16,
-    /// An unsigned 64-bit integer
-    UInt64 = 0x1b,
-    /// A contained for an unrecognized data type value
-    Other(u16),
-}
-
-impl From<u16> for DataType {
-    fn from(value: u16) -> Self {
-        use DataType::*;
-        match value {
-            1 => Boolean,
-            2 => Int8,
-            3 => Int16,
-            4 => Int32,
-            5 => UInt8,
-            6 => UInt16,
-            7 => UInt32,
-            8 => Real32,
-            9 => VisibleString,
-            0xa => OctetString,
-            0xb => UnicodeString,
-            0xf => Domain,
-            0x10 => Int24,
-            0x11 => Real64,
-            0x15 => Int64,
-            0x16 => UInt24,
-            0x1b => UInt64,
-            _ => Other(value),
-        }
-    }
-}
-
-impl DataType {
-    /// Returns true if data type is one of the string types
-    pub fn is_str(&self) -> bool {
-        matches!(
-            self,
-            Self::VisibleString | Self::OctetString | Self::UnicodeString
-        )
     }
 }

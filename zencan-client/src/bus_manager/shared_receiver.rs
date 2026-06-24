@@ -183,7 +183,7 @@ mod tests {
         let mut channel_b = shared_receiver.create_rx();
 
         let msg100 = CanMessage::new(CanId::std(100), &[0, 1, 2, 3]);
-        chan_tx.send(msg100.clone()).await.unwrap();
+        chan_tx.send(msg100).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         assert_eq!(Some(msg100), channel_a.try_recv());
@@ -194,7 +194,7 @@ mod tests {
         // Drop a channel, and make sure the num channels goes down after message is processed
         drop(channel_a);
 
-        chan_tx.send(msg100.clone()).await.unwrap();
+        chan_tx.send(msg100).await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(msg100, channel_b.recv().await.unwrap());
 

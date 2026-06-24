@@ -10,9 +10,9 @@ use serial_test::serial;
 #[tokio::test]
 async fn test_nmt_init() {
     const NODE_ID: u8 = 1;
-    let od = &integration_tests::object_dict1::OD_TABLE;
-    let state = &integration_tests::object_dict1::NODE_STATE;
-    let mbox = &integration_tests::object_dict1::NODE_MBOX;
+    let od = integration_tests::object_dict1::get_od();
+    let state = od.node_state();
+    let mbox = od.node_mbox();
 
     let mut bus = SimBus::new();
     bus.add_node(mbox);

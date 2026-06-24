@@ -1,7 +1,12 @@
 //! Collection of generic fields which implement a sub-object
 
-use core::cell::UnsafeCell;
+use core::{cell::UnsafeCell, sync::atomic::AtomicI16};
 
+use super::objects::{get_object_write_data, read_object};
+use portable_atomic::{
+    AtomicBool, AtomicF32, AtomicF64, AtomicI32, AtomicI64, AtomicI8, AtomicU16, AtomicU32,
+    AtomicU64, AtomicU8, Ordering,
+};
 use zencan_common::{
     i24,
     object_model::{ReadSize, TimeDifference, TimeOfDay},
@@ -134,25 +139,41 @@ impl<T: Copy + Default> Default for ScalarField<T> {
 }
 
 macro_rules! impl_scalar_field {
-    ($rust_type: ty) => {
-        impl ScalarField<$rust_type> {
+    ($struct_name: ident, $atomic_type: ty, $rust_type: ty) => {
+        /// A sub object which contains a single scalar value of type T, which is a standard rust type
+        #[allow(missing_debug_implementations)]
+        pub struct $struct_name {
+            value: $atomic_type,
+        }
+        impl $struct_name {
             /// Create a new ScalarField with the given value
             pub const fn new(value: $rust_type) -> Self {
                 Self {
-                    value: AtomicCell::new(value),
+                    value: <$atomic_type>::new(value),
+                }
+            }
+
+            /// Atomically store a new value
+            pub fn store(&self, value: $rust_type) {
+                self.value.store(value, Ordering::Release)
+            }
+
+            /// Atomically load the value
+            pub fn load(&self) -> $rust_type {
+                self.value.load(Ordering::Acquire)
+            }
+        }
+        impl Default for $struct_name {
+            fn default() -> Self {
+                Self {
+                    value: Default::default(),
                 }
             }
         }
-        impl SubObjectAccess for ScalarField<$rust_type> {
+        impl SubObjectAccess for $struct_name {
             fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
-                let bytes = self.value.load().to_le_bytes();
-                if offset < bytes.len() {
-                    let read_len = buf.len().min(bytes.len() - offset);
-                    buf[0..read_len].copy_from_slice(&bytes[offset..offset + read_len]);
-                    Ok(read_len)
-                } else {
-                    Ok(0)
-                }
+                let bytes = self.value.load(Ordering::Acquire).to_le_bytes();
+                read_object(bytes, offset, buf)
             }
 
             fn read_size(&self) -> usize {
@@ -160,46 +181,155 @@ macro_rules! impl_scalar_field {
             }
 
             fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
-                let value = <$rust_type>::from_le_bytes(data.try_into().map_err(|_| {
-                    if data.len() < size_of::<$rust_type>() {
-                        AbortCode::DataTypeMismatchLengthLow
-                    } else {
-                        AbortCode::DataTypeMismatchLengthHigh
-                    }
-                })?);
-                self.value.store(value);
+                let value = <$rust_type>::from_le_bytes(get_object_write_data(data)?);
+                self.value.store(value, Ordering::Release);
                 Ok(())
             }
         }
     };
 }
 
-impl_scalar_field!(u8);
-impl_scalar_field!(u16);
-impl_scalar_field!(u24);
-impl_scalar_field!(u32);
-impl_scalar_field!(u64);
-impl_scalar_field!(i8);
-impl_scalar_field!(i16);
-impl_scalar_field!(i24);
-impl_scalar_field!(i32);
-impl_scalar_field!(i64);
-impl_scalar_field!(f32);
-impl_scalar_field!(f64);
+impl_scalar_field!(ScalarFieldU8, AtomicU8, u8);
+impl_scalar_field!(ScalarFieldU16, AtomicU16, u16);
+impl_scalar_field!(ScalarFieldU32, AtomicU32, u32);
+impl_scalar_field!(ScalarFieldU64, AtomicU64, u64);
+impl_scalar_field!(ScalarFieldI8, AtomicI8, i8);
+impl_scalar_field!(ScalarFieldI16, AtomicI16, i16);
+impl_scalar_field!(ScalarFieldI32, AtomicI32, i32);
+impl_scalar_field!(ScalarFieldI64, AtomicI64, i64);
+impl_scalar_field!(ScalarFieldF32, AtomicF32, f32);
+impl_scalar_field!(ScalarFieldF64, AtomicF64, f64);
 
-impl ScalarField<bool> {
-    /// Create a new field
-    pub const fn new(value: bool) -> Self {
+/// Signed 24-bit sub object
+#[derive(Debug)]
+pub struct ScalarFieldI24 {
+    value: AtomicU32,
+}
+
+impl ScalarFieldI24 {
+    /// Create new ScalarFieldI24
+    pub fn new(value: i24) -> Self {
         Self {
-            value: AtomicCell::new(value),
+            value: AtomicU32::new(value.to_bits()),
+        }
+    }
+
+    /// Atomically store a new value to the object
+    pub fn store(&self, value: i24) {
+        self.value.store(value.to_bits(), Ordering::Release)
+    }
+
+    /// Atomically read the object value
+    pub fn load(&self) -> i24 {
+        // Safety: We only store using i24::to_bits, so it must always be in range
+        unsafe { i24::from_bits_unchecked(self.value.load(Ordering::Acquire)) }
+    }
+}
+
+impl Default for ScalarFieldI24 {
+    fn default() -> Self {
+        Self {
+            value: AtomicU32::new(i24::default().to_bits()),
         }
     }
 }
 
-// bool doesn't support from_le_bytes so it needs a special implementation
-impl SubObjectAccess for ScalarField<bool> {
+impl SubObjectAccess for ScalarFieldI24 {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
-        let value = self.value.load();
+        let bytes = self.load().to_le_bytes();
+        read_object(bytes, offset, buf)
+    }
+
+    fn read_size(&self) -> usize {
+        i24::READ_SIZE
+    }
+
+    fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
+        let value = i24::from_le_bytes(get_object_write_data(data)?);
+        self.store(value);
+        Ok(())
+    }
+}
+
+/// Unsigned 24-bit sub object
+#[derive(Debug)]
+pub struct ScalarFieldU24 {
+    value: AtomicU32,
+}
+
+impl ScalarFieldU24 {
+    /// Create new ScalarFieldU24
+    pub fn new(value: u24) -> Self {
+        Self {
+            value: AtomicU32::new(value.value()),
+        }
+    }
+
+    /// Atomically store a new value to the object
+    pub fn store(&self, value: u24) {
+        self.value.store(value.value(), Ordering::Release)
+    }
+
+    /// Atomically read the object value
+    pub fn load(&self) -> u24 {
+        // Safety: We only store using i24::to_bits, so it must always be in range
+        unsafe { u24::new_unchecked(self.value.load(Ordering::Acquire)) }
+    }
+}
+
+impl Default for ScalarFieldU24 {
+    fn default() -> Self {
+        Self {
+            value: AtomicU32::new(u24::default().value()),
+        }
+    }
+}
+
+impl SubObjectAccess for ScalarFieldU24 {
+    fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+        let bytes = self.load().to_le_bytes();
+        read_object(bytes, offset, buf)
+    }
+
+    fn read_size(&self) -> usize {
+        u24::READ_SIZE
+    }
+
+    fn write(&self, data: &[u8]) -> Result<(), AbortCode> {
+        let value = u24::from_le_bytes(get_object_write_data(data)?);
+        self.store(value);
+        Ok(())
+    }
+}
+
+/// A sub-object which stores a boolean
+#[derive(Debug, Default)]
+pub struct ScalarFieldBool {
+    value: AtomicBool,
+}
+
+impl ScalarFieldBool {
+    /// Create a new field
+    pub const fn new(value: bool) -> Self {
+        Self {
+            value: AtomicBool::new(value),
+        }
+    }
+
+    /// Store a new value
+    pub fn store(&self, value: bool) {
+        self.value.store(value, Ordering::Release)
+    }
+
+    /// Load the current value
+    pub fn load(&self) -> bool {
+        self.value.load(Ordering::Acquire)
+    }
+}
+
+impl SubObjectAccess for ScalarFieldBool {
+    fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+        let value = self.value.load(Ordering::Acquire);
         if offset != 0 || buf.len() > 1 {
             return Err(AbortCode::DataTypeMismatchLengthHigh);
         }
@@ -216,7 +346,7 @@ impl SubObjectAccess for ScalarField<bool> {
             return Err(AbortCode::DataTypeMismatchLengthHigh);
         }
         let value = data[0] != 0;
-        self.value.store(value);
+        self.value.store(value, Ordering::Release);
         Ok(())
     }
 }
@@ -327,8 +457,8 @@ impl<const N: usize> ByteField<N> {
     /// Atomically store a new value to the sub object
     pub fn store(&self, value: [u8; N]) {
         // Any ongoing partial write will be cancelled
-        self.write_offset.store(None);
-        critical_section::with(|_| {
+        critical_section::with(|cs| {
+            self.write_offset.borrow(cs).set(None);
             let bytes = unsafe { &mut *self.value.get() };
             bytes.copy_from_slice(&value);
         });
@@ -654,8 +784,8 @@ mod tests {
 
     #[derive(Default)]
     struct ExampleRecord {
-        val1: ScalarField<u32>,
-        val2: ScalarField<bool>,
+        val1: ScalarFieldU32,
+        val2: ScalarFieldBool,
         val3: NullTermByteField<10>,
     }
 
@@ -746,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_scalar_field_bool() {
-        let field = ScalarField::<bool>::default();
+        let field = ScalarFieldBool::new(false);
         field.store(true);
         assert_eq!(1, field.read_size());
 
@@ -758,84 +888,84 @@ mod tests {
 
     #[test]
     fn test_scalar_field_u8() {
-        let field = ScalarField::<u8>::new(42u8);
+        let field = ScalarFieldU8::new(42u8);
         let exp_bytes = 42u8.to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_u32() {
-        let field = ScalarField::<u32>::new(42u32);
+        let field = ScalarFieldU32::new(42u32);
         let exp_bytes = 42u32.to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_u16() {
-        let field = ScalarField::<u16>::new(42u16);
+        let field = ScalarFieldU16::new(42u16);
         let exp_bytes = 42u16.to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_u24() {
-        let field = ScalarField::<u24>::new(u24::new(42));
+        let field = ScalarFieldU24::new(u24::new(42));
         let exp_bytes = u24::new(42).to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_u64() {
-        let field = ScalarField::<u64>::new(42u64);
+        let field = ScalarFieldU64::new(42u64);
         let exp_bytes = 42u64.to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_i8() {
-        let field = ScalarField::<i8>::new(-42i8);
+        let field = ScalarFieldI8::new(-42i8);
         let exp_bytes = (-42i8).to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_i16() {
-        let field = ScalarField::<i16>::new(-42i16);
+        let field = ScalarFieldI16::new(-42i16);
         let exp_bytes = (-42i16).to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_i24() {
-        let field = ScalarField::<i24>::new(i24::new(-42));
+        let field = ScalarFieldI24::new(i24::new(-42));
         let exp_bytes = i24::new(-42).to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_i32() {
-        let field = ScalarField::<i32>::new(-42i32);
+        let field = ScalarFieldI32::new(-42i32);
         let exp_bytes = (-42i32).to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_i64() {
-        let field = ScalarField::<i64>::new(-42i64);
+        let field = ScalarFieldI64::new(-42i64);
         let exp_bytes = (-42i64).to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_f32() {
-        let field = ScalarField::<f32>::new(42.5f32);
+        let field = ScalarFieldF32::new(42.5f32);
         let exp_bytes = 42.5f32.to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }
 
     #[test]
     fn test_scalar_field_f64() {
-        let field = ScalarField::<f64>::new(42.5f64);
+        let field = ScalarFieldF64::new(42.5f64);
         let exp_bytes = 42.5f64.to_le_bytes();
         sub_read_test_helper(&field, &exp_bytes);
     }

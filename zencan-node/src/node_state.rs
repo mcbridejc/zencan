@@ -7,7 +7,9 @@ use crate::object_dict::ObjectFlagSync;
 use crate::pdo::Pdo;
 use crate::storage::StorageContext;
 
+/// Read the shared NMT state.
 pub trait NmtStateAccess: Send + Sync {
+    /// Current NMT state.
     fn nmt_state(&self) -> NmtState;
 }
 
@@ -86,4 +88,13 @@ impl<'a> NodeState<'a> {
     pub(crate) fn set_nmt_state(&self, nmt_state: NmtState) {
         self.nmt_state.store(nmt_state);
     }
+}
+
+/// Which parameters an NMT reset restores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResetScope {
+    /// Communication and application parameters
+    Application,
+    /// Communication parameters (0x1000..0x2000)
+    Communication,
 }

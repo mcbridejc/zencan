@@ -40,35 +40,25 @@
 //!
 //! ## The generated code
 //!
-//! The generated code looks something like this:
+//! Generated storage is private and initialized on the first `get_od()` call.
+//! Keep the returned reference to access objects without repeating the guard:
 //!
 //! ```ignore
-//! pub static OBJECT1000: Object1000 = Object1000::default();
-//! pub static OBJECT1001: Object1001 = Object1001::default();
-//! pub static OBJECT1008: Object1008 = Object1008::default();
-//! pub static NODE_STATE: NodeState<4usize, 4usize> = NodeState::new();
-//! pub static NODE_MBOX: NodeMbox = NodeMbox::new(NODE_STATE.rpdos());
-//! pub static OD_TABLE: [ODEntry; 31usize] = [
-//!     ODEntry {
-//!         index: 0x1000,
-//!         data: ObjectData::Storage(&OBJECT1000),
-//!     },
-//!     ODEntry {
-//!         index: 0x1001,
-//!         data: ObjectData::Storage(&OBJECT1001),
-//!     },
-//!     ODEntry {
-//!         index: 0x1008,
-//!         data: ObjectData::Storage(&OBJECT1008),
-//!     },
-//! ];
+//! let od = zencan::get_od();
+//! od.object1018().set_serial(get_serial());
+//! let node = zencan_node::Node::new(node_id, callbacks, od.node_mbox(), od.node_state(), od);
 //! ```
 //!
-//! For each object defined in the object dictionary, a type is created -- e.g. `Object1000` for
-//! object 0x1000 -- as well as an instance. All objects are put into a 'static table, called
-//! OD_TABLE. Additionally, a NODE_STATE and a NODE_MBOX are created, and these must be provided
-//! when instantiating node.
-//!
+//! The dictionary owns its objects and runtime state in one static allocation,
+//! with one initialization guard. Its `repr(C)` construction view wraps each
+//! field in `MaybeUninit`; compile-time assertions verify both views have the
+//! same layout. Fields are constructed in place before the dictionary is
+//! published, so references between fields remain stable. The ready check is
+//! inline; first-time construction lives in a separate non-inlined function.
+//! Borrow owned fields when passing them to APIs: `od.node_state()`,
+//! `od.node_mbox()`, and `od.od_table()`. Default reset changes values through
+//! interior mutability without replacing objects or their references.
+//! NMT reset calls the generated reset dispatcher before application callbacks.
 //!
 #![warn(
     missing_docs,
@@ -81,11 +71,15 @@ use std::path::Path;
 use snafu::ResultExt;
 
 mod codegen;
+pub mod device_config;
+mod elaboration;
 pub mod errors;
+mod object_build_spec;
+mod system_objects;
 
 pub use codegen::device_config_to_string;
-pub use codegen::device_config_to_tokens;
-use zencan_common::device_config::DeviceConfig;
+//pub use codegen::device_config_to_tokens;
+use device_config::DeviceConfig;
 
 use errors::*;
 

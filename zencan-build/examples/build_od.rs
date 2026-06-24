@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use zencan_build::device_config::DeviceConfig;
 use zencan_build::device_config_to_string;
-use zencan_common::device_config::DeviceConfig;
 
 #[derive(Clone, Debug, Parser)]
 struct Args {

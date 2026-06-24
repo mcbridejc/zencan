@@ -1,879 +1,307 @@
-use crate::errors::CompileError;
+//! Assemble a dictionary from per-object generators.
+use crate::{
+    device_config::{DeviceConfig, PdoDefaultConfig},
+    errors::CompileError,
+    object_build_spec::ObjectImplementation,
+    system_objects::{
+        CallbackObjectGenerator, CustomObjectGenerator, ObjectGenerator, SystemObjectGenerator,
+    },
+};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use zencan_common::device_config::{
-    DataType as DCDataType, DefaultValue, DeviceConfig, Object, ObjectDefinition, PdoDefaultConfig,
-    SubDefinition,
-};
-use zencan_common::object_model::{AccessType, ObjectCode, PdoMappable};
 
-fn pdo_init_tokens(cfg: Option<&PdoDefaultConfig>) -> TokenStream {
-    if let Some(PdoDefaultConfig {
-        cob_id,
-        extended,
-        add_node_id,
-        enabled,
-        rtr_disabled,
-        transmission_type,
-        mappings,
-    }) = cfg
-    {
-        let mappings: Vec<u32> = mappings.iter().map(|m| m.to_object_value()).collect();
-
-        quote! {
-            Pdo::new_with_defaults(&OD_TABLE, &NODE_STATE, &PdoDefaults::new(
-                #cob_id,
-                #extended,
-                #add_node_id,
-                #enabled,
-                #rtr_disabled,
-                #transmission_type,
-                &[#(#mappings),*]
-            ))
-        }
+fn pdo_default(cfg: Option<&PdoDefaultConfig>) -> TokenStream {
+    if let Some(cfg) = cfg {
+        let PdoDefaultConfig {
+            cob_id,
+            extended,
+            add_node_id,
+            enabled,
+            rtr_disabled,
+            transmission_type,
+            mappings,
+        } = cfg;
+        let mappings = mappings.iter().map(|m| m.to_object_value());
+        quote!(const { &PdoDefaults::new(#cob_id, #extended, #add_node_id, #enabled, #rtr_disabled, #transmission_type, &[#(#mappings),*]) })
     } else {
-        quote! { Pdo::new_with_defaults(&OD_TABLE, &NODE_STATE, &PdoDefaults::DEFAULT) }
+        quote!(&PdoDefaults::DEFAULT)
     }
 }
 
-fn get_sub_field_name(sub: &SubDefinition) -> Result<syn::Ident, CompileError> {
-    match &sub.field_name {
-        Some(field_name) => {
-            // Validate that the given field name is a valid rust identifier
-            match syn::parse_str::<syn::Ident>(field_name) {
-                Ok(ident) => Ok(ident),
-                Err(_) => Err(CompileError::InvalidFieldName {
-                    field_name: field_name.clone(),
-                }),
-            }
-        }
-        None => {
-            // Unwrap safety: This should always yield a valid identifier
-            Ok(syn::parse_str(&format!("sub{}", sub.sub_index)).unwrap())
-        }
-    }
-}
-
-/// Get the struct attribute type used to store this type
-fn get_storage_type(data_type: DCDataType) -> syn::Type {
-    match data_type {
-        DCDataType::Boolean => syn::parse_quote!(ScalarField<bool>),
-        DCDataType::Int8 => syn::parse_quote!(ScalarField<i8>),
-        DCDataType::Int16 => syn::parse_quote!(ScalarField<i16>),
-        DCDataType::Int24 => syn::parse_quote!(ScalarField<i24>),
-        DCDataType::Int32 => syn::parse_quote!(ScalarField<i32>),
-        DCDataType::Int64 => syn::parse_quote!(ScalarField<i64>),
-        DCDataType::UInt8 => syn::parse_quote!(ScalarField<u8>),
-        DCDataType::UInt16 => syn::parse_quote!(ScalarField<u16>),
-        DCDataType::UInt24 => syn::parse_quote!(ScalarField<u24>),
-        DCDataType::UInt32 => syn::parse_quote!(ScalarField<u32>),
-        DCDataType::UInt64 => syn::parse_quote!(ScalarField<u64>),
-        DCDataType::Real32 => syn::parse_quote!(ScalarField<f32>),
-        DCDataType::Real64 => syn::parse_quote!(ScalarField<f64>),
-        DCDataType::VisibleString(n) | DCDataType::UnicodeString(n) => {
-            syn::parse_str(&format!("NullTermByteField::<{}>", n)).unwrap()
-        }
-        DCDataType::OctetString(n) => syn::parse_str(&format!("ByteField::<{}>", n)).unwrap(),
-        DCDataType::TimeOfDay => syn::parse_quote!(ScalarField<TimeOfDay>),
-        DCDataType::TimeDifference => syn::parse_quote!(ScalarField<TimeDifference>),
-        DCDataType::Domain => syn::parse_quote!(CallbackSubObject),
-    }
-}
-
-fn get_rust_type_and_size(data_type: DCDataType) -> (syn::Type, usize) {
-    match data_type {
-        DCDataType::Boolean => (syn::parse_quote!(bool), 1),
-        DCDataType::Int8 => (syn::parse_quote!(i8), 1),
-        DCDataType::Int16 => (syn::parse_quote!(i16), 2),
-        DCDataType::Int24 => (syn::parse_quote!(i24), 3),
-        DCDataType::Int32 => (syn::parse_quote!(i32), 4),
-        DCDataType::Int64 => (syn::parse_quote!(i64), 8),
-        DCDataType::UInt8 => (syn::parse_quote!(u8), 1),
-        DCDataType::UInt16 => (syn::parse_quote!(u16), 2),
-        DCDataType::UInt24 => (syn::parse_quote!(u24), 3),
-        DCDataType::UInt32 => (syn::parse_quote!(u32), 4),
-        DCDataType::UInt64 => (syn::parse_quote!(u64), 8),
-        DCDataType::Real32 => (syn::parse_quote!(f32), 4),
-        DCDataType::Real64 => (syn::parse_quote!(f64), 8),
-        DCDataType::VisibleString(n)
-        | DCDataType::OctetString(n)
-        | DCDataType::UnicodeString(n) => (syn::parse_str(&format!("[u8; {}]", n)).unwrap(), n),
-        DCDataType::TimeOfDay => (syn::parse_quote!(TimeOfDay), 6),
-        DCDataType::TimeDifference => (syn::parse_quote!(TimeDifference), 6),
-        DCDataType::Domain => (syn::parse_quote!(None), 0),
-    }
-}
-
-#[allow(dead_code)]
-fn object_code_to_tokens(obj_code: ObjectCode) -> TokenStream {
-    match obj_code {
-        ObjectCode::Null => quote!(zencan_node::common::object_model::ObjectCode::Null),
-        ObjectCode::Record => quote!(zencan_node::common::object_model::ObjectCode::Record),
-        ObjectCode::Array => quote!(zencan_node::common::object_model::ObjectCode::Array),
-        ObjectCode::Var => quote!(zencan_node::common::object_model::ObjectCode::Var),
-        ObjectCode::Domain => quote!(zencan_node::common::object_model::ObjectCode::Domain),
-        ObjectCode::DefType => quote!(zencan_node::common::object_model::ObjectCode::DefType),
-        ObjectCode::DefStruct => quote!(zencan_node::common::object_model::ObjectCode::DefStruct),
-    }
-}
-
-/// Convert an AccessType enum to a tokenstream expressing the variant
-fn access_type_to_tokens(at: AccessType) -> TokenStream {
-    match at {
-        AccessType::Ro => quote!(zencan_node::common::object_model::AccessType::Ro),
-        AccessType::Wo => quote!(zencan_node::common::object_model::AccessType::Wo),
-        AccessType::Rw => quote!(zencan_node::common::object_model::AccessType::Rw),
-        AccessType::Const => quote!(zencan_node::common::object_model::AccessType::Const),
-    }
-}
-
-fn data_type_to_tokens(dt: DCDataType) -> TokenStream {
-    match dt {
-        DCDataType::Boolean => quote!(zencan_node::common::object_model::DataType::Boolean),
-        DCDataType::Int8 => quote!(zencan_node::common::object_model::DataType::Int8),
-        DCDataType::Int16 => quote!(zencan_node::common::object_model::DataType::Int16),
-        DCDataType::Int24 => quote!(zencan_node::common::object_model::DataType::Int24),
-        DCDataType::Int32 => quote!(zencan_node::common::object_model::DataType::Int32),
-        DCDataType::Int64 => quote!(zencan_node::common::object_model::DataType::Int64),
-        DCDataType::UInt8 => quote!(zencan_node::common::object_model::DataType::UInt8),
-        DCDataType::UInt16 => quote!(zencan_node::common::object_model::DataType::UInt16),
-        DCDataType::UInt24 => quote!(zencan_node::common::object_model::DataType::UInt24),
-        DCDataType::UInt32 => quote!(zencan_node::common::object_model::DataType::UInt32),
-        DCDataType::UInt64 => quote!(zencan_node::common::object_model::DataType::UInt64),
-        DCDataType::Real32 => quote!(zencan_node::common::object_model::DataType::Real32),
-        DCDataType::Real64 => quote!(zencan_node::common::object_model::DataType::Real64),
-        DCDataType::VisibleString(_) => {
-            quote!(zencan_node::common::object_model::DataType::VisibleString)
-        }
-        DCDataType::UnicodeString(_) => {
-            quote!(zencan_node::common::object_model::DataType::UnicodeString)
-        }
-        DCDataType::OctetString(_) => {
-            quote!(zencan_node::common::object_model::DataType::OctetString)
-        }
-        DCDataType::TimeOfDay => quote!(zencan_node::common::object_model::DataType::TimeOfDay),
-        DCDataType::TimeDifference => {
-            quote!(zencan_node::common::object_model::DataType::TimeDifference)
-        }
-        DCDataType::Domain => quote!(zencan_node::common::object_model::DataType::Domain),
-    }
-}
-
-fn pdo_mappable_to_tokens(p: PdoMappable) -> TokenStream {
-    match p {
-        PdoMappable::None => quote!(zencan_node::common::object_model::PdoMappable::None),
-        PdoMappable::Tpdo => quote!(zencan_node::common::object_model::PdoMappable::Tpdo),
-        PdoMappable::Rpdo => quote!(zencan_node::common::object_model::PdoMappable::Rpdo),
-        PdoMappable::Both => quote!(zencan_node::common::object_model::PdoMappable::Both),
-    }
-}
-
-/// Return true if any subobjects on the object support being mapped to a TPDO
-fn object_supports_tpdo(obj: &ObjectDefinition) -> bool {
-    match &obj.object {
-        Object::Var(def) => def.pdo_mapping.supports_tpdo(),
-        Object::Array(def) => def.pdo_mapping.supports_tpdo(),
-        Object::Record(def) => def.subs.iter().any(|s| s.pdo_mapping.supports_tpdo()),
-    }
-}
-
-fn string_to_byte_literal_tokens(s: &str, size: usize) -> Result<TokenStream, CompileError> {
-    let b = s.as_bytes();
-    if b.len() > size {
-        return Err(CompileError::DefaultValueTooLong {
-            message: format!("String {} is too long for type with length {}", s, size),
-        });
-    }
-    let mut padded = vec![0u8; size];
-    padded[..b.len()].copy_from_slice(b);
-
-    Ok(quote!([#(#padded),*]))
-}
-
-fn generate_object_definition(obj: &ObjectDefinition) -> Result<TokenStream, CompileError> {
-    if obj.application_callback {
-        // Objects implemented in application callbacks do not generate a struct
-        return Ok(quote! {});
-    }
-    let struct_name: syn::Ident = syn::parse_str(&format!("Object{:X}", obj.index)).unwrap();
-
-    let mut field_tokens = TokenStream::new();
-    let mut tpdo_mapping = false;
-    let mut highest_sub_index = 0;
-    match &obj.object {
-        Object::Record(def) => {
-            for sub in &def.subs {
-                let field_name = get_sub_field_name(sub)?;
-                let field_type = get_storage_type(sub.data_type);
-                field_tokens.extend(quote! {
-                    pub #field_name: #field_type,
-                });
-                tpdo_mapping |= sub.pdo_mapping.supports_tpdo();
-                highest_sub_index = highest_sub_index.max(sub.sub_index);
-            }
-        }
-        Object::Array(def) => {
-            let field_type = get_storage_type(def.data_type);
-            let array_size = def.array_size;
-            field_tokens.extend(quote! {
-                pub array: [#field_type; #array_size],
-            });
-            tpdo_mapping |= def.pdo_mapping.supports_tpdo();
-            highest_sub_index = array_size as u8;
-        }
-        Object::Var(def) => {
-            let field_type = get_storage_type(def.data_type);
-            field_tokens.extend(quote! {
-                pub value: #field_type,
-            });
-            tpdo_mapping |= def.pdo_mapping.supports_tpdo();
-            highest_sub_index = 0;
-        }
-    }
-
-    if tpdo_mapping {
-        let n = (highest_sub_index as usize + 1).div_ceil(8);
-        field_tokens.extend(quote! {
-            flags: ObjectFlags<#n>,
-        });
-    }
-
-    Ok(quote! {
-        #[allow(dead_code)]
-        pub struct #struct_name {
-            #field_tokens
-        }
-    })
-}
-
-/// Get DefaultValue for a given data type. This is the default value when none is provided.
-fn default_default_value(data_type: DCDataType) -> Option<DefaultValue> {
-    match data_type {
-        DCDataType::Boolean
-        | DCDataType::Int8
-        | DCDataType::Int16
-        | DCDataType::Int24
-        | DCDataType::Int32
-        | DCDataType::Int64
-        | DCDataType::UInt8
-        | DCDataType::UInt16
-        | DCDataType::UInt24
-        | DCDataType::UInt32 => Some(DefaultValue::Integer(0)),
-        DCDataType::UInt64 => Some(DefaultValue::Integer(0)),
-        DCDataType::Real32 | DCDataType::Real64 => Some(DefaultValue::Float(0.0)),
-        DCDataType::VisibleString(_)
-        | DCDataType::UnicodeString(_)
-        | DCDataType::OctetString(_) => Some(DefaultValue::String("".to_string())),
-        _ => None,
-    }
-}
-
-fn get_default_tokens(
-    value: Option<&DefaultValue>,
-    data_type: DCDataType,
-) -> Result<TokenStream, CompileError> {
-    if matches!(data_type, DCDataType::Domain) {
-        return Ok(quote!(CallbackSubObject::new()));
-    }
-    if value.is_none() {
-        return Ok(match data_type {
-            DCDataType::TimeDifference => {
-                quote!(ScalarField::<TimeDifference>::new(TimeDifference::ZERO))
-            }
-            DCDataType::TimeOfDay => quote!(ScalarField::<TimeOfDay>::new(TimeOfDay::EPOCH)),
-            _ => quote!(Default::Default),
-        });
-    }
-    let value = value.unwrap();
-    match value {
-        DefaultValue::String(s) => {
-            if !data_type.is_str() {
-                return Err(CompileError::DefaultValueTypeMismatch {
-                    message: format!(
-                        "Default string value '{}' is not a string for type {:?}",
-                        s, data_type
-                    ),
-                });
-            }
-            let byte_lit = string_to_byte_literal_tokens(s, data_type.size())?;
-            // OctetStrings are always the exact length
-            if matches!(data_type, DCDataType::OctetString(_)) {
-                Ok(quote!(ByteField::new(#byte_lit)))
-            } else {
-                Ok(quote!(NullTermByteField::new(#byte_lit)))
-            }
-        }
-        DefaultValue::Float(f) => match data_type {
-            DCDataType::Real32 => Ok(quote!(ScalarField::<f32>::new(#f as f32))),
-            DCDataType::Real64 => Ok(quote!(ScalarField::<f64>::new(#f))),
-            _ => Err(CompileError::DefaultValueTypeMismatch {
-                message: format!(
-                    "Default float value {} is not a valid value for type {:?}",
-                    f, data_type
-                ),
-            }),
-        },
-        DefaultValue::Integer(i) => {
-            // Create token as stream so the literal does not have an explicit type (e.g. '32' instead of '32i64')
-            match data_type {
-                DCDataType::Boolean => {
-                    if *i != 0 {
-                        Ok(quote!(ScalarField::<bool>::new(true)))
-                    } else {
-                        Ok(quote!(ScalarField::<bool>::new(false)))
-                    }
-                }
-                DCDataType::Int8 => Ok(quote!(ScalarField::<i8>::new(#i as i8))),
-                DCDataType::Int16 => Ok(quote!(ScalarField::<i16>::new(#i as i16))),
-                DCDataType::Int24 => Ok(quote!(ScalarField::<i24>::new(i24::new(#i as i32)))),
-                DCDataType::Int32 => Ok(quote!(ScalarField::<i32>::new(#i as i32))),
-                DCDataType::Int64 => Ok(quote!(ScalarField::<i64>::new(#i))),
-                DCDataType::UInt8 => Ok(quote!(ScalarField::<u8>::new(#i as u8))),
-                DCDataType::UInt16 => Ok(quote!(ScalarField::<u16>::new(#i as u16))),
-                DCDataType::UInt24 => Ok(quote!(ScalarField::<u24>::new(u24::new(#i as u32)))),
-                DCDataType::UInt32 => Ok(quote!(ScalarField::<u32>::new(#i as u32))),
-                DCDataType::UInt64 => Ok(quote!(ScalarField::<u64>::new(#i as u64))),
-                DCDataType::Real32 => Ok(quote!(ScalarField::<f32>::new(#i as f32))),
-                DCDataType::Real64 => Ok(quote!(ScalarField::<f64>::new(#i as f64))),
-                _ => Err(CompileError::DefaultValueTypeMismatch {
-                    message: format!(
-                        "Default integer value {} is not a valid value for type {:?}",
-                        i, data_type
-                    ),
-                }),
-            }
-        }
-    }
-}
-
-fn get_object_impls(
-    obj: &ObjectDefinition,
-    struct_name: &syn::Ident,
-) -> Result<TokenStream, CompileError> {
-    let mut accessor_methods = TokenStream::new();
-    let mut default_init_tokens = TokenStream::new();
-    let mut get_sub_tokens = TokenStream::new();
-    let mut flag_number = 0usize;
-    let object_code;
-
-    match &obj.object {
-        Object::Var(def) => {
-            let (field_type, size) = get_rust_type_and_size(def.data_type);
-            let field_name = format_ident!("value");
-            let setter_name = format_ident!("set_{}", field_name);
-            let getter_name = format_ident!("get_{}", field_name);
-            let data_type = data_type_to_tokens(def.data_type);
-            let access_type = access_type_to_tokens(def.access_type.0);
-            let pdo_mapping = pdo_mappable_to_tokens(def.pdo_mapping);
-            let persist = def.persist;
-
-            let default_value = def
-                .default_value
-                .clone()
-                .or_else(|| default_default_value(def.data_type));
-            let default_value = get_default_tokens(default_value.as_ref(), def.data_type)?;
-            default_init_tokens.extend(quote! {
-                #field_name: #default_value,
-            });
-
-            if def.pdo_mapping.supports_tpdo() {
-                flag_number = 1;
-            }
-
-            // Accessors are generated for all data types, except Domain
-            if !matches!(def.data_type, DCDataType::Domain) {
-                accessor_methods.extend(quote! {
-                    #[allow(dead_code)]
-                    pub fn #setter_name(&self, value: #field_type) {
-                        self.#field_name.store(value);
-                    }
-
-                    #[allow(dead_code)]
-                    pub fn #getter_name(&self) -> #field_type {
-                        self.#field_name.load()
-                    }
-                });
-            }
-
-            get_sub_tokens.extend(quote! {
-                match sub {
-                    0 => Some(
-                        (SubInfo {
-                            access_type: #access_type,
-                            data_type: #data_type,
-                            size: #size,
-                            pdo_mapping: #pdo_mapping,
-                            persist: #persist,
-                        },
-                        &self.value)
-                    ),
-                    _ => None
-                }
-            });
-
-            object_code = quote!(zencan_node::common::object_model::ObjectCode::Var);
-        }
-
-        Object::Array(def) => {
-            let (field_type, storage_size) = get_rust_type_and_size(def.data_type);
-            let array_size = def.array_size;
-            let data_type = data_type_to_tokens(def.data_type);
-            let access_type = access_type_to_tokens(def.access_type.0);
-            let pdo_mapping = pdo_mappable_to_tokens(def.pdo_mapping);
-            let persist = def.persist;
-
-            let default_values = if let Some(defs) = def.default_value.clone() {
-                defs.into_iter().map(Some).collect()
-            } else {
-                vec![default_default_value(def.data_type); array_size]
+fn validate_pdo_defaults(
+    dev: &DeviceConfig,
+    specs: &[crate::object_build_spec::ObjectBuildSpec],
+) -> Result<(), CompileError> {
+    use crate::object_build_spec::ObjectBuildShape;
+    for (transmit, count, defaults) in [
+        (true, dev.pdos.num_tpdo, &dev.pdos.tpdo_defaults),
+        (false, dev.pdos.num_rpdo, &dev.pdos.rpdo_defaults),
+    ] {
+        for (&number, cfg) in defaults {
+            let invalid = |reason: &str| CompileError::InvalidPdoDefaults {
+                message: format!("{}PDO {number}: {reason}", if transmit { "T" } else { "R" }),
             };
-            let default_tokens: Vec<_> = default_values
-                .iter()
-                .map(|v| get_default_tokens(v.as_ref(), def.data_type))
-                .collect::<Result<Vec<_>, CompileError>>()?;
-
-            if !matches!(def.data_type, DCDataType::Domain) {
-                accessor_methods.extend(quote! {
-                    #[allow(dead_code)]
-                    pub fn set(&self, idx: usize, value: #field_type) -> Result<(), AbortCode> {
-                        if idx >= #array_size {
-                            return Err(AbortCode::NoSuchSubIndex)
-                        }
-                        self.array[idx].store(value);
-                        Ok(())
-                    }
-                    #[allow(dead_code)]
-                    pub fn get(&self, idx: usize) -> Result<#field_type, AbortCode> {
-                        if idx >= #array_size {
-                            return Err(AbortCode::NoSuchSubIndex)
-                        }
-                        Ok(self.array[idx].load())
-                    }
-                });
+            if number >= count as usize {
+                return Err(invalid("slot exceeds configured PDO count"));
             }
-
-            default_init_tokens.extend(quote! {
-                array: [#(#default_tokens),*],
-            });
-
-            get_sub_tokens.extend(quote! {
-                if sub == 0 {
-                    Some((
-                        SubInfo::MAX_SUB_NUMBER,
-                        const { &ConstField::new((#array_size as u8).to_le_bytes()) },
-                    ))
-                } else if sub as usize > #array_size {
-                    None
+            let limit = if cfg.extended { 0x1fff_ffff } else { 0x7ff };
+            if cfg
+                .cob_id
+                .checked_add(if cfg.add_node_id { 127 } else { 0 })
+                .is_none_or(|id| id > limit)
+            {
+                return Err(invalid("COB-ID exceeds the CAN identifier range"));
+            }
+            if cfg.mappings.len() > 8
+                || cfg.mappings.iter().map(|m| m.size as usize).sum::<usize>() > 64
+            {
+                return Err(invalid("mappings exceed one CAN frame"));
+            }
+            for mapping in &cfg.mappings {
+                let object = specs
+                    .iter()
+                    .find(|s| s.index == mapping.index)
+                    .ok_or_else(|| invalid("mapped object does not exist"))?;
+                let sub = match &object.shape {
+                    ObjectBuildShape::Var(v) => (mapping.sub == 0).then_some(&v.value),
+                    ObjectBuildShape::Array(a) => {
+                        if mapping.sub == 0 {
+                            Some(a.sub0_spec())
+                        } else {
+                            a.elements().get(mapping.sub as usize - 1)
+                        }
+                    }
+                    ObjectBuildShape::Record(r) => r.subs.get(&mapping.sub).map(|s| &s.spec),
+                }
+                .ok_or_else(|| invalid("mapped subobject does not exist"))?;
+                let allowed = if transmit {
+                    sub.pdo_mapping.supports_tpdo() && sub.access_type.is_readable()
                 } else {
-                    Some((SubInfo {
-                        access_type: #access_type,
-                        data_type: #data_type,
-                        size: #storage_size,
-                        pdo_mapping: #pdo_mapping,
-                        persist: #persist,
-                    }, &self.array[sub as usize - 1]))
+                    sub.pdo_mapping.supports_rpdo() && sub.access_type.is_writable()
+                };
+                if !allowed
+                    || mapping.size == 0
+                    || mapping.size % 8 != 0
+                    || mapping.size as usize / 8 > sub.data_type.size()
+                {
+                    return Err(invalid("incompatible mapping type, width or access"));
                 }
-            });
-
-            if def.pdo_mapping.supports_tpdo() {
-                flag_number = array_size + 1;
             }
-
-            object_code = quote!(zencan_node::common::object_model::ObjectCode::Array);
-        }
-
-        Object::Record(def) => {
-            let mut match_statements = TokenStream::new();
-
-            // For records, sub0 gives the highest sub object support by the record
-            let max_sub = def.subs.iter().map(|s| s.sub_index).max().unwrap_or(0);
-
-            if object_supports_tpdo(obj) {
-                flag_number = max_sub as usize + 1;
-            }
-
-            accessor_methods.extend(quote! {
-                #[allow(dead_code)]
-                pub fn get_sub0(&self) -> u8 {
-                    #max_sub
-                }
-            });
-
-            match_statements.extend(quote! {
-                0 => {
-                    Some(
-                        (
-                            SubInfo::MAX_SUB_NUMBER,
-                            const { &ConstField::new(#max_sub.to_le_bytes()) },
-                        )
-                    )
-                }
-            });
-
-            for sub in &def.subs {
-                let field_name = get_sub_field_name(sub)?;
-                let (field_type, size) = get_rust_type_and_size(sub.data_type);
-                let setter_name = format_ident!("set_{}", field_name);
-                let getter_name = format_ident!("get_{}", field_name);
-                let sub_index = sub.sub_index;
-                let data_type = data_type_to_tokens(sub.data_type);
-                let pdo_mapping = pdo_mappable_to_tokens(sub.pdo_mapping);
-                let persist = sub.persist;
-
-                let default_value = sub
-                    .default_value
-                    .clone()
-                    .or_else(|| default_default_value(sub.data_type));
-                let default_tokens = get_default_tokens(default_value.as_ref(), sub.data_type)?;
-
-                let access_type = access_type_to_tokens(sub.access_type.0);
-
-                if !matches!(sub.data_type, DCDataType::Domain) {
-                    accessor_methods.extend(quote! {
-                        #[allow(dead_code)]
-                        pub fn #setter_name(&self, value: #field_type) {
-                            self.#field_name.store(value)
-                        }
-                        #[allow(dead_code)]
-                        pub fn #getter_name(&self) -> #field_type {
-                            self.#field_name.load()
-                        }
-                    });
-                }
-                match_statements.extend(quote! {
-                    #sub_index => Some(
-                        (
-                            SubInfo {
-                                access_type: #access_type,
-                                data_type: #data_type,
-                                size: #size,
-                                pdo_mapping: #pdo_mapping,
-                                persist: #persist,
-                            },
-                            &self.#field_name
-                        )
-                    ),
-                });
-                default_init_tokens.extend(quote! {
-                    #field_name: #default_tokens,
-                });
-            }
-
-            get_sub_tokens.extend(quote! {
-                match sub {
-                    #match_statements
-                    _ => None,
-                }
-            });
-
-            object_code = quote!(zencan_node::common::object_model::ObjectCode::Record);
         }
     }
+    Ok(())
+}
 
-    let mut flag_method_tokens = TokenStream::new();
-    let mut flag_default_tokens = TokenStream::new();
-    if flag_number > 0 {
-        let flag_size = (flag_number).div_ceil(8);
-        flag_method_tokens.extend(quote! {
-            fn flags(&self) -> Option<&dyn ObjectFlagAccess> {
-                Some(&self.flags)
-            }
-        });
-        flag_default_tokens.extend(quote! {
-            flags: ObjectFlags::<#flag_size>::new(NODE_STATE.object_flag_sync()),
-        });
-    }
+fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
+    let mut specs = dev.elaborate()?;
+    specs.sort_by_key(|s| s.index);
+    validate_pdo_defaults(dev, &specs)?;
+    let mut definitions = quote!();
+    let mut constructors = quote!();
+    let mut allocations = quote!();
+    let mut getters = quote!();
+    let mut entries = vec![];
+    let mut resets = quote!();
+    for spec in &specs {
+        // To the greatest extent possible, generators should handle the differences in how objects
+        // are generated, allowing all object types to be treated the same here.
+        let generator: Box<dyn ObjectGenerator> = match &spec.implementation {
+            ObjectImplementation::Generated => Box::new(CustomObjectGenerator::new(spec.clone())),
+            ObjectImplementation::Callback => Box::new(CallbackObjectGenerator::new(spec.clone())),
+            ObjectImplementation::System(system_object_kind) => Box::new(
+                SystemObjectGenerator::new(spec.clone(), system_object_kind.clone()),
+            ),
+        };
+        // Get types defined by the object
+        definitions.extend(generator.type_definitions()?);
 
-    Ok(quote! {
-        impl #struct_name {
-            #accessor_methods
+        if let Some(instance) = generator.instance()? {
+            let var_name = format_ident!("OBJECT{:X}", spec.index);
+            let ty = instance.object_type;
+            let init = instance.initializer;
+            let reset = instance.reset;
+            let getter = instance.field_name;
 
-            pub const fn default() -> Self {
-                #struct_name {
-                    #default_init_tokens
-                    #flag_default_tokens
+            allocations
+                .extend(quote!(static #var_name: StaticStorage<#ty> = StaticStorage::new();));
+            constructors.extend(quote!(#var_name.write(#init);));
+            getters.extend(quote!(
+                #[inline(always)]
+                pub fn #getter(&self) -> &'static #ty {
+                    // SAFETY: An ObjectDict token is published only after every object is initialized.
+                    unsafe { #var_name.assume_init_ref() }
                 }
-            }
-        }
+            ));
 
-        impl ProvidesSubObjects for #struct_name {
-            fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
-                #get_sub_tokens
-            }
-
-            #flag_method_tokens
-
-            fn object_code(&self) -> zencan_node::common::object_model::ObjectCode {
-                #object_code
-            }
-        }
-    })
-}
-
-pub fn generate_object_code(
-    obj: &ObjectDefinition,
-    struct_name: &syn::Ident,
-) -> Result<TokenStream, CompileError> {
-    let struct_def = generate_object_definition(obj)?;
-    let impls = get_object_impls(obj, struct_name)?;
-
-    Ok(quote! {
-        #struct_def
-        #impls
-    })
-}
-
-pub fn generate_state_inst(dev: &DeviceConfig) -> TokenStream {
-    let n_rpdo = dev.pdos.num_rpdo as usize;
-    let n_tpdo = dev.pdos.num_tpdo as usize;
-
-    let mut tokens = TokenStream::new();
-
-    if !dev.bootloader.sections.is_empty() {
-        let num_sections = dev.bootloader.sections.len() as u8;
-        let application = dev.bootloader.application;
-        tokens.extend(quote! {
-            pub static BOOTLOADER_INFO:
-                zencan_node::BootloaderInfo<#application, #num_sections> =
-                zencan_node::BootloaderInfo::new();
-        });
-        for (i, section) in dev.bootloader.sections.iter().enumerate() {
-            let var_name = format_ident!("BOOTLOADER_SECTION{i}");
-            let size: u32 = section.size;
-            let section_name = &section.name;
-            tokens.extend(quote! {
-                pub static #var_name: zencan_node::BootloaderSection =
-                    zencan_node::BootloaderSection::new(
-                        #section_name,
-                        #size
+            if let Some(reset) = reset {
+                let reset_tokens = quote! { self.#getter().#reset; };
+                let comm = (0x1000..0x2000).contains(&spec.index);
+                if comm {
+                    resets.extend(reset_tokens);
+                } else {
+                    resets.extend(
+                        quote!(if scope == zencan_node::ResetScope::Application { #reset_tokens }),
                     );
-            })
+                }
+            }
+            let index = spec.index;
+            entries.push(
+                quote!(ODEntryUninit::from_ptr(#index, #var_name.as_ptr() as *const dyn ObjectAccess)),
+            );
         }
     }
-
-    if n_tpdo > 0 {
-        let tpdo_numbers = 0..n_tpdo;
-        tokens.extend(quote! {
-            pub static TPDO_COMM_OBJECTS: [PdoCommObject; #n_tpdo] = [
-                #(PdoCommObject::new(&NODE_STATE.tpdos()[#tpdo_numbers])),*
-            ];
-        });
-        let tpdo_numbers = 0..n_tpdo;
-        tokens.extend(quote! {
-            pub static TPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_tpdo] = [
-                #(PdoMappingObject::new(&NODE_STATE.tpdos()[#tpdo_numbers])),*
-            ];
-        });
-    }
-
-    if n_rpdo > 0 {
-        let rpdo_numbers = 0..n_rpdo;
-        tokens.extend(quote! {
-            pub static RPDO_COMM_OBJECTS: [PdoCommObject; #n_rpdo] = [
-                #(PdoCommObject::new(&NODE_STATE.rpdos()[#rpdo_numbers])),*
-            ];
-        });
-
-        let rpdo_numbers = 0..n_rpdo;
-        tokens.extend(quote! {
-            pub static RPDO_MAPPING_OBJECTS: [PdoMappingObject; #n_rpdo] = [
-                #(PdoMappingObject::new(&NODE_STATE.rpdos()[#rpdo_numbers])),*
-            ];
-        });
-    }
-
-    if dev.support_storage {
-        tokens.extend(quote! {
-            pub static STORAGE_COMMAND_OBJECT: StorageCommandObject =
-                StorageCommandObject::new(NODE_STATE.storage_context());
-        });
-    }
-
-    let rpdo_initializers = (0..n_rpdo).map(|i| pdo_init_tokens(dev.pdos.rpdo_defaults.get(&i)));
-    let tpdo_initializers = (0..n_tpdo).map(|i| pdo_init_tokens(dev.pdos.tpdo_defaults.get(&i)));
-
-    tokens.extend(quote! {
-        pub static RPDOS: [Pdo; #n_rpdo] = [
-            #(#rpdo_initializers),*
-        ];
-        pub static TPDOS: [Pdo; #n_tpdo] = [
-            #(#tpdo_initializers),*
-        ];
-        #[allow(static_mut_refs)]
-        static mut SDO_BUFFER: [u8; SDO_BUFFER_SIZE] = [0; SDO_BUFFER_SIZE];
-        static TX_MESSAGE_QUEUE: PriorityQueue<4, CanMessage> = PriorityQueue::new();
-        pub static NODE_STATE: NodeState = NodeState::new(&RPDOS, &TPDOS);
-        #[allow(static_mut_refs)]
-        pub static NODE_MBOX: NodeMbox = NodeMbox::new(NODE_STATE.rpdos(), NODE_STATE.tpdos(), &TX_MESSAGE_QUEUE, unsafe { &mut SDO_BUFFER });
+    let count = entries.len();
+    let nr = dev.pdos.num_rpdo as usize;
+    let nt = dev.pdos.num_tpdo as usize;
+    let rp = (0..nr).map(|i| {
+        let defaults = pdo_default(dev.pdos.rpdo_defaults.get(&i));
+        quote!(rpdo_ptr.add(#i).write(Pdo::new(&LOOKUP, &NMT, &rpdo_data[#i], #defaults));)
     });
-
-    tokens
-}
-
-/// Generate code for a node from a [`DeviceConfig`] as a TokenStream
-pub fn device_config_to_tokens(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
-    let mut object_defs = TokenStream::new();
-    let mut object_instantiations = TokenStream::new();
-    let mut table_entries = TokenStream::new();
-
-    let mut sorted_objects: Vec<&ObjectDefinition> = dev.objects.iter().collect();
-    sorted_objects.sort_by_key(|o| o.index);
-
-    for obj in &sorted_objects {
-        let struct_name = format_ident!("Object{:X}", obj.index);
-        let inst_name = format_ident!("OBJECT{:X}", obj.index);
-        let index: syn::Lit = syn::parse_str(&format!("0x{:X}", obj.index)).unwrap();
-        if obj.index == 0x1010 {
-            table_entries.extend(quote! {
-                ODEntry {
-                    index: #index,
-                    data: &STORAGE_COMMAND_OBJECT,
-                },
-            });
-        } else if obj.index == 0x5500 {
-            // bootloader info object as usize
-            table_entries.extend(quote! {
-                ODEntry {
-                    index: #index,
-                    data: &BOOTLOADER_INFO,
-                },
-            });
-        } else if obj.index >= 0x5510 && obj.index <= 0x551f {
-            let section = obj.index - 0x5510;
-            let object_ident = format_ident!("BOOTLOADER_SECTION{}", section);
-            table_entries.extend(quote! {
-                ODEntry {
-                    index: #index,
-                    data: &#object_ident,
-                },
-            });
-        } else if obj.index >= 0x1400 && obj.index < 0x1600 {
-            let n = obj.index as usize - 0x1400;
-            table_entries.extend(quote! {
-                ODEntry {
-                    index: #index,
-                    data: &RPDO_COMM_OBJECTS[#n],
-                },
-            })
-        } else if obj.index >= 0x1600 && obj.index < 0x1800 {
-            let n = obj.index as usize - 0x1600;
-            table_entries.extend(quote! {
-                ODEntry {
-                    index: #index,
-                    data: &RPDO_MAPPING_OBJECTS[#n],
-                },
-            })
-        } else if obj.index >= 0x1800 && obj.index < 0x1A00 {
-            let n = obj.index as usize - 0x1800;
-            table_entries.extend(quote! {
-                ODEntry {
-                    index: #index,
-                    data: &TPDO_COMM_OBJECTS[#n],
-                },
-            })
-        } else if obj.index >= 0x1A00 && obj.index < 0x1C00 {
-            let n = obj.index as usize - 0x1A00;
-            table_entries.extend(quote! {
-                ODEntry {
-                    index: #index,
-                    data: &TPDO_MAPPING_OBJECTS[#n],
-                },
-            })
-        } else if !obj.application_callback {
-            object_defs.extend(generate_object_code(obj, &struct_name)?);
-            object_instantiations.extend(quote! {
-                pub static #inst_name: #struct_name = #struct_name::default();
-            });
-            table_entries.extend(quote! {
-                ODEntry {
-                    index: #index,
-                    data: &#inst_name,
-                },
-            });
-        } else {
-            let object_code = object_code_to_tokens(obj.object_code());
-            object_instantiations.extend(quote! {
-                pub static #inst_name: CallbackObject = CallbackObject::new(#object_code);
-            });
-            table_entries.extend(quote! {
-                ODEntry {
-                    index: #index,
-                    data: &#inst_name,
-                },
-            });
-        }
-    }
-
-    object_instantiations.extend(generate_state_inst(dev));
-
-    let table_len = dev.objects.len();
+    let tp = (0..nt).map(|i| {
+        let defaults = pdo_default(dev.pdos.tpdo_defaults.get(&i));
+        quote!(tpdo_ptr.add(#i).write(Pdo::new(&LOOKUP, &NMT, &tpdo_data[#i], #defaults));)
+    });
     Ok(quote! {
-        #[allow(unused_imports)]
-        use zencan_node::common::AtomicCell;
-        #[allow(unused_imports)]
-        use zencan_node::common::can::CanMessage;
-        #[allow(unused_imports)]
-        use core::cell::Cell;
-        #[allow(unused_imports)]
-        use core::cell::RefCell;
-        #[allow(unused_imports)]
-        use zencan_node::critical_section::Mutex;
-        #[allow(unused_imports)]
-        use zencan_node::common::protocol::AbortCode;
-        #[allow(unused_imports)]
-        use zencan_node::object_dict::{
-            CallbackObject,
-            CallbackSubObject,
-            ObjectFlags,
-            ODEntry,
-            ObjectAccess,
-            ProvidesSubObjects,
-            SubInfo,
-            SubObjectAccess,
-            ObjectFlagAccess,
-            ScalarField,
-            ByteField,
-            ConstField,
-            NullTermByteField,
-        };
-        #[allow(unused_imports)]
-        use zencan_node::common::{i24, u24};
-        #[allow(unused_imports)]
-        use zencan_node::common::object_model::{TimeOfDay, TimeDifference};
-        #[allow(unused_imports)]
-        use zencan_node::SDO_BUFFER_SIZE;
-        #[allow(unused_imports)]
-        use zencan_node::pdo::{Pdo, PdoCommObject, PdoDefaults, PdoMappingObject};
-        #[allow(unused_imports)]
-        use zencan_node::storage::StorageCommandObject;
-        #[allow(unused_imports)]
-        use zencan_node::NodeMbox;
-        #[allow(unused_imports)]
-        use zencan_node::NodeState;
-        #[allow(unused_imports)]
-        use zencan_node::priority_queue::PriorityQueue;
-        #object_defs
-        #object_instantiations
-        pub static OD_TABLE: [ODEntry; #table_len] = [
-            #table_entries
-        ];
+        #[allow(non_snake_case, unused_imports, dead_code, clippy::redundant_closure)]
+        mod objects {
+            use zencan_node::{NodeState, NodeMbox, SDO_BUFFER_SIZE};
+            use zencan_node::common::{i24, u24, can::CanMessage, protocol::AbortCode};
+            use zencan_node::common::object_model::{TimeOfDay, TimeDifference};
+            use zencan_node::object_dict::*;
+            use zencan_node::pdo::{Pdo, PdoData, PdoDefaults, PdoCommObject, PdoMappingObject};
+            use zencan_node::storage::StorageCommandObject;
+            use zencan_node::priority_queue::PriorityQueue;
+            use zencan_node::init_cell::{InitCell, StaticStorage};
+            #definitions
+            #allocations
+            static DICT: InitCell<ObjectDict> = InitCell::new();
+            static RPDO_DATA: StaticStorage<[PdoData<'static>; #nr]> = StaticStorage::new();
+            static TPDO_DATA: StaticStorage<[PdoData<'static>; #nt]> = StaticStorage::new();
+            static RPDOS: StaticStorage<[Pdo<'static>; #nr]> = StaticStorage::new();
+            static TPDOS: StaticStorage<[Pdo<'static>; #nt]> = StaticStorage::new();
+            static NODE_STATE: StaticStorage<NodeState<'static>> = StaticStorage::new();
+            static NODE_MBOX: StaticStorage<NodeMbox> = StaticStorage::new();
+            // This buffer is owned exclusively by the mailbox.
+            static mut SDO_BUFFER: [u8; SDO_BUFFER_SIZE] = [0; SDO_BUFFER_SIZE];
+            // Only pointer representation bytes are formed here, never references
+            // to uninitialized objects. This table requires no runtime writes.
+            static OD_TABLE: [ODEntryUninit; #count] = [#(#entries),*];
+            static TX_QUEUE: PriorityQueue<4, CanMessage> = PriorityQueue::new();
+            static LOOKUP: Lookup = Lookup;
+            static NMT: Nmt = Nmt;
+            struct Lookup;
+            impl ObjectLookup<'static> for Lookup {
+                fn find_object(&self, index: u16) -> Option<&'static dyn ObjectAccess> { find_object(get_od().od_table(), index) }
+            }
+            struct Nmt;
+            impl zencan_node::NmtStateAccess for Nmt {
+                fn nmt_state(&self) -> zencan_node::common::protocol::NmtState {
+                    zencan_node::NmtStateAccess::nmt_state(get_od().node_state())
+                }
+            }
+            /// The generated object dictionary
+            ///
+            /// Can only be created by `get_od()`, and existence of it proves that the dictionary's
+            /// static objects have been initialized.
+            pub struct ObjectDict {
+                _private: (),
+            }
+            impl ObjectDict {
+                #getters
+                #[inline(always)]
+                pub fn node_state(&self) -> &'static NodeState<'static> {
+                    // SAFETY: This token is available only after initialization.
+                    unsafe { NODE_STATE.assume_init_ref() }
+                }
+                #[inline(always)]
+                pub fn node_mbox(&self) -> &'static NodeMbox {
+                    // SAFETY: This token is available only after initialization.
+                    unsafe { NODE_MBOX.assume_init_ref() }
+                }
+
+                /// Restore objects to their default values
+                fn reset_defaults(&self, scope: zencan_node::ResetScope) {
+                    let _ = scope;
+                    #resets
+                    for pdo in self.node_state().rpdos().iter().chain(self.node_state().tpdos()) {
+                        pdo.init_defaults();
+                    }
+                }
+                #[inline(always)]
+                pub fn od_table(&self) -> &'static [ODEntry<'static>] {
+                    // SAFETY: The guard publishes all objects before this token.
+                    unsafe { ODEntryUninit::assume_init_slice(&OD_TABLE) }
+                }
+            }
+
+            impl ObjectLookup<'static> for ObjectDict {
+                fn find_object(&self, index: u16) -> Option<&'static dyn ObjectAccess> { find_object(self.od_table(), index) }
+            }
+
+            impl ObjectDictionary<'static> for ObjectDict {
+                fn reset_objects(&self, scope: zencan_node::ResetScope) {
+                    self.reset_defaults(scope);
+                }
+
+                fn od_table(&self) -> &'static [ODEntry<'static>] {
+                    self.od_table()
+                }
+            }
+
+            /// Get the generated zencan Object Dictionary
+            #[inline]
+            pub fn get_od() -> &'static ObjectDict {
+                match DICT.get() {
+                    Some(od) => od,
+                    None => init_od(),
+                }
+            }
+            #[cold]
+            #[inline(never)]
+            fn init_od() -> &'static ObjectDict {
+                // SAFETY: The ObjectDict is the token which attests that objects have been
+                // initialized. It is not created until after all objects are initialized, and then
+                // it provides access to them via accessors. InitCell::get_or_init ensures that no
+                // reentrant initialization is allowed, and that if a panic occurs during
+                // initialization the cell is poisoned.
+                let od = DICT.get_or_init(|| unsafe {
+
+                    let rpdo_data_ptr = RPDO_DATA.as_ptr().cast::<PdoData<'static>>();
+                    for i in 0..#nr { rpdo_data_ptr.add(i).write(PdoData::new()); }
+                    let rpdo_data: &'static [PdoData<'static>; #nr] = &*rpdo_data_ptr.cast();
+                    let tpdo_data_ptr = TPDO_DATA.as_ptr().cast::<PdoData<'static>>();
+                    for i in 0..#nt { tpdo_data_ptr.add(i).write(PdoData::new()); }
+                    let tpdo_data: &'static [PdoData<'static>; #nt] = &*tpdo_data_ptr.cast();
+                    let rpdo_ptr = RPDOS.as_ptr().cast::<Pdo<'static>>();
+                    #(#rp)*
+                    let rpdos: &'static [Pdo<'static>; #nr] = &*rpdo_ptr.cast();
+                    let tpdo_ptr = TPDOS.as_ptr().cast::<Pdo<'static>>();
+                    #(#tp)*
+                    let tpdos: &'static [Pdo<'static>; #nt] = &*tpdo_ptr.cast();
+                    let node_state = NODE_STATE.write(NodeState::new(rpdos, tpdos));
+                    #constructors
+
+                    NODE_MBOX.write(NodeMbox::new(
+                        rpdos, tpdos, &TX_QUEUE, &mut *core::ptr::addr_of_mut!(SDO_BUFFER),
+                    ));
+                    ObjectDict { _private: () }
+                });
+                od.reset_defaults(zencan_node::ResetScope::Application);
+                od
+            }
+
+        }
+        pub use objects::*;
     })
 }
 
-/// Generate code for a node from a [`DeviceConfig`] as a string
-///
-/// # Arguments
-/// * `dev` - The device config
-/// * `format` - If true, generated code will be formatted with `prettyplease`
+/// Generate a node dictionary from a device configuration.
 pub fn device_config_to_string(dev: &DeviceConfig, format: bool) -> Result<String, CompileError> {
-    let tokens = device_config_to_tokens(dev)?;
-
+    let tokens = generate(dev)?;
     if format {
-        let parsed_file = match syn::parse_file(&tokens.to_string()) {
-            Ok(f) => f,
-            Err(e) => panic!("Error parsing generated code: {}", e),
-        };
-        Ok(prettyplease::unparse(&parsed_file))
+        Ok(prettyplease::unparse(
+            &syn::parse2(tokens).expect("invalid generated Rust"),
+        ))
     } else {
         Ok(tokens.to_string())
     }

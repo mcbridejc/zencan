@@ -8,9 +8,6 @@
 
 mod atomic_cell;
 pub use atomic_cell::AtomicCell;
-#[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub mod device_config;
 
 pub mod can;
 #[cfg(feature = "std")]

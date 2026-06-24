@@ -8,7 +8,6 @@
 use core::{cell::Cell, ops::Add};
 use critical_section::Mutex;
 
-
 /// A container to allow atomic access to the contained object
 pub struct AtomicCell<T> {
     inner: Mutex<Cell<T>>,
@@ -18,13 +17,6 @@ impl<T: Send + Copy> AtomicCell<T> {
     /// Read the value of the AtomicCell
     pub fn load(&self) -> T {
         critical_section::with(|cs| self.inner.borrow(cs).get())
-    }
-
-    /// Borrow a reference to the contained value
-    ///
-    /// A critical section must be obtained by the called and provided
-    pub fn borrow<'a>(&'a self, cs: critical_section::CriticalSection<'a>) -> &'a Cell<T> {
-        self.inner.borrow(cs)
     }
 
     /// Perform atomic modification of the contained value
@@ -45,6 +37,13 @@ impl<T: Send + Copy> AtomicCell<T> {
 }
 
 impl<T: Send> AtomicCell<T> {
+    /// Borrow a reference to the contained value
+    ///
+    /// The caller must supply a critical-section token.
+    pub fn borrow<'a>(&'a self, cs: critical_section::CriticalSection<'a>) -> &'a Cell<T> {
+        self.inner.borrow(cs)
+    }
+
     /// Create a new AtomicCell with the provided value
     pub const fn new(value: T) -> Self {
         Self {

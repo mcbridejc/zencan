@@ -20,21 +20,22 @@ async fn test_device_info_readback() {
     use object_dict2::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
     let _logger = BusLogger::new(bus.new_receiver());
 
-    let test_task = |_ctx| async move {
+    let test_task = move |_ctx| async move {
         // Highest sub index
         assert_eq!(3, client.read_u8(BOOTLOADER_INFO_INDEX, 0).await.unwrap());
         // Config - application mode, can reset to bootloader
@@ -42,14 +43,14 @@ async fn test_device_info_readback() {
         // Number of sections
         assert_eq!(1, client.read_u8(BOOTLOADER_INFO_INDEX, 2).await.unwrap());
 
-        assert!(!object_dict2::BOOTLOADER_INFO.reset_flag());
+        assert!(!od.object5500().reset_flag());
 
         client
             .write_u32(BOOTLOADER_INFO_INDEX, 3, BOOTLOADER_RESET_CMD)
             .await
             .unwrap();
 
-        assert!(object_dict2::BOOTLOADER_INFO.reset_flag());
+        assert!(od.object5500().reset_flag());
     };
 
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
@@ -60,15 +61,16 @@ async fn test_device_info_readback() {
 async fn test_program() {
     use object_dict3::*;
     const NODE_ID: u8 = 1;
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -125,7 +127,7 @@ async fn test_program() {
         finalize_flag: AtomicBool::new(false),
     }));
 
-    object_dict3::BOOTLOADER_SECTION0.register_callbacks(callbacks);
+    od.object5510().register_callbacks(callbacks);
 
     let _logger = BusLogger::new(bus.new_receiver());
 

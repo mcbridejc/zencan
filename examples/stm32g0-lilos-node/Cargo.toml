@@ -8,12 +8,14 @@ edition = "2024"
 
 [dependencies]
 # Local
-zencan-node = { path = "../../zencan-node", default-features = false, features = ["defmt"]}
+zencan-node = { path = "../../zencan-node", default-features = false, features = ["defmt", "atomic-critical-section"]}
 
 # External
 cortex-m = { version = "0.7.4", features=["critical-section-single-core"] }
 cortex-m-rt = "0.7.5"
 critical-section = "1.2.0"
+# lilos also requires portable-atomic's critical-section backend. It cannot be
+# combined with unsafe-assume-single-core; see docs/runtime-defaults.md.
 defmt = "1.0.1"
 embedded-io = "0.7.1"
 fdcan = { version = "0.2.1", features = ["fdcan_g0_g4_l5"] }

@@ -2,7 +2,7 @@
 //!
 //!
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use portable_atomic::{AtomicBool, Ordering};
 
 use crate::object_dict::{
     ConstByteRefField, ConstField, ObjectAccess, ProvidesSubObjects, SubInfo, SubObjectAccess,
@@ -25,6 +25,11 @@ impl<const APP: bool, const NUM_SECTIONS: u8> BootloaderInfo<APP, NUM_SECTIONS> 
         Self {
             reset_flag: ResetField::new(),
         }
+    }
+
+    /// Clear a pending bootloader reset request during global default reset.
+    pub fn reset_object(&self) {
+        self.reset_flag.flag.store(false, Ordering::Relaxed);
     }
 
     /// Read the reset_flag
@@ -155,6 +160,11 @@ impl BootloaderSection {
         }
     }
 
+    /// Size of the flash section in bytes.
+    pub const fn size(&self) -> u32 {
+        self.size
+    }
+
     /// Register the application callbacks which implement storage for this section
     pub fn register_callbacks(&self, callbacks: &'static dyn BootloaderSectionCallbacks) {
         self.callbacks.store(Some(callbacks));
@@ -232,7 +242,6 @@ impl ObjectAccess for BootloaderSection {
             2 => Ok(SubInfo::new_visible_str(self.name.len()).ro_access()),
             3 => Ok(SubInfo::new_u32().wo_access()),
             4 => Ok(SubInfo {
-                size: self.size as usize,
                 data_type: DataType::Domain,
                 access_type: AccessType::Rw,
                 pdo_mapping: PdoMappable::None,

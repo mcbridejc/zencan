@@ -207,7 +207,7 @@ impl<'a> Iterator for SectionIterator<'a> {
 ///
 /// It will look for a valid page, and if found, return it in the form of a [SectionIterator], which
 /// allows iterating over each section contained in the page
-pub fn load_sections<E>(flash: &dyn FlashAccess<Error = E>) -> Option<SectionIterator> {
+pub fn load_sections<E>(flash: &dyn FlashAccess<Error = E>) -> Option<SectionIterator<'_>> {
     if let Some(page) = read_page(flash, Page::A) {
         defmt::info!("Loading persist from Page A");
         Some(SectionIterator::new(page))

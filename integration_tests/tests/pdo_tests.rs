@@ -18,10 +18,13 @@ use zencan_common::{
     i24,
     node_configuration::PdoConfig,
     object_model::{PdoCommParameter, PdoMapping},
-    protocol::{NodeId, SyncObject},
-    u24,
+    protocol::{NmtCommand, NmtState, NodeId, SyncObject},
+    u24, AtomicCell,
 };
-use zencan_node::{object_dict::ObjectAccess as _, pdo::MappingEntry};
+use zencan_node::{
+    object_dict::{ODEntry, ObjectAccess as _},
+    pdo::MappingEntry,
+};
 
 #[serial]
 #[tokio::test]
@@ -29,8 +32,9 @@ async fn test_rpdo_assignment() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
 
     let rpdo_cb_counter: Arc<AtomicU8> = Arc::new(AtomicU8::new(0));
     let rpdo_cb_counter_clone = rpdo_cb_counter.clone();
@@ -42,16 +46,16 @@ async fn test_rpdo_assignment() {
         assert_eq!(mappings.len(), 2);
 
         let mapping = &mappings[0];
-        assert_eq!(mapping.object.index, 0x2000);
+        assert_eq!(mapping.index, 0x2000);
         assert_eq!(mapping.sub, 1);
         assert_eq!(mapping.length, 4);
         let mapping = &mappings[1];
-        assert_eq!(mapping.object.index, 0x300C);
+        assert_eq!(mapping.index, 0x300C);
         assert_eq!(mapping.sub, 12);
         assert_eq!(mapping.length, 3);
 
-        assert_eq!(OBJECT2000.read_u32(1), Ok(500));
-        assert_eq!(OBJECT300C.read_u24(12), Ok(u24::new(0x010203)));
+        assert_eq!(od.object2000().read_u32(1), Ok(500));
+        assert_eq!(od.object300c().read_u24(12), Ok(u24::new(0x010203)));
     };
 
     let callbacks = Callbacks {
@@ -61,9 +65,9 @@ async fn test_rpdo_assignment() {
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -150,15 +154,16 @@ async fn test_tpdo_assignment() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -243,15 +248,16 @@ async fn test_tpdo_event_flags() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -347,7 +353,7 @@ async fn test_tpdo_event_flags() {
         assert!(rx.try_recv().is_none());
 
         // Set the event flag for sub 1
-        OBJECT2000
+        od.object2000()
             .set_event_flag(1)
             .expect("Error setting event flag");
 
@@ -371,7 +377,7 @@ async fn test_tpdo_event_flags() {
         assert!(rx.try_recv().is_none());
 
         // Set flag for TPDO1
-        OBJECT3000
+        od.object3000()
             .set_event_flag(0)
             .expect("Error setting event flag");
         ctx.wait_for_process(1).await;
@@ -391,15 +397,16 @@ async fn test_tpdo_sync_initiated_transmission() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -423,7 +430,7 @@ async fn test_tpdo_sync_initiated_transmission() {
         rx: &mut SimBusReceiver,
         ctx: &mut TestContext,
     ) {
-        *sync_counter += 1_;
+        *sync_counter += 1;
         let sync_msg = SyncObject::new(Some(*sync_counter)).into();
         sender.send(sync_msg).await.unwrap();
         let msg = rx
@@ -619,15 +626,16 @@ async fn test_pdo_configuration() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -688,15 +696,16 @@ async fn test_pdo_defaults() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
     let _logger = BusLogger::new(bus.new_receiver());
@@ -726,4 +735,90 @@ async fn test_pdo_defaults() {
     };
 
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
+}
+
+/// When PDOs have a default COB-ID with add_node_id=true, they should respond to setting the NODE
+/// ID
+#[test]
+fn pdo_cob_id_add_node_id_during_autostart() {
+    mod isolated {
+        zencan_node::build_object_dict!(
+            r#"
+            device_name = "PDO latch test"
+            autostart = "enabled"
+            [identity]
+            vendor_id = 1
+            product_code = 2
+            revision_number = 3
+            [pdos]
+            num_rpdo = 1
+            num_tpdo = 1
+            [pdos.rpdo.0]
+            enabled = true
+            cob_id = 0x200
+            add_node_id = true
+            transmission_type = 254
+            mappings = []
+            [pdos.tpdo.0]
+            enabled = true
+            cob_id = 0x300
+            add_node_id = true
+            transmission_type = 254
+            mappings = []
+        "#
+        );
+    }
+    let od = isolated::get_od();
+    let rpdo = &od.node_state().rpdos()[0];
+    let tpdo = &od.node_state().tpdos()[0];
+    let node_id = AtomicCell::new(7);
+
+    let mut on_operational = |_: &[ODEntry<'static>]| {
+        assert_eq!(rpdo.cob_id().raw(), 0x200 + node_id.load() as u32);
+        assert_eq!(tpdo.cob_id().raw(), 0x300 + node_id.load() as u32);
+    };
+    let callbacks = Callbacks {
+        enter_operational: Some(&mut on_operational),
+        ..Callbacks::new()
+    };
+    let mut node = Node::new(
+        NodeId::new(node_id.load()).unwrap(),
+        callbacks,
+        od.node_mbox(),
+        od.node_state(),
+        od,
+    );
+    assert_eq!(node.nmt_state(), NmtState::Bootup);
+    assert_eq!(rpdo.cob_id().raw(), 0x207);
+    assert_eq!(tpdo.cob_id().raw(), 0x307);
+    node.process(0);
+    assert_eq!(node.nmt_state(), NmtState::Operational);
+    assert_eq!(rpdo.cob_id().raw(), 0x207);
+    assert_eq!(tpdo.cob_id().raw(), 0x307);
+
+    // Reset the node
+    od.node_mbox()
+        .store_message(
+            NmtCommand {
+                cs: zencan_common::protocol::NmtCommandSpecifier::ResetComm,
+                node: node_id.load(),
+            }
+            .into(),
+        )
+        .unwrap();
+    node.process(0);
+    node.process(0);
+
+    assert_eq!(node.nmt_state(), NmtState::PreOperational);
+
+    assert_eq!(rpdo.cob_id().raw(), 0x207);
+    assert_eq!(tpdo.cob_id().raw(), 0x307);
+
+    node.set_node_id(NodeId::new(8).unwrap());
+    node_id.store(8);
+    node.process(0);
+
+    // Changing the NODE ID should cause the PDO ID to change
+    assert_eq!(rpdo.cob_id().raw(), 0x208);
+    assert_eq!(tpdo.cob_id().raw(), 0x308);
 }

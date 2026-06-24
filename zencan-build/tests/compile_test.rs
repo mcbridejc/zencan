@@ -1,4 +1,4 @@
-use zencan_common::device_config::DeviceConfig;
+use zencan_build::device_config::DeviceConfig;
 
 #[test]
 fn compile_test() {

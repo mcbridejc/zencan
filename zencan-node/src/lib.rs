@@ -74,7 +74,7 @@
 //!
 //! ```ignore
 //! // Use the UID register to set a unique serial number
-//! zencan::OBJECT1018.set_serial(get_serial());
+//! zencan::get_od().object1018().set_serial(get_serial());
 //! ```
 //!
 //! ### Node Creation
@@ -87,13 +87,13 @@
 //!   constant, it can be set by DIP switches, etc. It can also be left as `NodeId::Unconfigured`.
 //!   It is then possible to configure the node ID over the bus using the LSS protocol.
 //! - Object dictionary: This is a table where all of the objects are stored. It is created as a
-//!   static variable by `zencan-build`, and is called `OD_TABLE`.
+//!   static variable by `zencan-build`, and is available via a generated getter, `get_od()`.
 //! - Mailbox: This is a data structure for receiving incoming CAN messages. It buffers received
 //!   messages so that messages can be pass to it in an interrupt, and then processed in the next
-//!   call to `process`. It is defined by the generated code in a static variable named `NODE_MBOX`.
+//!   call to `process`. It is defined by the generated code as `get_od().node_mbox()`.
 //! - Node state: This is a global state structure which provides some communications between the
 //!   Node and objects such as PDO configuration objects, or special purpose object like the Save
-//!   Command object. It is defined by the generated code in a static variable named `NODE_STATE`.
+//!   Command object. It is defined by the generated code as `get_od().node_state()`.
 //!
 //! There are a variety of callback functions you may provide as well, although they are not
 //! required.
@@ -112,12 +112,13 @@
 //!
 //!
 //! // Initialize node, providing references to the static objects created by `zencan-build`
+//! let od = zencan::get_od();
 //! let mut node = Node::new(
 //!     NodeId::Unconfigured,
 //!     callbacks,
-//!     &zencan::NODE_MBOX,
-//!     &zencan::NODE_STATE,
-//!     &zencan::OD_TABLE,
+//!     od.node_mbox(),
+//!     od.node_state(),
+//!     od,
 //! );
 //! ```
 //!
@@ -135,7 +136,7 @@
 //! let msg = zencan_node::common::can::CanMessage::new(id, &buffer[..msg.len as usize]);
 //! // Ignore error -- as an Err is returned for messages that are not consumed by the node
 //! // stack. You may handle those some other way, or simply drop them.
-//! zencan::NODE_MBOX.store_message(msg).ok();
+//! zencan::get_od().node_mbox().store_message(msg).ok();
 //! ```
 //!
 //! Outgoing messages can be read from the mbox using the [`NodeMbox::next_transmit_message`]
@@ -148,7 +149,7 @@
 //! #[embassy_executor::task]
 //! async fn twai_tx_task(mut twai_tx: TwaiTx<'static, Async>) {
 //!     loop {
-//!         while let Some(msg) = zencan::NODE_MBOX.next_transmit_message() {
+//!         while let Some(msg) = zencan::get_od().node_mbox().next_transmit_message() {
 //!             let frame =
 //!                 EspTwaiFrame::new(StandardId::new(msg.id.raw() as u16).unwrap(), msg.data())
 //!                     .unwrap();
@@ -192,6 +193,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod bootloader;
+mod identity_object;
+#[doc(hidden)]
+pub mod init_cell;
 mod lss_slave;
 mod node;
 mod node_mbox;
@@ -203,18 +207,23 @@ pub mod priority_queue;
 mod sdo_server;
 pub mod storage;
 
+// Re-export proc macros
+pub use zencan_macro::build_object_dict;
+
 // Re-export types used by generated code
 pub use critical_section;
 pub use embedded_io;
+pub use portable_atomic;
 pub use zencan_common as common;
 
 pub use bootloader::{BootloaderInfo, BootloaderSection, BootloaderSectionCallbacks};
 #[cfg(all(feature = "socketcan", target_os = "linux"))]
 #[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
 pub use common::open_socketcan;
+pub use identity_object::IdentityObject;
 pub use node::{Callbacks, Node};
 pub use node_mbox::NodeMbox;
-pub use node_state::NodeState;
+pub use node_state::{NmtStateAccess, NodeState, ResetScope};
 pub use persist::{restore_stored_comm_objects, restore_stored_objects};
 pub use sdo_server::SDO_BUFFER_SIZE;
 

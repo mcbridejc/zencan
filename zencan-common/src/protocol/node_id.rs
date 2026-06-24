@@ -46,6 +46,12 @@ impl From<ConfiguredNodeId> for u8 {
     }
 }
 
+impl From<ConfiguredNodeId> for NodeId {
+    fn from(value: ConfiguredNodeId) -> Self {
+        NodeId::Configured(value)
+    }
+}
+
 impl NodeId {
     /// Try to create a new NodeId from a u8
     ///

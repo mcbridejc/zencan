@@ -26,6 +26,11 @@ pub struct StorageContext {
 }
 
 impl StorageContext {
+    /// Discard a pending save request during global default reset.
+    pub fn clear_store_request(&self) {
+        self.store_flag.store(false, Ordering::Relaxed);
+    }
+
     /// Create a new StorageContext
     pub const fn new() -> Self {
         Self {
@@ -45,6 +50,13 @@ impl StorageCommandObject {
     /// Create a new storage context object
     pub const fn new(storage_context: &'static StorageContext) -> Self {
         Self { storage_context }
+    }
+
+    /// Reset the object to its default poweron state
+    pub fn reset_object(&self) {
+        self.storage_context
+            .store_flag
+            .store(false, Ordering::Relaxed);
     }
 }
 

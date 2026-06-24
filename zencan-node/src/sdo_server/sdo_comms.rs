@@ -84,6 +84,18 @@ impl SdoComms {
         }
     }
 
+    /// Discard a transfer when the node resets; retain ownership of its buffer.
+    pub fn reset(&self) {
+        critical_section::with(|cs| {
+            self.request.borrow(cs).set(None);
+            self.response.borrow(cs).set(None);
+            self.state.borrow(cs).set(ReceiverState::Normal);
+            self.timer.store(0, Ordering::Relaxed);
+            self.last_seqnum.store(0, Ordering::Relaxed);
+            self.blksize.store(0, Ordering::Relaxed);
+        });
+    }
+
     pub fn next_transmit_message(&self) -> Option<[u8; 8]> {
         // Always send a queued response if avaliable
         if let Some(resp) = self.response.take().map(|resp| resp.to_bytes()) {

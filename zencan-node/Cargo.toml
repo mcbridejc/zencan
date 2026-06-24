@@ -13,6 +13,7 @@ repository.workspace = true
 
 [dependencies]
 # Local
+zencan-macro.workspace = true
 zencan-common = { workspace = true, default-features = false }
 
 # External
@@ -23,12 +24,13 @@ defmt-or-log.workspace = true
 embedded-io.workspace = true
 futures.workspace = true
 log = { version = "0.4", optional = true }
-static_cell = "2.1.1"
-portable-atomic = "1.11.1"
+portable-atomic = { version = "1.11.1", features = ["float"] }
 heapless = "0.9.1"
 
 [features]
 default = ["log", "std"]
+# Optional generic fallback; locks all atomic operations on CAS-less targets.
+atomic-critical-section = ["portable-atomic/critical-section"]
 std = ["critical-section/std", "zencan-common/std"]
 log = ["defmt-or-log/log", "zencan-common/log", "dep:log"]
 defmt = ["defmt-or-log/defmt", "zencan-common/defmt", "dep:defmt"]

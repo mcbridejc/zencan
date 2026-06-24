@@ -2,7 +2,7 @@ use ini::{Ini, Properties};
 use snafu::{ResultExt as _, Snafu};
 use std::{collections::BTreeMap, path::Path, str::FromStr};
 
-use zencan_common::object_model::{AccessType, DataType, ObjectCode};
+use zencan_common::object_model::{AccessType, ObjectCode};
 
 #[derive(Debug, Snafu)]
 pub enum LoadError {
@@ -19,6 +19,90 @@ pub enum LoadError {
     UnsupportedObject {
         object_type: ObjectCode,
     },
+}
+
+/// Indicate the type of data stored in an object
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u16)]
+pub enum DataTypeCode {
+    /// A true false value, encoded as a single byte, with 0 for false and 1 for true
+    Boolean = 1,
+    #[default]
+    /// A signed 8-bit integer
+    Int8 = 2,
+    /// A signed 16-bit integer
+    Int16 = 3,
+    /// A signed 32-bit integer
+    Int32 = 4,
+    /// An unsigned 8-bit integer
+    UInt8 = 5,
+    /// An unsigned 16-bit integer
+    UInt16 = 6,
+    /// An unsigned 32-bit integer
+    UInt32 = 7,
+    /// A 32-bit floating point value
+    Real32 = 0x8,
+    /// An ASCII/utf-8 string
+    VisibleString = 0x9,
+    /// A byte string
+    OctetString = 0xa,
+    /// A unicode string
+    UnicodeString = 0xb,
+    /// Currently Unimplemented
+    TimeOfDay = 0xc,
+    /// Currently Unimplemented
+    TimeDifference = 0xd,
+    /// An arbitrary byte access type for e.g. data streams, or large chunks of
+    /// data. Size is typically not known at build time.
+    Domain = 0xf,
+    /// A signed 24-bit integer
+    Int24 = 0x10,
+    /// A 64-bit floating point value
+    Real64 = 0x11,
+    /// A signed 64-bit integer
+    Int64 = 0x15,
+    /// An unsigned 24-bit integer
+    UInt24 = 0x16,
+    /// An unsigned 64-bit integer
+    UInt64 = 0x1b,
+    /// A contained for an unrecognized data type value
+    Other(u16),
+}
+
+impl From<u16> for DataTypeCode {
+    fn from(value: u16) -> Self {
+        use DataTypeCode::*;
+        match value {
+            1 => Boolean,
+            2 => Int8,
+            3 => Int16,
+            4 => Int32,
+            5 => UInt8,
+            6 => UInt16,
+            7 => UInt32,
+            8 => Real32,
+            9 => VisibleString,
+            0xa => OctetString,
+            0xb => UnicodeString,
+            0xf => Domain,
+            0x10 => Int24,
+            0x11 => Real64,
+            0x15 => Int64,
+            0x16 => UInt24,
+            0x1b => UInt64,
+            _ => Other(value),
+        }
+    }
+}
+
+impl DataTypeCode {
+    /// Returns true if data type is one of the string types
+    pub fn is_str(&self) -> bool {
+        matches!(
+            self,
+            Self::VisibleString | Self::OctetString | Self::UnicodeString
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -75,7 +159,7 @@ pub struct DeviceInfo {
 
 #[derive(Clone, Debug, Default)]
 pub struct DummyUsage {
-    pub values: BTreeMap<DataType, bool>,
+    pub values: BTreeMap<DataTypeCode, bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -95,7 +179,7 @@ pub struct Object {
 #[derive(Clone, Debug, Default)]
 pub struct SubObject {
     pub parameter_name: String,
-    pub data_type: DataType,
+    pub data_type: DataTypeCode,
     pub access_type: AccessType,
     pub low_limit: Option<String>,
     pub high_limit: Option<String>,
@@ -435,7 +519,9 @@ impl ElectronicDataSheet {
             let supported = v.parse::<u32>().context(ParseIntSnafu {
                 message: format!("Parsing '{}' in section '{}'", k, "DummyUsage"),
             })? == 1;
-            dummy_usage.values.insert(DataType::from(index), supported);
+            dummy_usage
+                .values
+                .insert(DataTypeCode::from(index), supported);
         }
         Ok(dummy_usage)
     }
@@ -649,7 +735,7 @@ impl ElectronicDataSheet {
             })?;
         Ok(SubObject {
             parameter_name: section.get_string("ParameterName")?,
-            data_type: DataType::from(section.get_u32("DataType")? as u16),
+            data_type: DataTypeCode::from(section.get_u32("DataType")? as u16),
             access_type,
             low_limit: section.get_string("LowLimit").ok(),
             high_limit: section.get_string("HighLimit").ok(),
@@ -693,7 +779,7 @@ AccessType=ro
         assert_eq!(obj.parameter_name, "test");
         assert_eq!(obj.sub_number, 0);
         let sub = obj.subs.get(&0).unwrap();
-        assert_eq!(sub.data_type, DataType::Boolean);
+        assert_eq!(sub.data_type, DataTypeCode::Boolean);
         assert_eq!(sub.access_type, AccessType::Ro);
     }
 

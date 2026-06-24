@@ -17,17 +17,17 @@ use crate::{
     lss_slave::{LssConfig, LssSlave},
     node_mbox::NodeMbox,
     node_state::NmtStateAccess as _,
-    object_dict::{find_object, ODEntry},
-    pdo::N_MAPPING_PARAMS,
+    object_dict::{ODEntry, ObjectDictionary, ObjectLookup},
+    pdo::{MappingEntry, N_MAPPING_PARAMS},
+    sdo_server::SdoServer,
     NodeState,
 };
-use crate::{pdo::MappingEntry, sdo_server::SdoServer};
 
 use defmt_or_log::{debug, info};
 
 pub type StoreNodeConfigFn<'a> = dyn FnMut(NodeId) + 'a;
 pub type StoreObjectsFn<'a> = dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize) + 'a;
-pub type StateChangeFn<'a> = dyn FnMut(&'a [ODEntry<'a>]) + 'a;
+pub type StateChangeFn<'a> = dyn FnMut(&[ODEntry<'static>]) + 'a;
 pub type SyncReceiveFn<'a> = dyn FnMut(SyncObject) + 'a;
 pub type PdoReceiveFn<'a> = dyn for<'b> FnMut(u8, &'b [MappingEntry<'a>]);
 
@@ -54,7 +54,9 @@ pub struct Callbacks<'a> {
     ///
     /// If the application supported storing persistent object values, it should restore them now
     /// using the [`restore_stored_objects`](crate::restore_stored_objects) method. The application
-    /// should also do whatever is appropraite to reset its state to it's reset condition.
+    /// must reset its own state here as well, including values for any runtime-registered callback
+    /// object handlers. The global default reset runs before this callback, so default values will
+    /// be loaded into all storage objects.
     pub reset_app: Option<&'a mut StateChangeFn<'a>>,
 
     /// The RESET_COMMS NMT state has been entered
@@ -101,8 +103,8 @@ impl<'a> Callbacks<'a> {
     }
 }
 
-fn read_identity(od: &[ODEntry]) -> Option<LssIdentity> {
-    let obj = find_object(od, object_ids::IDENTITY)?;
+fn read_identity(od: &[ODEntry<'static>]) -> Option<LssIdentity> {
+    let obj = od.find_object(object_ids::IDENTITY)?;
     let vendor_id = obj.read_u32(1).ok()?;
     let product_code = obj.read_u32(2).ok()?;
     let revision = obj.read_u32(3).ok()?;
@@ -115,13 +117,13 @@ fn read_identity(od: &[ODEntry]) -> Option<LssIdentity> {
     })
 }
 
-fn read_heartbeat_period(od: &[ODEntry]) -> Option<u16> {
-    let obj = find_object(od, object_ids::HEARTBEAT_PRODUCER_TIME)?;
+fn read_heartbeat_period(od: &dyn ObjectLookup<'_>) -> Option<u16> {
+    let obj = od.find_object(object_ids::HEARTBEAT_PRODUCER_TIME)?;
     obj.read_u16(0).ok()
 }
 
-fn read_autostart(od: &[ODEntry]) -> Option<bool> {
-    let obj = find_object(od, object_ids::AUTO_START)?;
+fn read_autostart(od: &dyn ObjectLookup<'_>) -> Option<bool> {
+    let obj = od.find_object(object_ids::AUTO_START)?;
     Some(obj.read_u8(0).unwrap() != 0)
 }
 
@@ -138,10 +140,10 @@ fn read_autostart(od: &[ODEntry]) -> Option<bool> {
 #[allow(missing_debug_implementations)]
 pub struct Node<'a> {
     node_id: NodeId,
-    sdo_server: SdoServer<'a>,
+    sdo_server: SdoServer<'static>,
     lss_slave: LssSlave,
     message_count: u32,
-    od: &'static [ODEntry<'static>],
+    od: &'static dyn ObjectDictionary<'static>,
     mbox: &'static NodeMbox,
     state: &'static NodeState<'static>,
     reassigned_node_id: Option<NodeId>,
@@ -167,30 +169,32 @@ impl<'a> Node<'a> {
         callbacks: Callbacks<'a>,
         mbox: &'static NodeMbox,
         state: &'static NodeState<'static>,
-        od: &'static [ODEntry<'static>],
+        od: &'static dyn ObjectDictionary,
     ) -> Self {
         let message_count = 0;
         let sdo_server = SdoServer::new();
         let lss_slave = LssSlave::new(LssConfig {
-            identity: read_identity(od).unwrap_or_default(),
+            identity: read_identity(od.od_table()).unwrap_or_default(),
             node_id,
             store_supported: false,
         });
         let reassigned_node_id = None;
 
         // Storage command is supported if the application provides a callback
-        if callbacks.store_objects.is_some() {
-            state
-                .storage_context()
-                .store_supported
-                .store(true, Ordering::Relaxed);
-        }
+        state
+            .storage_context()
+            .store_supported
+            .store(callbacks.store_objects.is_some(), Ordering::Relaxed);
 
         let heartbeat_period_ms = read_heartbeat_period(od).unwrap_or(0);
         let next_heartbeat_time_us = 0;
         let auto_start = read_autostart(od).unwrap_or(false);
         let last_process_time_us = 0;
         let transmit_flag = false;
+
+        for pdo in state.rpdos().iter().chain(state.tpdos()) {
+            pdo.set_node_id(node_id);
+        }
 
         let mut node = Self {
             node_id,
@@ -216,6 +220,7 @@ impl<'a> Node<'a> {
     /// Manually set the node ID. Changing the node id will cause an NMT comm reset to occur,
     /// resetting communication parameter defaults and triggering a bootup heartbeat message if the
     /// ID is valid. Setting the node ID to 255 will put the node into unconfigured mode.
+    /// The assignment and PDO IDs are updated together on the next process call.
     pub fn set_node_id(&mut self, node_id: NodeId) {
         self.reassigned_node_id = Some(node_id);
     }
@@ -246,7 +251,10 @@ impl<'a> Node<'a> {
         let mut update_flag = false;
         if let Some(new_node_id) = self.reassigned_node_id.take() {
             self.node_id = new_node_id;
-            self.state.set_nmt_state(NmtState::Bootup);
+            for pdo in self.state.rpdos().iter().chain(self.state.tpdos()) {
+                pdo.set_node_id(new_node_id);
+            }
+            self.reset_comm();
         }
 
         if self.nmt_state() == NmtState::Bootup {
@@ -282,7 +290,7 @@ impl<'a> Node<'a> {
         {
             // If the flag is set, and the user has provided a callback, call it
             if let Some(cb) = &mut self.callbacks.store_objects {
-                crate::persist::serialize(self.od, *cb);
+                crate::persist::serialize(self.od.od_table(), *cb);
             }
         }
 
@@ -369,15 +377,15 @@ impl<'a> Node<'a> {
                 if !rpdo.valid() {
                     continue;
                 }
-                if let Some(new_data) = rpdo.buffered_value.take() {
+                if let Some(new_data) = rpdo.data.buffered_value.take() {
                     rpdo.store_pdo_data(&new_data);
                     if let Some(cb) = &mut self.callbacks.pdo_received {
-                        let mapping: heapless::Vec<MappingEntry<'a>, N_MAPPING_PARAMS> = rpdo
-                            .mapping_params[..rpdo.valid_maps.load().into()]
-                            .iter()
-                            .map(AtomicCell::load)
-                            .map(Option::unwrap)
-                            .collect();
+                        let mapping: heapless::Vec<MappingEntry<'a>, N_MAPPING_PARAMS> =
+                            rpdo.data.mapping_params[..rpdo.data.valid_maps.load().into()]
+                                .iter()
+                                .map(AtomicCell::load)
+                                .map(|entry| entry.try_get_valid_entry().unwrap())
+                                .collect();
 
                         (*cb)(i as u8, mapping.as_slice());
                     }
@@ -459,59 +467,80 @@ impl<'a> Node<'a> {
     fn enter_operational(&mut self) {
         self.state.set_nmt_state(NmtState::Operational);
         if let Some(cb) = &mut self.callbacks.enter_operational {
-            (*cb)(self.od);
+            (*cb)(self.od.od_table());
         }
     }
 
     fn enter_stopped(&mut self) {
         self.state.set_nmt_state(NmtState::Stopped);
         if let Some(cb) = &mut self.callbacks.enter_stopped {
-            (*cb)(self.od);
+            (*cb)(self.od.od_table());
         }
     }
 
     fn enter_preoperational(&mut self) {
         self.state.set_nmt_state(NmtState::PreOperational);
         if let Some(cb) = &mut self.callbacks.enter_preoperational {
-            (*cb)(self.od);
+            (*cb)(self.od.od_table());
         }
+    }
+
+    fn reset_object_values(&self, scope: crate::ResetScope) {
+        self.od.reset_objects(scope);
+    }
+
+    fn prepare_reset(&mut self) {
+        self.state.set_nmt_state(NmtState::PreOperational);
+        self.sdo_server = SdoServer::new();
+        self.mbox.reset();
+        self.state
+            .storage_context()
+            .store_flag
+            .store(false, Ordering::Relaxed);
+    }
+
+    fn finish_reset(&mut self) {
+        self.heartbeat_period_ms = read_heartbeat_period(self.od).unwrap_or(0);
+        self.next_heartbeat_time_us = self.last_process_time_us;
+        self.state.set_nmt_state(NmtState::Bootup);
     }
 
     fn reset_app(&mut self) {
-        // TODO: All objects should get reset to their defaults, but that isn't yet supported
-        for pdo in self.state.rpdos().iter().chain(self.state.tpdos()) {
-            pdo.init_defaults(self.node_id);
-        }
-
+        self.prepare_reset();
+        self.reset_object_values(crate::ResetScope::Application);
         self.state.set_nmt_state(NmtState::Bootup);
 
         if let Some(reset_app_cb) = &mut self.callbacks.reset_app {
-            (*reset_app_cb)(self.od);
+            (*reset_app_cb)(self.od.od_table());
         }
+        self.finish_reset();
     }
 
     fn reset_comm(&mut self) {
-        for pdo in self.state.rpdos().iter().chain(self.state.tpdos()) {
-            pdo.init_defaults(self.node_id);
-        }
+        self.prepare_reset();
+        self.reset_object_values(crate::ResetScope::Communication);
 
         self.state.set_nmt_state(NmtState::Bootup);
 
         if let Some(reset_comms_cb) = &mut self.callbacks.reset_comms {
-            (*reset_comms_cb)(self.od);
+            (*reset_comms_cb)(self.od.od_table());
         }
+        self.finish_reset();
     }
 
     fn boot_up(&mut self) {
         // Reset the LSS slave with the new ID
         self.lss_slave.update_config(LssConfig {
-            identity: read_identity(self.od).unwrap_or_default(),
+            identity: read_identity(self.od.od_table()).unwrap_or_default(),
             node_id: self.node_id,
             store_supported: self.callbacks.store_node_config.is_some(),
         });
 
         if let NodeId::Configured(node_id) = self.node_id {
             info!("Booting node with ID {}", node_id.raw());
+            for pdo in self.state.rpdos().iter().chain(self.state.tpdos()) {
+                pdo.set_node_id(node_id.into());
+            }
             self.mbox.set_sdo_rx_cob_id(Some(self.sdo_rx_cob_id()));
             self.mbox.set_sdo_tx_cob_id(Some(self.sdo_tx_cob_id()));
             self.send_heartbeat();
@@ -536,23 +565,26 @@ mod tests {
     use zencan_common::{
         can::CanMessage,
         object_model::ObjectCode,
-        protocol::{NmtState, NodeId},
+        protocol::{NmtCommand, NmtCommandSpecifier, NmtState, NodeId},
     };
 
     use crate::{
-        object_dict::{ODEntry, ProvidesSubObjects, ScalarField, SubInfo, SubObjectAccess},
+        object_dict::{
+            ODEntry, ObjectAccess, ObjectDictionary, ObjectLookup, ProvidesSubObjects,
+            ScalarFieldU8, SubInfo, SubObjectAccess,
+        },
         priority_queue::PriorityQueue,
         Callbacks, Node, NodeMbox, NodeState,
     };
 
     struct AutoStartObject {
-        value: ScalarField<u8>,
+        value: ScalarFieldU8,
     }
 
     impl AutoStartObject {
         pub fn new(value: u8) -> Self {
             Self {
-                value: ScalarField::<u8>::new(value),
+                value: ScalarFieldU8::new(value),
             }
         }
     }
@@ -569,13 +601,31 @@ mod tests {
         }
     }
 
+    struct TestOd {
+        entries: &'static [ODEntry<'static>],
+    }
+
+    impl ObjectLookup<'static> for TestOd {
+        fn find_object(&self, index: u16) -> Option<&'static dyn ObjectAccess> {
+            self.entries.find_object(index)
+        }
+    }
+
+    impl ObjectDictionary<'static> for TestOd {
+        fn od_table(&self) -> &'static [ODEntry<'static>] {
+            self.entries
+        }
+        fn reset_objects(&self, _scope: crate::ResetScope) {}
+    }
+
     #[test]
     fn test_node_autostart_enabled() {
         let object5000 = Box::leak(Box::new(AutoStartObject::new(1)));
-        let od_table = Box::leak(Box::new([ODEntry {
+        let entries = Box::leak(Box::new([ODEntry {
             index: 0x5000,
-            data: object5000,
+            object: object5000,
         }]));
+        let od = Box::leak(Box::new(TestOd { entries }));
 
         let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
         let sdo_buffer = Box::leak(Box::new([0u8; 100]));
@@ -587,20 +637,35 @@ mod tests {
             Callbacks::default(),
             mbox,
             state,
-            od_table,
+            od,
         );
 
         node.process(0);
         assert_eq!(NmtState::Operational, node.nmt_state());
+
+        mbox.store_message(
+            NmtCommand {
+                cs: NmtCommandSpecifier::ResetApp,
+                node: 1,
+            }
+            .into(),
+        )
+        .unwrap();
+
+        node.process(0);
+        node.process(0);
+
+        assert_eq!(NmtState::PreOperational, node.nmt_state());
     }
 
     #[test]
     fn test_node_autostart_disabled() {
         let object5000 = Box::leak(Box::new(AutoStartObject::new(0)));
-        let od_table = Box::leak(Box::new([ODEntry {
+        let entries = Box::leak(Box::new([ODEntry {
             index: 0x5000,
-            data: object5000,
+            object: object5000,
         }]));
+        let od = Box::leak(Box::new(TestOd { entries }));
 
         let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
         let sdo_buffer = Box::leak(Box::new([0u8; 100]));
@@ -612,7 +677,7 @@ mod tests {
             Callbacks::default(),
             mbox,
             state,
-            od_table,
+            od,
         );
 
         node.process(0);

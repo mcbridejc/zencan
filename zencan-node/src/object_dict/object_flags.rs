@@ -93,6 +93,14 @@ pub trait ObjectFlagAccess {
 }
 
 impl<const N: usize> ObjectFlags<N> {
+    /// Clear both banks when resetting object values.
+    pub fn reset(&self) {
+        critical_section::with(|cs| {
+            self.flags0.borrow(cs).set([0; N]);
+            self.flags1.borrow(cs).set([0; N]);
+        });
+    }
+
     /// Create a new ObjectFlags
     pub const fn new(sync: &'static ObjectFlagSync) -> Self {
         Self {

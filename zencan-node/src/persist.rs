@@ -6,7 +6,7 @@ use core::{
     task::Context,
 };
 
-use crate::object_dict::{find_object, ODEntry};
+use crate::object_dict::{find_object, ODEntry, ObjectAccess};
 use futures::{pending, task::noop_waker_ref};
 
 use defmt_or_log::{debug, warn};
@@ -38,16 +38,16 @@ async fn write_bytes(bytes: &[u8], reg: &RefCell<u8>) {
     }
 }
 
-async fn serialize_object(obj: &ODEntry<'_>, sub: u8, reg: &RefCell<u8>) {
+async fn serialize_object(index: u16, object: &dyn ObjectAccess, sub: u8, reg: &RefCell<u8>) {
     // Unwrap safety: This can only fail if the sub doesn't exist, and we already
     // checked for that above
-    let data_size = obj.data.read_size(sub).unwrap() as u16;
+    let data_size = object.read_size(sub).unwrap() as u16;
     // Serialized node size is the variable length object data, plus node type (u8), index (u16), and sub index (u8)
     let node_size = data_size + 4;
 
     write_bytes(&node_size.to_le_bytes(), reg).await;
     write_bytes(&[NodeType::ObjectValue as u8], reg).await;
-    write_bytes(&obj.index.to_le_bytes(), reg).await;
+    write_bytes(&index.to_le_bytes(), reg).await;
     write_bytes(&[sub], reg).await;
 
     const CHUNK_SIZE: usize = 32;
@@ -61,7 +61,7 @@ async fn serialize_object(obj: &ODEntry<'_>, sub: u8, reg: &RefCell<u8>) {
         // the value changed between the two chunks. This is only a problem for large fields which
         // can be modified on a different thread than `Node::process()` is called. Fixing it
         // requires an object locking mechanism, which may be worth considering in the future.
-        obj.data.read(sub, read_pos, &mut buf).unwrap();
+        object.read(sub, read_pos, &mut buf).unwrap();
         let copy_len = data_size as usize - read_pos;
         read_pos += copy_len;
         write_bytes(&buf[0..copy_len], reg).await;
@@ -71,12 +71,14 @@ async fn serialize_object(obj: &ODEntry<'_>, sub: u8, reg: &RefCell<u8>) {
     }
 }
 
-async fn serialize_sm(objects: &[ODEntry<'_>], reg: &RefCell<u8>) {
-    for obj in objects {
-        let max_sub = obj.data.max_sub_number();
+async fn serialize_sm<'a>(objects: &'a [ODEntry<'a>], reg: &RefCell<u8>) {
+    for entry in objects {
+        let index = entry.index;
+        let object = entry.object;
+        let max_sub = object.max_sub_number();
 
         for sub in 0..max_sub + 1 {
-            let info = obj.data.sub_info(sub);
+            let info = object.sub_info(sub);
             // On a record, some subs may not be present. Just skip these.
             if info.is_err() {
                 continue;
@@ -85,18 +87,19 @@ async fn serialize_sm(objects: &[ODEntry<'_>], reg: &RefCell<u8>) {
             if !info.persist {
                 continue;
             }
-            serialize_object(obj, sub, reg).await;
+            serialize_object(index, object, sub, reg).await;
         }
     }
 }
 
-pub fn serialized_size(objects: &[ODEntry]) -> usize {
+pub fn serialized_size<'a>(objects: &'a [ODEntry<'a>]) -> usize {
     const OVERHEAD_SIZE: usize = 6;
     let mut size = 0;
-    for obj in objects {
-        let max_sub = obj.data.max_sub_number();
+    for entry in objects {
+        let object = entry.object;
+        let max_sub = object.max_sub_number();
         for sub in 0..max_sub + 1 {
-            let info = obj.data.sub_info(sub);
+            let info = object.sub_info(sub);
             // On a record, some subs may not be present. Just skip these.
             if info.is_err() {
                 continue;
@@ -107,7 +110,7 @@ pub fn serialized_size(objects: &[ODEntry]) -> usize {
             }
             // Unwrap safety: This can only fail if the sub doesn't exist, and we already
             // checked for that above
-            let data_size = obj.data.read_size(sub).unwrap();
+            let data_size = object.read_size(sub).unwrap();
             // Serialized node size is the variable length object data, plus node type (u8),
             // index (u16), and sub index (u8), plus a length header (u16)
             size += data_size + OVERHEAD_SIZE;
@@ -154,14 +157,14 @@ impl<F: Future> embedded_io::Read for PersistSerializer<'_, '_, F> {
 }
 
 /// Serialize node data
-pub fn serialize(
-    od: &[ODEntry],
+pub fn serialize<'a>(
+    objects: &'a [ODEntry<'a>],
     callback: &dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize),
 ) {
     let reg = RefCell::new(0);
-    let fut = pin!(serialize_sm(od, &reg));
+    let size = serialized_size(objects);
+    let fut = pin!(serialize_sm(objects, &reg));
     let mut serializer = PersistSerializer::new(fut, &reg);
-    let size = serialized_size(od);
     callback(&mut serializer, size)
 }
 
@@ -317,7 +320,7 @@ pub fn restore_stored_comm_objects(od: &[ODEntry], stored_data: &[u8]) {
 mod tests {
     use super::*;
     use crate::object_dict::{
-        ConstField, NullTermByteField, ODEntry, ProvidesSubObjects, ScalarField, SubInfo,
+        ConstField, NullTermByteField, ProvidesSubObjects, ScalarFieldU16, ScalarFieldU32, SubInfo,
         SubObjectAccess,
     };
     use zencan_common::object_model::{DataType, ObjectCode};
@@ -328,8 +331,8 @@ mod tests {
     fn test_serialize_deserialize() {
         #[derive(Default)]
         struct Object100 {
-            value1: ScalarField<u32>,
-            value2: ScalarField<u16>,
+            value1: ScalarFieldU32,
+            value2: ScalarFieldU16,
         }
 
         impl ProvidesSubObjects for Object100 {
@@ -341,7 +344,6 @@ mod tests {
                     )),
                     1 => Some((
                         SubInfo {
-                            size: 4,
                             data_type: DataType::UInt32,
                             persist: true,
                             ..Default::default()
@@ -350,7 +352,6 @@ mod tests {
                     )),
                     2 => Some((
                         SubInfo {
-                            size: 4,
                             data_type: DataType::UInt32,
                             persist: false,
                             ..Default::default()
@@ -390,21 +391,26 @@ mod tests {
         let inst100 = Box::leak(Box::new(Object100::default()));
         let inst200 = Box::leak(Box::new(Object200::default()));
 
-        let od = Box::leak(Box::new([
+        struct TestOd {
+            entries: &'static [ODEntry<'static>],
+        }
+
+        let entries = Box::leak(Box::new([
             ODEntry {
                 index: 0x100,
-                data: inst100,
+                object: inst100,
             },
             ODEntry {
                 index: 0x200,
-                data: inst200,
+                object: inst200,
             },
         ]));
+        let od = Box::leak(Box::new(TestOd { entries }));
         inst100.value1.store(42);
         inst200.string.set_str("test".as_bytes()).unwrap();
 
         let data = RefCell::new(Vec::new());
-        serialize(od, &|reader, _size| {
+        serialize(od.entries, &|reader, _size| {
             const CHUNK_SIZE: usize = 2;
             let mut buf = [0; CHUNK_SIZE];
             loop {
@@ -418,7 +424,7 @@ mod tests {
 
         let data = data.take();
         assert_eq!(20, data.len());
-        assert_eq!(data.len(), serialized_size(od));
+        assert_eq!(data.len(), serialized_size(od.entries));
 
         let mut deser = PersistNodeReader::new(&data);
         assert_eq!(

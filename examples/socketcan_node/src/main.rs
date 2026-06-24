@@ -9,11 +9,11 @@ use std::{
 use clap::Parser;
 use tokio::time::timeout;
 use zencan_node::{
+    Callbacks, Node,
     common::{
         can::{AsyncCanReceiver, AsyncCanSender},
         protocol::{NodeId, SyncObject},
     },
-    Callbacks, Node,
 };
 
 #[cfg(target_os = "linux")]
@@ -49,8 +49,11 @@ async fn main() {
     log::info!("Starting node...");
     let node_id = NodeId::try_from(args.node_id).unwrap();
 
+    let od = zencan::get_od();
+
     // Set the serial number using the provided serial, or a random number if none is provided
-    zencan::OBJECT1018.set_serial(args.serial.unwrap_or(rand::random()));
+    od.object1018()
+        .set_serial(args.serial.unwrap_or(rand::random()));
 
     let object_storage_path = format!("zencan_node.{}.flash", node_id.raw());
 
@@ -78,13 +81,13 @@ async fn main() {
         }
     };
 
-    let mut reset_app = |od| {
+    let mut reset_app = |od: &[zencan_node::object_dict::ODEntry<'static>]| {
         if let Ok(data) = std::fs::read(&object_storage_path) {
             zencan_node::restore_stored_objects(od, &data);
         }
     };
 
-    let mut reset_comms = |od| {
+    let mut reset_comms = |od: &[zencan_node::object_dict::ODEntry<'static>]| {
         if let Ok(data) = std::fs::read(&object_storage_path) {
             zencan_node::restore_stored_comm_objects(od, &data);
         }
@@ -102,13 +105,7 @@ async fn main() {
         ..Default::default()
     };
 
-    let mut node = Node::new(
-        node_id,
-        callbacks,
-        &zencan::NODE_MBOX,
-        &zencan::NODE_STATE,
-        &zencan::OD_TABLE,
-    );
+    let mut node = Node::new(node_id, callbacks, od.node_mbox(), od.node_state(), od);
 
     let (mut tx, mut rx) = open_socketcan(&args.socket).unwrap();
 
@@ -117,7 +114,8 @@ async fn main() {
     let process_notify_cb = Box::leak(Box::new(|| {
         process_notify.notify_one();
     }));
-    zencan::NODE_MBOX.set_process_notify_callback(process_notify_cb);
+    od.node_mbox()
+        .set_process_notify_callback(process_notify_cb);
 
     // Spawn a task to receive messages
     tokio::spawn(async move {
@@ -130,7 +128,7 @@ async fn main() {
                     continue;
                 }
             };
-            if let Err(msg) = zencan::NODE_MBOX.store_message(msg) {
+            if let Err(msg) = od.node_mbox().store_message(msg) {
                 log::warn!("Unhandled RX message: {:?}", msg);
             }
         }
@@ -143,10 +141,11 @@ async fn main() {
         let transmit_notify_callback = Box::leak(Box::new(move || {
             notify_clone.notify_waiters();
         }));
-        zencan::NODE_MBOX.set_transmit_notify_callback(transmit_notify_callback);
+        od.node_mbox()
+            .set_transmit_notify_callback(transmit_notify_callback);
         loop {
             notify.notified().await;
-            while let Some(msg) = zencan::NODE_MBOX.next_transmit_message() {
+            while let Some(msg) = od.node_mbox().next_transmit_message() {
                 if let Err(e) = tx.send(msg).await {
                     log::warn!("Error sending frame: {e:?}");
                 }

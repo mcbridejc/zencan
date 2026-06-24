@@ -166,13 +166,7 @@ impl NodeMbox {
         }
 
         for rpdo in self.rx_pdos {
-            if !rpdo.valid() {
-                continue;
-            }
-            if id == rpdo.cob_id() {
-                // Unwrap safety: msg data cannot be longer than 8 byte size of the Vec
-                let data = heapless::Vec::from_slice(msg.data()).unwrap();
-                rpdo.buffered_value.store(Some(data));
+            if rpdo.receive_frame(&msg) {
                 return Ok(());
             }
         }
@@ -195,11 +189,11 @@ impl NodeMbox {
     ///
     /// - TPDOs first, if available, starting with TPDO0
     /// - Other non-SDO messages (SYNC, LSS, NMT)
-    /// - SDO server responses    
+    /// - SDO server responses
     pub fn next_transmit_message(&self) -> Option<CanMessage> {
         for pdo in self.tx_pdos.iter() {
-            if let Some(buf) = pdo.buffered_value.take() {
-                return Some(CanMessage::new(pdo.cob_id(), &buf));
+            if let Some(msg) = pdo.take_frame() {
+                return Some(msg);
             }
         }
 
@@ -214,6 +208,16 @@ impl NodeMbox {
         }
 
         None
+    }
+
+    /// Discard queued work from the preceding communication session.
+    pub(crate) fn reset(&self) {
+        critical_section::with(|cs| {
+            self.sync_flag.borrow(cs).set(None);
+            self.nmt_mbox.borrow(cs).set(None);
+            self.sdo_comms.reset();
+            while self.tx_queue.pop().is_some() {}
+        });
     }
 
     /// Store a message for transmission in the general transmit queue
@@ -249,8 +253,11 @@ mod tests {
         let nmt_state = Box::leak(Box::new(AtomicCell::new(
             zencan_common::protocol::NmtState::Operational,
         )));
-        let rpdos = Box::leak(Box::new([Pdo::new(od, nmt_state)]));
-        let tpdos = Box::leak(Box::new([Pdo::new(od, nmt_state)]));
+        let defaults = Box::leak(Box::new(crate::pdo::PdoDefaults::default()));
+        let rpdo_data = Box::leak(Box::new(crate::pdo::PdoData::new()));
+        let tpdo_data = Box::leak(Box::new(crate::pdo::PdoData::new()));
+        let rpdos = Box::leak(Box::new([Pdo::new(od, nmt_state, rpdo_data, defaults)]));
+        let tpdos = Box::leak(Box::new([Pdo::new(od, nmt_state, tpdo_data, defaults)]));
         let txq = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
         let sdo_buffer = Box::leak(Box::new([0; 128]));
         let mbox = NodeMbox::new(rpdos, tpdos, txq, sdo_buffer);

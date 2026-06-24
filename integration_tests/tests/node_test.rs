@@ -23,15 +23,16 @@ async fn test_device_info_readback() {
     const DEVICE_SW_VER_ID: u16 = 0x100A;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -66,15 +67,16 @@ async fn test_identity_readback() {
     const SERIAL_SUB_ID: u8 = 4;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -120,15 +122,16 @@ async fn test_identity_readback() {
 async fn test_string_write() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -172,15 +175,16 @@ async fn test_record_access() {
     const OBJECT_ID: u16 = 0x2001;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -227,15 +231,16 @@ async fn test_array_access() {
     use object_dict1::*;
     const OBJECT_ID: u16 = 0x2000;
     const NODE_ID: u8 = 1;
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -287,17 +292,18 @@ async fn test_store_and_restore_objects() {
             }
         };
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let mut callbacks = Callbacks::new();
     callbacks.store_objects = Some(&mut store_objects_callback);
 
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -334,7 +340,7 @@ async fn test_store_and_restore_objects() {
             .unwrap();
         client.write_u32(0x2000, 1, 500).await.unwrap();
 
-        zencan_node::restore_stored_objects(&OD_TABLE, &serialized_data.read().unwrap());
+        zencan_node::restore_stored_objects(od.od_table(), &serialized_data.read().unwrap());
 
         // 0x2002 has persist set, so should have been saved
         assert_eq!(client.upload(0x2002, 0).await.unwrap(), "SAVEME".as_bytes());
@@ -358,15 +364,16 @@ async fn test_empty_string_read() {
     let _ = env_logger::try_init();
 
     const NODE_ID: u8 = 1;
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -388,8 +395,9 @@ async fn test_node_state_callbacks() {
     let _ = env_logger::try_init();
 
     const NODE_ID: u8 = 1;
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let mut callbacks = Callbacks::new();
     let _logger = BusLogger::new(bus.new_receiver());
 
@@ -403,19 +411,19 @@ async fn test_node_state_callbacks() {
     }
 
     let (callback_tx, callback_rx) = std::sync::mpsc::channel();
-    let mut reset_app = |_| {
+    let mut reset_app = |_: &[zencan_node::object_dict::ODEntry<'static>]| {
         callback_tx.send(LastCallback::ResetApp).unwrap();
     };
-    let mut reset_comms = |_| {
+    let mut reset_comms = |_: &[zencan_node::object_dict::ODEntry<'static>]| {
         callback_tx.send(LastCallback::ResetComms).unwrap();
     };
-    let mut enter_preop = |_| {
+    let mut enter_preop = |_: &[zencan_node::object_dict::ODEntry<'static>]| {
         callback_tx.send(LastCallback::Preop).unwrap();
     };
-    let mut enter_operational = |_| {
+    let mut enter_operational = |_: &[zencan_node::object_dict::ODEntry<'static>]| {
         callback_tx.send(LastCallback::Operational).unwrap();
     };
-    let mut enter_stopped = |_| {
+    let mut enter_stopped = |_: &[zencan_node::object_dict::ODEntry<'static>]| {
         callback_tx.send(LastCallback::Stopped).unwrap();
     };
     callbacks.reset_app = Some(&mut reset_app);
@@ -427,9 +435,9 @@ async fn test_node_state_callbacks() {
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut nmt_master = NmtMaster::new(bus.new_sender(), bus.new_receiver());
 
@@ -470,15 +478,16 @@ async fn test_time_field_access() {
     let _ = env_logger::try_init();
 
     const NODE_ID: u8 = 1;
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -487,7 +496,7 @@ async fn test_time_field_access() {
     let test_task = move |_ctx| async move {
         let time = TimeOfDay::from_ymd_hms_ms(2015, 8, 23, 10, 20, 5, 500).unwrap();
         client.write_time_of_day(0x300B, 1, time).await.unwrap();
-        assert_eq!(time, OBJECT300B.get_sub1());
+        assert_eq!(time, od.object300b().get_sub1());
         let read_time = client.read_time_of_day(0x300B, 1).await.unwrap();
         assert_eq!(time, read_time);
 
@@ -496,7 +505,7 @@ async fn test_time_field_access() {
             .write_time_difference(0x300B, 2, delta)
             .await
             .unwrap();
-        assert_eq!(delta, OBJECT300B.get_sub2());
+        assert_eq!(delta, od.object300b().get_sub2());
         let read_delta = client.read_time_difference(0x300B, 2).await.unwrap();
         assert_eq!(delta, read_delta);
     };
@@ -511,15 +520,16 @@ async fn test_boolean_object_access() {
     let _ = env_logger::try_init();
 
     const NODE_ID: u8 = 1;
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -527,9 +537,9 @@ async fn test_boolean_object_access() {
 
     let test_task = move |_ctx| async move {
         client.write_bool(0x300D, 0, true).await.unwrap();
-        assert_eq!(true, OBJECT300D.get_value());
+        assert!(od.object300d().get_value());
         client.write_bool(0x300D, 0, false).await.unwrap();
-        assert_eq!(false, OBJECT300D.get_value());
+        assert!(!od.object300d().get_value());
     };
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
@@ -543,8 +553,9 @@ async fn test_sync_object_callback() {
     let _ = env_logger::try_init();
 
     const NODE_ID: u8 = 1;
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
 
     let sync_counter: Arc<AtomicCell<Option<u8>>> = Arc::new(AtomicCell::new(None));
     let sync_counter_clone = sync_counter.clone();
@@ -561,9 +572,9 @@ async fn test_sync_object_callback() {
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
 
     let mut sender = bus.new_sender();
@@ -591,15 +602,16 @@ async fn test_numeric_access() {
     let _ = env_logger::try_init();
 
     const NODE_ID: u8 = 1;
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -610,61 +622,61 @@ async fn test_numeric_access() {
         let val: u8 = rng.random();
         client.write_u8(0x300C, 1, val).await.unwrap();
         let read_val = client.read_u8(0x300C, 1).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub1());
+        assert_eq!(val, od.object300c().get_sub1());
         assert_eq!(val, read_val);
 
         let val: u16 = rng.random();
         client.write_u16(0x300C, 2, val).await.unwrap();
         let read_val = client.read_u16(0x300C, 2).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub2());
+        assert_eq!(val, od.object300c().get_sub2());
         assert_eq!(val, read_val);
 
         let val: u32 = rng.random();
         client.write_u32(0x300C, 3, val).await.unwrap();
         let read_val = client.read_u32(0x300C, 3).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub3());
+        assert_eq!(val, od.object300c().get_sub3());
         assert_eq!(val, read_val);
 
         let val: u64 = rng.random();
         client.write_u64(0x300C, 4, val).await.unwrap();
         let read_val = client.read_u64(0x300C, 4).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub4());
+        assert_eq!(val, od.object300c().get_sub4());
         assert_eq!(val, read_val);
 
         let val: i8 = rng.random();
         client.write_i8(0x300C, 5, val).await.unwrap();
         let read_val = client.read_i8(0x300C, 5).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub5());
+        assert_eq!(val, od.object300c().get_sub5());
         assert_eq!(val, read_val);
 
         let val: i16 = rng.random();
         client.write_i16(0x300C, 6, val).await.unwrap();
         let read_val = client.read_i16(0x300C, 6).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub6());
+        assert_eq!(val, od.object300c().get_sub6());
         assert_eq!(val, read_val);
 
         let val: i32 = rng.random();
         client.write_i32(0x300C, 7, val).await.unwrap();
         let read_val = client.read_i32(0x300C, 7).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub7());
+        assert_eq!(val, od.object300c().get_sub7());
         assert_eq!(val, read_val);
 
         let val: i64 = rng.random();
         client.write_i64(0x300C, 8, val).await.unwrap();
         let read_val = client.read_i64(0x300C, 8).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub8());
+        assert_eq!(val, od.object300c().get_sub8());
         assert_eq!(val, read_val);
 
         let val: f32 = rng.random();
         client.write_f32(0x300C, 9, val).await.unwrap();
         let read_val = client.read_f32(0x300C, 9).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub9());
+        assert_eq!(val, od.object300c().get_sub9());
         assert_eq!(val, read_val);
 
         let val: f64 = rng.random();
         client.write_f64(0x300C, 10, val).await.unwrap();
         let read_val = client.read_f64(0x300C, 10).await.unwrap();
-        assert_eq!(val, OBJECT300C.get_sub10());
+        assert_eq!(val, od.object300c().get_sub10());
         assert_eq!(val, read_val);
     };
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;

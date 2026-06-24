@@ -16,15 +16,16 @@ async fn test_sdo_read() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
 
@@ -66,15 +67,16 @@ async fn test_block_download() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
     let _bus_logger = BusLogger::new(bus.new_receiver());
@@ -83,19 +85,13 @@ async fn test_block_download() {
         let data = Vec::from_iter(0..128);
         client.block_download(0x3006, 0, &data).await.unwrap();
 
-        assert_eq!(
-            data,
-            integration_tests::object_dict1::OBJECT3006.get_value()[0..data.len()]
-        );
+        assert_eq!(data, od.object3006().get_value()[0..data.len()]);
 
         // Now do a long one which will require multiple blocks
         let data = Vec::from_iter((0..1200).map(|i| i as u8));
         client.block_download(0x3006, 0, &data).await.unwrap();
 
-        assert_eq!(
-            data,
-            integration_tests::object_dict1::OBJECT3006.get_value()
-        );
+        assert_eq!(data, od.object3006().get_value());
     };
     test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
 }
@@ -182,24 +178,23 @@ async fn test_domain_access() {
     use object_dict1::*;
     const NODE_ID: u8 = 1;
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
     let _bus_logger = BusLogger::new(bus.new_receiver());
 
     let domain: &MockDomainData = Box::leak(Box::new(MockDomainData::new(vec![0; 1200])));
 
-    integration_tests::object_dict1::OBJECT3007
-        .value
-        .register_handler(domain);
+    od.object3007().value.register_handler(domain);
 
     let test_task = move |_ctx| async move {
         // Create a long chunk of data
@@ -295,15 +290,16 @@ async fn test_application_callbacks_unregistered() {
         }
     }
 
+    let od = get_od();
     let mut bus = SimBus::new();
-    bus.add_node(&NODE_MBOX);
+    bus.add_node(od.node_mbox());
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
         callbacks,
-        &NODE_MBOX,
-        &NODE_STATE,
-        &OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     let mut client = get_sdo_client(&mut bus, NODE_ID);
     let _bus_logger = BusLogger::new(bus.new_receiver());
@@ -325,7 +321,7 @@ async fn test_application_callbacks_unregistered() {
         );
 
         // Register the callback handler, and check that read and writes are passed to the handler
-        OBJECT3010.register_handler(callback_handler);
+        od.object3010().register_handler(callback_handler);
 
         assert_eq!(42, client.read_u32(OBJECT_ID, 0).await.unwrap(),);
 

@@ -43,7 +43,7 @@
 //!
 //! Most sub objects can be implemented using one of the following existing types:
 //!
-//! - [`ScalarField<T>`]
+//! - [`ScalarFieldU32`], etc
 //! - [`ByteField``]
 //! - [`NullTermByteField`]
 //! - [`ConstField`]
@@ -52,7 +52,7 @@
 //! ## Example Custom Object Implementation
 //!
 //! ```rust
-//! use zencan_node::object_dict::{ConstField, ScalarField, ProvidesSubObjects, SubInfo, SubObjectAccess};
+//! use zencan_node::object_dict::{ConstField, ScalarFieldU32, ProvidesSubObjects, SubInfo, SubObjectAccess};
 //! use zencan_node::common::object_model::ObjectCode;
 //! use zencan_node::common::protocol::AbortCode;
 //! // Example external API used to access a value for a sub field
@@ -111,7 +111,7 @@
 //! }
 //!
 //! struct CustomObject {
-//!     stored_field: ScalarField<u32>,
+//!     stored_field: ScalarFieldU32,
 //!     external_field: ExternalSubObject,
 //! }
 //!
@@ -119,7 +119,7 @@
 //!     pub fn new(external_api: &'static ExternalApi) -> Self {
 //!         Self {
 //!             external_field: ExternalSubObject::new(external_api),
-//!             stored_field: ScalarField::<u32>::new(0),
+//!             stored_field: ScalarFieldU32::new(0),
 //!         }
 //!     }
 //! }
@@ -132,7 +132,7 @@
 //!                 SubInfo::MAX_SUB_NUMBER,
 //!                 const { &ConstField::new(3u8.to_le_bytes()) },
 //!             )),
-//!             // Sub 1 returns the u32 field stored in the object, implemented using ScalarField<u32>
+//!             // Sub 1 returns the u32 field stored in the object, implemented using ScalarFieldU32
 //!             1 => Some((SubInfo::new_u32().rw_access().persist(true), &self.stored_field)),
 //!             // Sub 2 returns a custom sub object which accesses the external API
 //!             2 => Some((SubInfo::new_f32().rw_access().persist(false), &self.external_field)),

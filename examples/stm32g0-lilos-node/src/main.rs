@@ -6,7 +6,7 @@
 use core::{
     cell::RefCell,
     convert::Infallible,
-    num::{NonZeroU8, NonZeroU16},
+    num::{NonZeroU16, NonZeroU8},
     pin::pin,
     time::Duration,
 };
@@ -17,12 +17,12 @@ use hash32::{FnvHasher, Hasher as _};
 
 use lilos::{exec::Notify, time::Millis};
 use persist::SectionUpdate;
-use stm32_metapac::{self as pac, RCC, interrupt};
+use stm32_metapac::{self as pac, interrupt, RCC};
 
 use fdcan::{
-    FdCan, NormalOperationMode,
     config::{DataBitTiming, FdCanConfig, GlobalFilter},
     filter::{StandardFilter, StandardFilterSlot},
+    FdCan, NormalOperationMode,
 };
 
 use cortex_m_rt as _;
@@ -30,10 +30,9 @@ use panic_probe as _;
 use rtt_target::{self as _, rtt_init, set_defmt_channel};
 
 use zencan_node::{
-    Callbacks, Node,
     common::NodeId,
     object_dict::{ODEntry, ObjectAccess},
-    restore_stored_comm_objects, restore_stored_objects,
+    restore_stored_comm_objects, restore_stored_objects, Callbacks, Node,
 };
 
 /// Create a serial number from the UID register
@@ -56,7 +55,7 @@ mod zencan {
 use adc::{configure_adc, read_adc};
 use flash::Stm32g0Flash;
 use gpio::Pin;
-use zencan::{OBJECT2000, OBJECT2001, OBJECT2002};
+use zencan::get_od;
 
 struct FdCan1 {}
 unsafe impl fdcan::message_ram::Instance for FdCan1 {
@@ -178,15 +177,16 @@ fn read_persisted_objects(flash: &mut Stm32g0Flash, restore_fn: impl Fn(&[u8])) 
 
 /// Move outgoing CAN messages from NODE_MBOX to the CAN controller
 ///
-/// Will move messages until either the hardware FIFO is full, or NODE_MBOX is out of messages.
+/// Will move messages until either the hardware FIFO is full, or .NODE_MBOX is out of messages.
 fn transmit_can_messages(can: &mut FdCan<FdCan1, NormalOperationMode>) {
+    let od = zencan::get_od();
     loop {
         // Check if queue is full
         // Driver lacks API for this so go straight to register
         if pac::FDCAN1.txfqs().read().tfqf() {
             break;
         }
-        if let Some(msg) = zencan::NODE_MBOX.next_transmit_message() {
+        if let Some(msg) = od.node_mbox().next_transmit_message() {
             let header = zencan_to_fdcan_header(&msg);
             if let Err(_) = can.transmit(header, msg.data()) {
                 defmt::error!("Error transmitting CAN message");
@@ -306,8 +306,10 @@ fn main() -> ! {
 
     let node_id = read_saved_node_id(&mut flash);
 
+    let od = zencan::get_od();
+
     // Use the UID register to set a unique serial number
-    zencan::OBJECT1018.set_serial(get_serial());
+    od.object1018().set_serial(get_serial());
 
     let flash = RefCell::new(flash);
 
@@ -317,25 +319,25 @@ fn main() -> ! {
     let mut store_objects = |reader: &mut dyn embedded_io::Read<Error = Infallible>, len| {
         store_objects(&mut flash.borrow_mut(), reader, len)
     };
-    let mut reset_app = |od: &[ODEntry]| {
+    let mut reset_app = |od_table: &[ODEntry]| {
         // On RESET APP transition, we reload object values to their reset value
 
         // Init defaults for application objects. In a future release, objects should provide a
         // better API for resetting defaults, but for now, it can be done here by the application if
         // desired.
         for i in 0..4 {
-            zencan::OBJECT2000.set(i, 0).ok();
-            zencan::OBJECT2001.set(i, 0).ok();
-            zencan::OBJECT2002.set(i, 0).ok();
-            zencan::OBJECT2200.set(i, 1).ok();
-            zencan::OBJECT2201.set(i, 1).ok();
-            zencan::OBJECT2202.set(i, 0).ok();
+            od.object2000().set(i, 0).ok();
+            od.object2001().set(i, 0).ok();
+            od.object2002().set(i, 0).ok();
+            od.object2200().set(i, 1).ok();
+            od.object2201().set(i, 1).ok();
+            od.object2202().set(i, 0).ok();
         }
-        zencan::OBJECT2100.set_value(20);
+        od.object2100().set_value(20);
 
         // Restore objects saved to flash
         read_persisted_objects(&mut flash.borrow_mut(), |stored_data| {
-            restore_stored_objects(od, stored_data)
+            restore_stored_objects(od_table, stored_data)
         });
     };
     let mut reset_comms = |od: &[ODEntry]| {
@@ -358,16 +360,17 @@ fn main() -> ! {
     let node = Node::new(
         node_id,
         callbacks,
-        &zencan::NODE_MBOX,
-        &zencan::NODE_STATE,
-        &zencan::OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
 
     // Register handler for waking process task
-    zencan::NODE_MBOX.set_process_notify_callback(&notify_can_task);
+    od.node_mbox().set_process_notify_callback(&notify_can_task);
 
     // Register handler for CAN frame transmit notice
-    zencan::NODE_MBOX.set_transmit_notify_callback(&transmit_notify_handler);
+    od.node_mbox()
+        .set_transmit_notify_callback(&transmit_notify_handler);
 
     // Enable debugger access while sleeping
     pac::DBGMCU.cr().modify(|w| {
@@ -398,9 +401,7 @@ fn zencan_to_fdcan_header(
         zencan_node::common::can::CanId::Extended(id) => {
             fdcan::id::ExtendedId::new(id).unwrap().into()
         }
-        zencan_node::common::can::CanId::Std(id) => {
-            fdcan::id::StandardId::new(id).unwrap().into()
-        }
+        zencan_node::common::can::CanId::Std(id) => fdcan::id::StandardId::new(id).unwrap().into(),
     };
     fdcan::frame::TxFrameHeader {
         len: msg.dlc,
@@ -429,8 +430,10 @@ async fn can_task(mut node: Node<'_>) -> Infallible {
 /// Task for periodically reading the sensors
 async fn main_task() -> Infallible {
     const MAX_PERIOD: u32 = 5000;
+    let od = get_od();
+
     // Read the sample period from the config object, but limit the value to MAX_PERIOD
-    let mut read_interval = zencan::OBJECT2100.get_value().max(MAX_PERIOD);
+    let mut read_interval = od.object2100().get_value().max(MAX_PERIOD);
     let mut periodic_gate =
         lilos::time::PeriodicGate::new_shift(Millis(read_interval as u64), Millis(0));
 
@@ -443,14 +446,14 @@ async fn main_task() -> Infallible {
         // Store values to raw and scaled objects
         for i in 0..4 {
             let raw_value = adc_values[i];
-            OBJECT2000.set(i, adc_values[i]).unwrap();
-            let scale_num = zencan::OBJECT2200.get(i).unwrap() as i32;
-            let scale_den = zencan::OBJECT2201.get(i).unwrap() as i32;
-            let offset = zencan::OBJECT2202.get(i).unwrap() as i32;
+            od.object2000().set(i, adc_values[i]).unwrap();
+            let scale_num = od.object2200().get(i).unwrap() as i32;
+            let scale_den = od.object2201().get(i).unwrap() as i32;
+            let offset = od.object2202().get(i).unwrap() as i32;
             let scaled_value = ((raw_value as i32 + offset).saturating_mul(scale_num)) / scale_den;
 
-            OBJECT2001.set(i, scaled_value as i32).unwrap();
-            OBJECT2002
+            od.object2001().set(i, scaled_value as i32).unwrap();
+            od.object2002()
                 .set(
                     i,
                     scaled_value.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
@@ -464,16 +467,16 @@ async fn main_task() -> Infallible {
             // Set the event flags on the updated objects. When the objects are mapped to TPDOs
             // configured for async transmission, this triggers the transmission on next call to
             // process().
-            OBJECT2000.set_event_flag(sub_idx).unwrap();
-            OBJECT2001.set_event_flag(sub_idx).unwrap();
-            OBJECT2002.set_event_flag(sub_idx).unwrap();
+            od.object2000().set_event_flag(sub_idx).unwrap();
+            od.object2001().set_event_flag(sub_idx).unwrap();
+            od.object2002().set_event_flag(sub_idx).unwrap();
         }
 
         // Notify can task that there is something new to process
         CAN_NOTIFY.notify();
 
         // Check for change to period configuration
-        let new_interval = zencan::OBJECT2100.get_value();
+        let new_interval = od.object2100().get_value();
         if new_interval != read_interval {
             read_interval = new_interval;
             periodic_gate = lilos::time::PeriodicGate::new_shift(
@@ -497,6 +500,7 @@ fn TIM16_FDCAN_IT0() {
         can.clear_interrupt(fdcan::interrupt::Interrupt::RxFifo0NewMsg);
         let mut buffer = [0u8; 8];
 
+        let od = zencan::get_od();
         while let Ok(msg) = can.receive0(&mut buffer) {
             // ReceiveOverrun::unwrap() cannot fail
             let msg = msg.unwrap();
@@ -512,7 +516,7 @@ fn TIM16_FDCAN_IT0() {
             let msg = zencan_node::common::can::CanMessage::new(id, &buffer[..msg.len as usize]);
             // Ignore error -- as an Err is returned for messages that are not consumed by the node
             // stack
-            zencan::NODE_MBOX.store_message(msg).ok();
+            od.node_mbox().store_message(msg).ok();
         }
     }
 

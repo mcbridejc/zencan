@@ -16,10 +16,10 @@ use embedded_can::Id::{Extended, Standard};
 use esp_backtrace as _;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::twai::{EspTwaiFrame, StandardId, TwaiMode, TwaiRx, TwaiTx};
-use esp_hal::{Async, efuse, interrupt::software::SoftwareInterruptControl, twai};
+use esp_hal::{efuse, interrupt::software::SoftwareInterruptControl, twai, Async};
 use log::{error, info};
 use zencan_node::Callbacks;
-use zencan_node::{Node, common::NodeId};
+use zencan_node::{common::NodeId, Node};
 
 mod zencan {
     zencan_node::include_modules!(ZENCAN_CONFIG);
@@ -57,9 +57,13 @@ async fn main(spawner: Spawner) {
     let last_mac_bytes: [u8; 4] = mac_address.as_bytes()[2..].try_into().unwrap();
     let serial = u32::from_be_bytes(last_mac_bytes);
 
-    zencan::OBJECT1018.set_serial(serial);
-    zencan::NODE_MBOX.set_process_notify_callback(&notify_canopen_process_task);
-    zencan::NODE_MBOX.set_transmit_notify_callback(&notify_canopen_tx_task);
+    let od = zencan::get_od();
+
+    od.object1018().set_serial(serial);
+    od.node_mbox()
+        .set_process_notify_callback(&notify_canopen_process_task);
+    od.node_mbox()
+        .set_transmit_notify_callback(&notify_canopen_tx_task);
 
     spawner.spawn(twai_rx_task(twai_rx).unwrap());
     spawner.spawn(twai_tx_task(twai_tx).unwrap());
@@ -76,8 +80,9 @@ fn notify_canopen_tx_task() {
 
 #[embassy_executor::task]
 async fn twai_tx_task(mut twai_tx: TwaiTx<'static, Async>) {
+    let od = zencan::get_od();
     loop {
-        while let Some(msg) = zencan::NODE_MBOX.next_transmit_message() {
+        while let Some(msg) = od.node_mbox().next_transmit_message() {
             let frame =
                 EspTwaiFrame::new(StandardId::new(msg.id.raw() as u16).unwrap(), msg.data())
                     .unwrap();
@@ -93,13 +98,14 @@ async fn twai_tx_task(mut twai_tx: TwaiTx<'static, Async>) {
 
 #[embassy_executor::task]
 async fn canopen_process_task() {
+    let od = zencan::get_od();
     let callbacks = Callbacks::default();
     let mut node = Node::new(
         NodeId::new(42).unwrap(),
         callbacks,
-        &zencan::NODE_MBOX,
-        &zencan::NODE_STATE,
-        &zencan::OD_TABLE,
+        od.node_mbox(),
+        od.node_state(),
+        od,
     );
     loop {
         select(CANOPEN_PROCESS_SIGNAL.wait(), Timer::after_millis(10)).await;
@@ -111,6 +117,7 @@ async fn canopen_process_task() {
 
 #[embassy_executor::task]
 async fn twai_rx_task(mut twai_rx: TwaiRx<'static, Async>) {
+    let od = zencan::get_od();
     loop {
         let rx_frame = match twai_rx.receive_async().await {
             Ok(rx_frame) => rx_frame,
@@ -126,6 +133,6 @@ async fn twai_rx_task(mut twai_rx: TwaiRx<'static, Async>) {
         };
 
         let msg = zencan_node::common::can::CanMessage::new(id, rx_frame.data());
-        zencan::NODE_MBOX.store_message(msg).ok();
+        od.node_mbox().store_message(msg).ok();
     }
 }
