@@ -131,6 +131,8 @@ impl SdoComms {
     }
 
     /// Handle received request from client
+    ///
+    /// Returns true if the received message demands further handling in a process call
     pub fn handle_req(&self, msg_data: &[u8]) -> bool {
         // Ignore invalid lengths
         if msg_data.len() != 8 {
