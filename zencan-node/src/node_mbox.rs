@@ -174,8 +174,8 @@ impl NodeMbox {
         }
 
         if let Some(cob_id) = self.sdo_rx_cob_id.load() {
-            if id == cob_id {
-                self.sdo_comms.handle_req(msg.data());
+            if id == cob_id && self.sdo_comms.handle_req(msg.data()) {
+                return Ok(());
             }
         }
 
