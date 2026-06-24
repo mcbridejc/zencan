@@ -134,6 +134,9 @@ impl NodeMbox {
     }
 
     /// Store a received CAN message
+    ///
+    /// If the message is recognized and handled, `Ok(())` is returned. Otherwise, the message is
+    /// returned inside an Err.
     pub fn store_message(&self, msg: CanMessage) -> Result<(), CanMessage> {
         let id = msg.id();
         if id == zencan_common::messages::NMT_CMD_ID {
@@ -175,7 +178,10 @@ impl NodeMbox {
 
         if let Some(cob_id) = self.sdo_rx_cob_id.load() {
             if id == cob_id {
-                self.sdo_comms.handle_req(msg.data());
+                if self.sdo_comms.handle_req(msg.data()) {
+                    self.process_notify();
+                }
+                return Ok(());
             }
         }
 
@@ -212,5 +218,101 @@ impl NodeMbox {
     /// Store a message for transmission in the general transmit queue
     pub fn queue_transmit_message(&self, msg: CanMessage) -> Result<(), CanMessage> {
         self.tx_queue.push(msg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use zencan_common::{
+        messages::SDO_REQ_BASE,
+        sdo::{BlockSegment, SdoRequest},
+    };
+
+    use crate::object_dict::ODEntry;
+
+    use super::*;
+
+    #[allow(unused)]
+    struct TestObjects {
+        od: &'static [ODEntry<'static>],
+        rpdos: &'static [Pdo<'static>],
+        tpdos: &'static [Pdo<'static>],
+        txq: &'static dyn CanMessageQueue,
+        mbox: NodeMbox,
+    }
+
+    const SDO_RX_COB_ID: CanId = CanId::std(SDO_REQ_BASE + 1);
+
+    fn create_test_objects() -> TestObjects {
+        let od = Box::leak(Box::new([]));
+        let nmt_state = Box::leak(Box::new(AtomicCell::new(
+            zencan_common::nmt::NmtState::Operational,
+        )));
+        let rpdos = Box::leak(Box::new([Pdo::new(od, nmt_state)]));
+        let tpdos = Box::leak(Box::new([Pdo::new(od, nmt_state)]));
+        let txq = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
+        let sdo_buffer = Box::leak(Box::new([0; 128]));
+        let mbox = NodeMbox::new(rpdos, tpdos, txq, sdo_buffer);
+        mbox.set_sdo_rx_cob_id(Some(SDO_RX_COB_ID));
+        TestObjects {
+            od,
+            rpdos,
+            tpdos,
+            txq,
+            mbox,
+        }
+    }
+
+    /// When receiving unrecognized messages, it should return an error
+    #[test]
+    fn test_unrecognized_id_returns_error() {
+        let obj = create_test_objects();
+        assert!(obj
+            .mbox
+            .store_message(CanMessage::new(CanId::Std(0x123), &[]))
+            .is_err());
+    }
+
+    #[test]
+    /// Test response to SDO requests
+    fn test_sdo_requests() {
+        let obj = create_test_objects();
+
+        // Setup a callback for process notification
+        let process_flag = Box::leak(Box::new(Arc::new(AtomicBool::new(false))));
+        let process_flag_cb = process_flag.clone();
+        let process_cb = Box::leak(Box::new(move || {
+            process_flag_cb.store(true, Ordering::Relaxed);
+        }));
+        obj.mbox.set_process_notify_callback(process_cb);
+
+        // Initiate an upload, expect process notification
+        let req = SdoRequest::initiate_upload(0, 0);
+        assert!(obj
+            .mbox
+            .store_message(req.to_can_message(SDO_RX_COB_ID))
+            .is_ok());
+        assert!(process_flag.swap(false, Ordering::Relaxed));
+        assert_eq!(Some(req), obj.mbox.sdo_comms().take_request());
+
+        // When SDO server is in the middle of a block upload, message should not trigger a process
+        // notify but the data should be stored in the sdo buffer
+        obj.mbox.sdo_comms().begin_block_download(100);
+        let req = BlockSegment {
+            c: false,
+            seqnum: 1,
+            data: [1, 2, 3, 4, 5, 6, 7],
+        };
+        assert!(obj
+            .mbox
+            .store_message(req.to_can_message(SDO_RX_COB_ID))
+            .is_ok());
+        assert_eq!(false, process_flag.swap(false, Ordering::Relaxed));
+        assert_eq!(None, obj.mbox.sdo_comms().take_request());
+        let buf = obj.mbox.sdo_comms().borrow_buffer();
+        assert_eq!([1, 2, 3, 4, 5, 6, 7], buf[0..7]);
     }
 }
