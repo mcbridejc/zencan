@@ -226,7 +226,10 @@ mod tests {
     use core::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    use zencan_common::{messages::SDO_REQ_BASE, sdo::{BlockSegment, SdoRequest}};
+    use zencan_common::{
+        messages::SDO_REQ_BASE,
+        sdo::{BlockSegment, SdoRequest},
+    };
 
     use crate::object_dict::ODEntry;
 
@@ -290,9 +293,7 @@ mod tests {
         let req = SdoRequest::initiate_upload(0, 0);
         assert!(obj
             .mbox
-            .store_message(
-                req.to_can_message(SDO_RX_COB_ID)
-            )
+            .store_message(req.to_can_message(SDO_RX_COB_ID))
             .is_ok());
         assert!(process_flag.swap(false, Ordering::Relaxed));
         assert_eq!(Some(req), obj.mbox.sdo_comms().take_request());
@@ -307,14 +308,11 @@ mod tests {
         };
         assert!(obj
             .mbox
-            .store_message(
-                req.to_can_message(SDO_RX_COB_ID)
-            )
+            .store_message(req.to_can_message(SDO_RX_COB_ID))
             .is_ok());
         assert_eq!(false, process_flag.swap(false, Ordering::Relaxed));
         assert_eq!(None, obj.mbox.sdo_comms().take_request());
         let buf = obj.mbox.sdo_comms().borrow_buffer();
         assert_eq!([1, 2, 3, 4, 5, 6, 7], buf[0..7]);
     }
-
 }
