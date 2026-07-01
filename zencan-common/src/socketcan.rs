@@ -42,6 +42,7 @@ fn zencan_message_to_socket_frame(frame: CanMessage) -> socketcan::CanFrame {
     }
 }
 
+/// A handle to a socketcan CAN socket implementing AsyncCanReceiver.
 #[derive(Debug, Clone)]
 pub struct SocketCanReceiver {
     socket: Arc<AsyncCanSocket>,
@@ -138,6 +139,7 @@ impl AsyncCanReceiver for SocketCanReceiver {
     }
 }
 
+/// A handle to a socketcan CAN socket implementing AsyncCanSender.
 #[derive(Debug, Clone)]
 pub struct SocketCanSender {
     socket: Arc<AsyncCanSocket>,
