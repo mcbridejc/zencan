@@ -30,7 +30,7 @@ mod socketcan;
 
 #[cfg(all(feature = "socketcan", target_os = "linux"))]
 #[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
-pub use socketcan::open_socketcan;
+pub use socketcan::{open_socketcan, SocketCanReceiver, SocketCanSender};
 
 pub use arbitrary_int::{i24, u24};
 pub use messages::{CanError, CanId, CanMessage};
