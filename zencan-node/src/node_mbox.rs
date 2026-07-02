@@ -169,9 +169,8 @@ impl NodeMbox {
                 continue;
             }
             if id == rpdo.cob_id() {
-                // Unwrap safety: msg data cannot be longer than 8 byte size of the Vec
-                let data = heapless::Vec::from_slice(msg.data()).unwrap();
-                rpdo.buffered_value.store(Some(data));
+                rpdo.buffered_value
+                    .store(Some(CanMessage::new(rpdo.cob_id(), msg.data())));
                 return Ok(());
             }
         }
@@ -197,8 +196,8 @@ impl NodeMbox {
     /// - SDO server responses    
     pub fn next_transmit_message(&self) -> Option<CanMessage> {
         for pdo in self.tx_pdos.iter() {
-            if let Some(buf) = pdo.buffered_value.take() {
-                return Some(CanMessage::new(pdo.cob_id(), &buf));
+            if let Some(msg) = pdo.buffered_value.take() {
+                return Some(msg);
             }
         }
 
