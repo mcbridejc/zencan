@@ -37,6 +37,7 @@ pub enum Commands {
 #[derive(Debug, Args)]
 pub struct ReadArgs {
     /// The ID of the node to read from
+    #[clap(value_parser=maybe_hex::<u8>)]
     pub node_id: u8,
     /// The object index to read
     #[clap(value_parser=maybe_hex::<u16>)]
@@ -63,6 +64,7 @@ pub enum SdoDataType {
 #[derive(Debug, Args)]
 pub struct WriteArgs {
     /// The ID of the node to read from
+    #[clap(value_parser=maybe_hex::<u8>)]
     pub node_id: u8,
     /// The object index to read
     #[clap(value_parser=maybe_hex::<u16>)]
@@ -79,12 +81,14 @@ pub struct WriteArgs {
 
 #[derive(Debug, Args)]
 pub struct ScanPdoConfigArgs {
+    #[clap(value_parser=maybe_hex::<u8>)]
     pub node_id: u8,
 }
 
 #[derive(Debug, Args)]
 pub struct LoadConfigArgs {
     /// The ID of the node to load the configuration into
+    #[clap(value_parser=maybe_hex::<u8>)]
     pub node_id: u8,
     /// Path to a node config TOML file
     #[arg(value_hint=clap::ValueHint::FilePath)]
@@ -94,6 +98,7 @@ pub struct LoadConfigArgs {
 #[derive(Debug, Args)]
 pub struct SaveObjectsArgs {
     /// The ID of the node to command
+    #[clap(value_parser=maybe_hex::<u8>)]
     pub node_id: u8,
 }
 
@@ -204,6 +209,7 @@ pub enum LssCommands {
     },
     SetNodeId {
         /// The node ID to assign
+        #[clap(value_parser=maybe_hex::<u8>)]
         node_id: u8,
         #[clap(flatten)]
         identity: Option<IdentityArgs>,
@@ -239,6 +245,21 @@ mod tests {
                 assert_eq!(args.value, "-4");
             }
             other => panic!("expected write command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_hex_node_id_args() {
+        let cli = Cli::try_parse_from(["zencan-cli", "read", "0x10", "0x2000", "1"])
+            .expect("hex node ID should parse");
+
+        match cli.command {
+            Commands::Read(args) => {
+                assert_eq!(args.node_id, 16);
+                assert_eq!(args.index, 0x2000);
+                assert_eq!(args.sub, 1);
+            }
+            other => panic!("expected read command, got {other:?}"),
         }
     }
 }
