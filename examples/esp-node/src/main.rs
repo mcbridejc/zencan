@@ -14,14 +14,12 @@ use embassy_time::Timer;
 use embedded_can::Frame;
 use embedded_can::Id::{Extended, Standard};
 use esp_backtrace as _;
-use esp_hal::clock::CpuClock;
-use esp_hal::efuse::Efuse;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::twai::{EspTwaiFrame, StandardId, TwaiMode, TwaiRx, TwaiTx};
-use esp_hal::{twai, Async};
-use esp_println::logger;
+use esp_hal::{Async, efuse, interrupt::software::SoftwareInterruptControl, twai};
+use log::{error, info};
 use zencan_node::Callbacks;
-use zencan_node::{common::NodeId, Node};
+use zencan_node::{Node, common::NodeId};
 
 mod zencan {
     zencan_node::include_modules!(ZENCAN_CONFIG);
@@ -34,43 +32,38 @@ esp_bootloader_esp_idf::esp_app_desc!();
 static CANOPEN_PROCESS_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static CANOPEN_TX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-#[esp_hal_embassy::main]
+#[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    logger::init_logger(log::LevelFilter::Info);
+    esp_println::logger::init_logger_from_env();
 
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let peripherals = esp_hal::init(config);
+    let peripherals = esp_hal::init(esp_hal::Config::default());
 
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_hal_embassy::init(timg0.timer0);
-
-    let tx_pin = peripherals.GPIO2;
-    let rx_pin = peripherals.GPIO0;
-    const TWAI_BAUDRATE: twai::BaudRate = twai::BaudRate::B125K;
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     let twai_config = twai::TwaiConfiguration::new(
         peripherals.TWAI0,
-        rx_pin,
-        tx_pin,
-        TWAI_BAUDRATE,
+        peripherals.GPIO0,
+        peripherals.GPIO2,
+        twai::BaudRate::B125K,
         TwaiMode::Normal,
     );
-
     let (twai_rx, twai_tx) = twai_config.into_async().start().split();
 
-    let mac_address = Efuse::read_base_mac_address();
-    log::info!("MAC address: {mac_address:?}");
+    let mac_address = efuse::base_mac_address();
+    info!("MAC address: {:?}", mac_address.as_bytes());
 
-    let last_mac_bytes: [u8; 4] = mac_address[2..].try_into().unwrap();
+    let last_mac_bytes: [u8; 4] = mac_address.as_bytes()[2..].try_into().unwrap();
     let serial = u32::from_be_bytes(last_mac_bytes);
 
     zencan::OBJECT1018.set_serial(serial);
     zencan::NODE_MBOX.set_process_notify_callback(&notify_canopen_process_task);
     zencan::NODE_MBOX.set_transmit_notify_callback(&notify_canopen_tx_task);
 
-    spawner.spawn(twai_rx_task(twai_rx)).unwrap();
-    spawner.spawn(twai_tx_task(twai_tx)).unwrap();
-    spawner.spawn(canopen_process_task()).unwrap();
+    spawner.spawn(twai_rx_task(twai_rx).unwrap());
+    spawner.spawn(twai_tx_task(twai_tx).unwrap());
+    spawner.spawn(canopen_process_task().unwrap());
 }
 
 fn notify_canopen_process_task() {
@@ -89,7 +82,7 @@ async fn twai_tx_task(mut twai_tx: TwaiTx<'static, Async>) {
                 EspTwaiFrame::new(StandardId::new(msg.id.raw() as u16).unwrap(), msg.data())
                     .unwrap();
             if let Err(e) = twai_tx.transmit_async(&frame).await {
-                log::error!("Error sending CAN message: {e:?}");
+                error!("Error sending CAN message: {e:?}");
             }
         }
 
@@ -102,7 +95,7 @@ async fn twai_tx_task(mut twai_tx: TwaiTx<'static, Async>) {
 async fn canopen_process_task() {
     let callbacks = Callbacks::default();
     let mut node = Node::new(
-        NodeId::Unconfigured,
+        NodeId::new(42).unwrap(),
         callbacks,
         &zencan::NODE_MBOX,
         &zencan::NODE_STATE,
@@ -119,7 +112,13 @@ async fn canopen_process_task() {
 #[embassy_executor::task]
 async fn twai_rx_task(mut twai_rx: TwaiRx<'static, Async>) {
     loop {
-        let rx_frame = twai_rx.receive_async().await.unwrap();
+        let rx_frame = match twai_rx.receive_async().await {
+            Ok(rx_frame) => rx_frame,
+            Err(e) => {
+                error!("Error receiving frame: {e:?}");
+                continue;
+            }
+        };
 
         let id = match rx_frame.id() {
             Standard(id) => zencan_node::common::messages::CanId::std(id.as_raw()),
