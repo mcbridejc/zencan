@@ -127,8 +127,14 @@ impl NmtNodeArg {
 impl FromStr for NmtNodeArg {
     type Err = &'static str;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.parse::<u8>() {
-            Ok(num) => {
+        let id = if let Some(stripped) = s.strip_prefix("0x") {
+            u8::from_str_radix(stripped, 16).ok()
+        } else {
+            s.parse::<u8>().ok()
+        };
+
+        match id {
+            Some(num) => {
                 if num == 0 {
                     Ok(Self::All)
                 } else if num < 128 {
@@ -137,11 +143,11 @@ impl FromStr for NmtNodeArg {
                     Err("Node ID must be between 0 and 127")
                 }
             }
-            Err(_) => {
+            None => {
                 if s == "all" {
                     Ok(Self::All)
                 } else {
-                    Err("Must specify a node ID, or 'all' to broadcast")
+                    Err("Must specify a node ID between 0 and 127, or 'all' to broadcast")
                 }
             }
         }
