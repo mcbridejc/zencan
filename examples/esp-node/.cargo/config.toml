@@ -1,11 +1,13 @@
 [target.riscv32imc-unknown-none-elf]
-runner = "espflash flash --monitor --chip esp32c3"
+runner = "espflash flash --monitor"
+
+[target.riscv32imac-unknown-none-elf]
+runner = "espflash flash --monitor"
 
 [env]
 ESP_LOG = "info"
 
 [build]
-target = "riscv32imc-unknown-none-elf"
 rustflags = [
   # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
   # NOTE: May negatively impact performance of produced code
@@ -14,3 +16,7 @@ rustflags = [
 
 [unstable]
 build-std = ["core"]
+
+[alias]
+run-esp32c3 = "run --target riscv32imc-unknown-none-elf --features esp32c3"
+run-esp32c6 = "run --target riscv32imac-unknown-none-elf --features esp32c6"

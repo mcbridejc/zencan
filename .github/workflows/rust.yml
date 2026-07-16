@@ -24,7 +24,7 @@ jobs:
         run: cargo build --examples --verbose
       - name: Build esp-node example
         working-directory: examples/esp-node
-        run: cargo build
+        run: cargo build --target riscv32imc-unknown-none-elf --features esp32c3
       - name: Clippy
         run: cargo clippy -- -D warnings
       - name: Clippy Examples

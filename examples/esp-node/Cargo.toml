@@ -11,14 +11,13 @@ edition = "2024"
 zencan-node = { path = "../../zencan-node", default-features = false, features = ["log"] }
 
 # External
-esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32c3"] }
-esp-hal = { version = "~1.1.0", features = ["esp32c3", "unstable"] }
-esp-rtos = { version = "0.3.0", features = ["esp32c3", "embassy"] }
-esp-println = { version = "0.17.0", features = ["esp32c3", "log-04"] }
+esp-bootloader-esp-idf = "0.5.0"
+esp-hal = { version = "~1.1.0", features = ["unstable"] }
+esp-rtos = { version = "0.3.0", features = ["embassy"] }
+esp-println = { version = "0.17.0", features = ["log-04"] }
 esp-backtrace = { version = "0.19.0", features = [
   "panic-handler",
   "println",
-  "esp32c3",
 ] }
 embassy-executor = "0.10.0"
 embassy-futures = "0.1.2"
@@ -26,6 +25,22 @@ embassy-time = "0.5.1"
 embassy-sync = "0.8.0"
 embedded-can = "0.4.1"
 log = "0.4.33"
+
+[features]
+esp32c3 = [
+  "esp-bootloader-esp-idf/esp32c3",
+  "esp-hal/esp32c3",
+  "esp-rtos/esp32c3",
+  "esp-println/esp32c3",
+  "esp-backtrace/esp32c3"
+]
+esp32c6 = [
+  "esp-bootloader-esp-idf/esp32c6",
+  "esp-hal/esp32c6",
+  "esp-rtos/esp32c6",
+  "esp-println/esp32c6",
+  "esp-backtrace/esp32c6"
+]
 
 [build-dependencies]
 zencan-build = { path = "../../zencan-build" }
