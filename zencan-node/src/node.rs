@@ -364,7 +364,7 @@ impl<'a> Node<'a> {
                     continue;
                 }
                 if let Some(new_data) = rpdo.buffered_value.take() {
-                    rpdo.store_pdo_data(&new_data);
+                    rpdo.store_pdo_data(&new_data.data);
                     update_flag = true;
                 }
             }

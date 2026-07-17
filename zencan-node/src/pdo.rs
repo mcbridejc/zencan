@@ -47,18 +47,19 @@ use crate::{
     },
 };
 use zencan_common::{
+    messages::MAX_DATA_LENGTH,
     nmt::NmtState,
     objects::{AccessType, DataType, ObjectCode, PdoMappable, SubInfo},
     pdo::PdoMapping,
     sdo::AbortCode,
-    AtomicCell, CanId, NodeId,
+    AtomicCell, CanId, CanMessage, NodeId,
 };
 
 /// Specifies the number of mapping parameters supported per PDO
 ///
 /// Since we do not yet support CAN-FD, or sub-byte mapping, it's not possible to map more than 8
 /// objects to a single PDO
-const N_MAPPING_PARAMS: usize = 8;
+const N_MAPPING_PARAMS: usize = MAX_DATA_LENGTH;
 
 #[derive(Clone, Copy)]
 /// Data structure for storing a PDO object mapping
@@ -192,7 +193,7 @@ pub struct Pdo<'a> {
     /// Tracks the number of sync signals since this was last sent or received
     sync_counter: AtomicCell<u8>,
     /// The last received data value for an RPDO, or ready to transmit data for a TPDO
-    pub buffered_value: AtomicCell<Option<heapless::Vec<u8, 8>>>,
+    pub buffered_value: AtomicCell<Option<CanMessage>>,
     /// Indicates how many of the values in mapping_params are valid
     ///
     /// This represents sub0 for the mapping object
@@ -382,7 +383,7 @@ impl<'a> Pdo<'a> {
     }
 
     pub(crate) fn send_pdo(&self) {
-        let mut data = [0u8; 8];
+        let mut data = [0u8; MAX_DATA_LENGTH];
         let mut offset = 0;
         let valid_maps = self.valid_maps.load() as usize;
         for (i, param) in self.mapping_params.iter().enumerate() {
@@ -412,9 +413,8 @@ impl<'a> Pdo<'a> {
         }
         // If there is an old value here which has not been sent yet, replace it with the latest
         // Data will be sent by mbox in message handling thread.
-        // Unwrap safety: ensured above that data cannot be longer than 8 bytes
         self.buffered_value
-            .store(Some(heapless::Vec::from_slice(&data[0..offset]).unwrap()));
+            .store(Some(CanMessage::new(self.cob_id(), &data[0..offset])));
     }
 
     /// Lookup a PDO mapped object and create a MappingEntry if it is valid

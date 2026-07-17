@@ -56,7 +56,8 @@ impl CanId {
     }
 }
 
-const MAX_DATA_LENGTH: usize = 8;
+/// Maximum number of bytes of data, for classic CAN this is 8 and for CAN FD this is 64
+pub const MAX_DATA_LENGTH: usize = 64;
 
 /// A struct to contain a CanMessage
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,7 +88,17 @@ impl Default for CanMessage {
 impl CanMessage {
     /// Create a new CAN message
     pub fn new(id: CanId, data: &[u8]) -> Self {
-        let dlc = data.len() as u8;
+        let len = data.len() as u8;
+        let dlc = match len {
+            0..=8 => len,
+            9..=12 => 12,
+            13..=16 => 16,
+            17..=20 => 20,
+            21..=24 => 24,
+            25..=32 => 32,
+            33..=48 => 48,
+            _ => MAX_DATA_LENGTH as u8,
+        };
         if dlc > MAX_DATA_LENGTH as u8 {
             panic!(
                 "Data length exceeds maximum size of {} bytes",
@@ -95,7 +106,7 @@ impl CanMessage {
             );
         }
         let mut buf = [0u8; MAX_DATA_LENGTH];
-        buf[0..dlc as usize].copy_from_slice(data);
+        buf[0..len as usize].copy_from_slice(data);
         let rtr = false;
 
         Self {

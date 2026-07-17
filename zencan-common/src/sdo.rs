@@ -171,12 +171,7 @@ impl BlockSegment {
 
     /// Create a CanMessage from the BlockSegment for transmission
     pub fn to_can_message(&self, id: CanId) -> CanMessage {
-        CanMessage {
-            data: self.to_bytes(),
-            dlc: 8,
-            rtr: false,
-            id,
-        }
+        CanMessage::new(id, &self.to_bytes())
     }
 }
 
@@ -889,7 +884,9 @@ impl TryFrom<[u8; 8]> for SdoResponse {
 impl TryFrom<CanMessage> for SdoResponse {
     type Error = ();
     fn try_from(msg: CanMessage) -> Result<Self, Self::Error> {
-        msg.data.try_into()
+        let mut msg_data = [0u8; 8];
+        msg_data[0..8].copy_from_slice(&msg.data[0..8]);
+        msg_data.try_into()
     }
 }
 impl SdoResponse {
