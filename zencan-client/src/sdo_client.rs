@@ -7,7 +7,7 @@ use zencan_common::{
     lss::LssIdentity,
     messages::CanId,
     node_configuration::PdoConfig,
-    pdo::PdoMapping,
+    pdo::{PdoCommParameter, PdoMapping},
     sdo::{AbortCode, BlockSegment, SdoRequest, SdoResponse},
     traits::{AsyncCanReceiver, AsyncCanSender, CanSendError as _, ReadSize},
     u24, CanMessage, TimeDifference, TimeOfDay,
@@ -674,7 +674,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     pub async fn configure_tpdo(&mut self, pdo_num: usize, cfg: &PdoConfig) -> Result<()> {
         let comm_index = 0x1800 + pdo_num as u16;
         let mapping_index = 0x1a00 + pdo_num as u16;
-        self.store_pdo(comm_index, mapping_index, cfg).await
+        self.store_pdo_config(comm_index, mapping_index, cfg).await
     }
 
     /// Configure a receive PDO on the device
@@ -684,15 +684,92 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
     pub async fn configure_rpdo(&mut self, pdo_num: usize, cfg: &PdoConfig) -> Result<()> {
         let comm_index = 0x1400 + pdo_num as u16;
         let mapping_index = 0x1600 + pdo_num as u16;
-        self.store_pdo(comm_index, mapping_index, cfg).await
+        self.store_pdo_config(comm_index, mapping_index, cfg).await
     }
 
-    async fn store_pdo(
+    /// Set the COB_ID config for an RPDO
+    ///
+    /// Can be used to enable/disable, or change COB ID for a PDO without changing other settings
+    pub async fn set_rpdo_cob_id(
+        &mut self,
+        pdo_num: usize,
+        cob_id: CanId,
+        valid: bool,
+        rtr_disabled: bool,
+    ) -> Result<()> {
+        let comm_index = 0x1400 + pdo_num as u16;
+        self.set_pdo_cob_id(comm_index, cob_id, valid, rtr_disabled)
+            .await
+    }
+
+    /// Set the COB_ID config for an RPDO
+    ///
+    /// Can be used to enable/disable, or change COB ID for a PDO without changing other settings
+    pub async fn set_tpdo_cob_id(
+        &mut self,
+        pdo_num: usize,
+        cob_id: CanId,
+        valid: bool,
+        rtr_disabled: bool,
+    ) -> Result<()> {
+        let comm_index = 0x1800 + pdo_num as u16;
+        self.set_pdo_cob_id(comm_index, cob_id, valid, rtr_disabled)
+            .await
+    }
+
+    async fn set_pdo_cob_id(
+        &mut self,
+        comm_index: u16,
+        cob_id: CanId,
+        valid: bool,
+        rtr_disabled: bool,
+    ) -> Result<()> {
+        let mut cob_value = cob_id.raw() & 0x1FFFFFFF;
+        if !valid {
+            cob_value |= 1 << 31;
+        }
+        if cob_id.is_extended() {
+            cob_value |= 1 << 29;
+        }
+        if rtr_disabled {
+            cob_value |= 1 << 30;
+        }
+        self.write_u32(comm_index, 1, cob_value).await?;
+
+        Ok(())
+    }
+
+    /// Write to a PDO Comm parameter
+    async fn set_pdo_comm_parameter(
+        &mut self,
+        comm_index: u16,
+        comm: PdoCommParameter,
+    ) -> Result<()> {
+        self.write_u8(comm_index, 2, comm.transmission_type).await?;
+        self.set_pdo_cob_id(comm_index, comm.cob_id, comm.valid, comm.rtr_disabled)
+            .await?;
+        Ok(())
+    }
+
+    async fn store_pdo_config(
         &mut self,
         comm_index: u16,
         mapping_index: u16,
         cfg: &PdoConfig,
     ) -> Result<()> {
+        let disabled_comm = PdoCommParameter {
+            valid: false,
+            ..cfg.comm
+        };
+
+        // Ensure PDO is disabled
+        self.set_pdo_comm_parameter(comm_index, disabled_comm)
+            .await?;
+
+        // Set the number of valid mappings to 0
+        self.write_u8(mapping_index, 0, 0).await?;
+
+        // Write the mappings
         assert!(cfg.mappings.len() < 0x40);
         for (i, m) in cfg.mappings.iter().enumerate() {
             let mapping_value = m.to_object_value();
@@ -700,19 +777,14 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
                 .await?;
         }
 
+        // Set the number of valid mappings to the number configured
         let num_mappings = cfg.mappings.len() as u8;
         self.write_u8(mapping_index, 0, num_mappings).await?;
 
-        let mut cob_value = cfg.cob_id.raw() & 0x1FFFFFFF;
-        if !cfg.enabled {
-            cob_value |= 1 << 31;
+        // Make PDO valid, if requested
+        if cfg.comm.valid {
+            self.set_pdo_comm_parameter(comm_index, cfg.comm).await?;
         }
-        if cfg.cob_id.is_extended() {
-            cob_value |= 1 << 29;
-        }
-        self.write_u8(comm_index, 2, cfg.transmission_type).await?;
-        self.write_u32(comm_index, 1, cob_value).await?;
-
         Ok(())
     }
 
@@ -739,7 +811,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             let mapping_raw = self.read_u32(mapping_index, i + 1).await?;
             mappings.push(PdoMapping::from_object_value(mapping_raw));
         }
-        let enabled = cob_word & (1 << 31) == 0;
+        let valid = cob_word & (1 << 31) == 0;
         let rtr_disabled = cob_word & (1 << 30) != 0;
         let extended = cob_word & (1 << 29) != 0;
         let cob_id = cob_word & 0x1FFFFFFF;
@@ -749,11 +821,13 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> SdoClient<S, R> {
             CanId::std(cob_id as u16)
         };
         Ok(PdoConfig {
-            cob_id,
-            enabled,
-            rtr_disabled,
+            comm: PdoCommParameter {
+                valid,
+                rtr_disabled,
+                cob_id,
+                transmission_type,
+            },
             mappings,
-            transmission_type,
         })
     }
 

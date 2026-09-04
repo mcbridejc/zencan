@@ -444,7 +444,7 @@ async fn run_command<S: AsyncCanSender + Sync + Send>(cmd: Commands, manager: &m
                         println!("TPDO{i}:");
                         println!(
                             "  valid={}, COB={}, transmission_type={}",
-                            pdo.enabled, pdo.cob_id, pdo.transmission_type
+                            pdo.comm.valid, pdo.comm.cob_id, pdo.comm.transmission_type
                         );
                         if !pdo.mappings.is_empty() {
                             println!("  mapping: ");
@@ -460,7 +460,7 @@ async fn run_command<S: AsyncCanSender + Sync + Send>(cmd: Commands, manager: &m
                         println!("RPDO{i}:");
                         println!(
                             "  valid={}, COB={}, transmission_type={}",
-                            pdo.enabled, pdo.cob_id, pdo.transmission_type
+                            pdo.comm.valid, pdo.comm.cob_id, pdo.comm.transmission_type
                         );
                         if !pdo.mappings.is_empty() {
                             println!("  mapping: ");

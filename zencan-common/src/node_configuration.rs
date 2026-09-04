@@ -1,7 +1,10 @@
 //! Node Configuration File Format
 use std::{collections::HashMap, path::Path};
 
-use crate::{pdo::PdoMapping, CanId};
+use crate::{
+    pdo::{PdoCommParameter, PdoMapping},
+    CanId,
+};
 use serde::{de, Deserialize, Deserializer};
 use snafu::{ResultExt, Snafu};
 
@@ -169,21 +172,10 @@ struct PdoConfigSerializer {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(try_from = "PdoConfigSerializer")]
 pub struct PdoConfig {
-    /// The COB ID this PDO will use to send/receive
-    pub cob_id: CanId,
-    /// Indicates if this PDO is enabled
-    pub enabled: bool,
-    /// If set, this PDO will not respond to requests
-    pub rtr_disabled: bool,
-    /// List of mapping specifying what sub objects are mapped to this PDO
+    /// The Comm parameter for the PDO
+    pub comm: PdoCommParameter,
+    /// The mappings for the PDO
     pub mappings: Vec<PdoMapping>,
-    /// Specifies when a PDO is sent or latched
-    ///
-    /// - 0: Sent in response to sync, but only after an application specific event (e.g. it may be
-    ///   sent when the value changes, but not when it has not)
-    /// - 1 - 240: Sent in response to every Nth sync
-    /// - 254: Event driven (application to send it whenever it wants)
-    pub transmission_type: u8,
 }
 
 /// Error when deserializing a [`PdoConfigSerializer`]
@@ -212,11 +204,13 @@ impl TryFrom<PdoConfigSerializer> for PdoConfig {
         };
 
         Ok(PdoConfig {
-            cob_id,
-            enabled: value.enabled,
+            comm: PdoCommParameter {
+                cob_id,
+                valid: value.enabled,
+                rtr_disabled: value.rtr_disabled,
+                transmission_type: value.transmission_type,
+            },
             mappings: value.mappings,
-            rtr_disabled: value.rtr_disabled,
-            transmission_type: value.transmission_type,
         })
     }
 }
@@ -422,7 +416,7 @@ mod test {
         let result = NodeConfig::load_from_str(str).unwrap();
         assert_eq!(1, result.tpdos().len());
         let tpdo = result.tpdos().get(&0).unwrap();
-        assert_eq!(CanId::extended(0x800), tpdo.cob_id);
+        assert_eq!(CanId::extended(0x800), tpdo.comm.cob_id);
     }
 
     #[test]

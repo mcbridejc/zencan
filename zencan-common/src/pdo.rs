@@ -1,5 +1,7 @@
 //! Definitions and data types related to PDOs
 
+use crate::CanId;
+
 /// Represents a PDO mapping
 ///
 /// Each mapping specifies one sub-object to be included in the PDO data bytes.
@@ -31,4 +33,26 @@ impl PdoMapping {
         let size = (value & 0xff) as u8;
         Self { index, sub, size }
     }
+}
+
+/// Represents a PDO Communications Parameter Object
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PdoCommParameter {
+    /// Indicates the PDO is valid / enabled
+    ///
+    /// Note: The bit in the object itself is inverted -- it's 1 when the PDO is not valid
+    pub valid: bool,
+    /// True if RTR is allowed on this PDO
+    pub rtr_disabled: bool,
+    /// The COB-ID used to send or receive the PDO
+    pub cob_id: CanId,
+    /// The transmission type for the PDO
+    ///
+    /// It specifies when a PDO is sent or latched:
+    ///
+    /// - 0: Sent in response to sync, but only after an application specific event (e.g. it may be
+    ///   sent when the value changes, but not when it has not)
+    /// - 1 - 240: Sent in response to every Nth sync
+    /// - 254: Event driven (application to send it whenever it wants)
+    pub transmission_type: u8,
 }

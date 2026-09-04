@@ -12,6 +12,7 @@ use zencan_common::lss::{LssIdentity, LssState};
 use zencan_common::messages::{NmtCommand, NmtCommandSpecifier, SyncObject, ZencanMessage};
 use zencan_common::nmt::NmtState;
 use zencan_common::node_id::ConfiguredNodeId;
+use zencan_common::pdo::PdoCommParameter;
 use zencan_common::sdo::AbortCode;
 use zencan_common::{
     node_configuration::PdoConfig,
@@ -191,7 +192,7 @@ async fn read_pdos<S: AsyncCanSender + Sync + Send, R: AsyncCanReceiver>(
 
         let frame = (cob_value & (1 << 29)) != 0;
         let rtr_disabled = (cob_value & (1 << 30)) != 0;
-        let enabled = (cob_value & (1 << 31)) == 0;
+        let valid = (cob_value & (1 << 31)) == 0;
 
         let cob_id = cob_value & 0x1FFFFFFF;
         let cob_id = if frame {
@@ -207,11 +208,13 @@ async fn read_pdos<S: AsyncCanSender + Sync + Send, R: AsyncCanReceiver>(
         }
 
         result.push(PdoConfig {
-            cob_id,
-            enabled,
-            rtr_disabled,
+            comm: PdoCommParameter {
+                cob_id,
+                valid,
+                rtr_disabled,
+                transmission_type,
+            },
             mappings,
-            transmission_type,
         });
         comm_base += 1;
         mapping_base += 1;

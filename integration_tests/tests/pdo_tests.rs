@@ -17,7 +17,7 @@ use zencan_common::{
     i24,
     messages::{CanId, CanMessage, SyncObject},
     node_configuration::PdoConfig,
-    pdo::PdoMapping,
+    pdo::{PdoCommParameter, PdoMapping},
     traits::{AsyncCanReceiver, AsyncCanSender},
     u24, NodeId,
 };
@@ -86,6 +86,9 @@ async fn test_rpdo_assignment() {
         // Invalid bit cleared, and ID == 0x201.
         let cob_id_word: u32 = 0x201;
         client.write_u32(0x1400, 1, cob_id_word).await.unwrap();
+
+        let cob_word_readback = client.read_u32(0x1400, 1).await.unwrap();
+        assert_eq!(0x201, cob_word_readback);
 
         let readback_cob_id_word = client.read_u32(0x1400, 1).await.unwrap();
         assert_eq!(cob_id_word, readback_cob_id_word);
@@ -269,9 +272,12 @@ async fn test_tpdo_event_flags() {
             .configure_tpdo(
                 0,
                 &PdoConfig {
-                    cob_id: CanId::std(0x181),
-                    enabled: true,
-                    rtr_disabled: false,
+                    comm: PdoCommParameter {
+                        cob_id: CanId::std(0x181),
+                        valid: true,
+                        rtr_disabled: false,
+                        transmission_type: 254,
+                    },
                     mappings: vec![
                         PdoMapping {
                             index: 0x2000,
@@ -284,7 +290,6 @@ async fn test_tpdo_event_flags() {
                             size: 32,
                         },
                     ],
-                    transmission_type: 254,
                 },
             )
             .await
@@ -295,15 +300,17 @@ async fn test_tpdo_event_flags() {
             .configure_tpdo(
                 1,
                 &PdoConfig {
-                    cob_id: CanId::std(0x182),
-                    enabled: true,
-                    rtr_disabled: false,
+                    comm: PdoCommParameter {
+                        cob_id: CanId::std(0x182),
+                        valid: true,
+                        rtr_disabled: false,
+                        transmission_type: 254,
+                    },
                     mappings: vec![PdoMapping {
                         index: 0x3000,
                         sub: 0,
                         size: 32,
                     }],
-                    transmission_type: 254,
                 },
             )
             .await
@@ -432,9 +439,12 @@ async fn test_tpdo_sync_initiated_transmission() {
             .configure_tpdo(
                 0,
                 &PdoConfig {
-                    cob_id: CanId::std(0x181),
-                    enabled: true,
-                    rtr_disabled: false,
+                    comm: PdoCommParameter {
+                        cob_id: CanId::std(0x181),
+                        valid: true,
+                        rtr_disabled: false,
+                        transmission_type: 2,
+                    },
                     mappings: vec![
                         PdoMapping {
                             index: 0x2000,
@@ -447,7 +457,6 @@ async fn test_tpdo_sync_initiated_transmission() {
                             size: 32,
                         },
                     ],
-                    transmission_type: 2,
                 },
             )
             .await
@@ -458,15 +467,17 @@ async fn test_tpdo_sync_initiated_transmission() {
             .configure_tpdo(
                 1,
                 &PdoConfig {
-                    cob_id: CanId::std(0x182),
-                    enabled: true,
-                    rtr_disabled: false,
+                    comm: PdoCommParameter {
+                        cob_id: CanId::std(0x182),
+                        valid: true,
+                        rtr_disabled: false,
+                        transmission_type: 3,
+                    },
                     mappings: vec![PdoMapping {
                         index: 0x3000,
                         sub: 0,
                         size: 32,
                     }],
-                    transmission_type: 3,
                 },
             )
             .await
@@ -624,9 +635,13 @@ async fn test_pdo_configuration() {
 
     let test_task = move |_ctx| async move {
         let config = PdoConfig {
-            cob_id: CanId::std(0x301),
-            enabled: true,
-            rtr_disabled: true,
+            comm: PdoCommParameter {
+                cob_id: CanId::std(0x301),
+                valid: true,
+                rtr_disabled: false,
+                transmission_type: 254,
+            },
+
             mappings: vec![
                 PdoMapping {
                     index: 0x2000,
@@ -639,7 +654,6 @@ async fn test_pdo_configuration() {
                     size: 32,
                 },
             ],
-            transmission_type: 254,
         };
 
         client.configure_tpdo(0, &config).await?;
@@ -690,18 +704,18 @@ async fn test_pdo_defaults() {
     let test_task = move |_ctx| async move {
         // Check that the initial value matches the one defined in example1.toml
         let tpdo1_cfg = client.read_tpdo_config(1).await.unwrap();
-        assert_eq!(true, tpdo1_cfg.enabled);
-        assert_eq!(CanId::std(0x201), tpdo1_cfg.cob_id);
-        assert_eq!(254, tpdo1_cfg.transmission_type);
+        assert_eq!(true, tpdo1_cfg.comm.valid);
+        assert_eq!(CanId::std(0x201), tpdo1_cfg.comm.cob_id);
+        assert_eq!(254, tpdo1_cfg.comm.transmission_type);
         assert_eq!(1, tpdo1_cfg.mappings.len());
         assert_eq!(0x2000, tpdo1_cfg.mappings[0].index);
         assert_eq!(1, tpdo1_cfg.mappings[0].sub);
         assert_eq!(32, tpdo1_cfg.mappings[0].size);
 
         let rpdo0_cfg = client.read_rpdo_config(0).await.unwrap();
-        assert_eq!(true, rpdo0_cfg.enabled);
-        assert_eq!(CanId::std(0x300), rpdo0_cfg.cob_id);
-        assert_eq!(254, rpdo0_cfg.transmission_type);
+        assert_eq!(true, rpdo0_cfg.comm.valid);
+        assert_eq!(CanId::std(0x300), rpdo0_cfg.comm.cob_id);
+        assert_eq!(254, rpdo0_cfg.comm.transmission_type);
         assert_eq!(2, rpdo0_cfg.mappings.len());
         assert_eq!(0x2000, rpdo0_cfg.mappings[0].index);
         assert_eq!(2u8, rpdo0_cfg.mappings[0].sub);
