@@ -483,20 +483,23 @@ impl<'a> Node<'a> {
             pdo.init_defaults(self.node_id);
         }
 
+        self.state.set_nmt_state(NmtState::Bootup);
+
         if let Some(reset_app_cb) = &mut self.callbacks.reset_app {
             (*reset_app_cb)(self.od);
         }
-        self.state.set_nmt_state(NmtState::Bootup);
     }
 
     fn reset_comm(&mut self) {
         for pdo in self.state.rpdos().iter().chain(self.state.tpdos()) {
             pdo.init_defaults(self.node_id);
         }
+
+        self.state.set_nmt_state(NmtState::Bootup);
+
         if let Some(reset_comms_cb) = &mut self.callbacks.reset_comms {
             (*reset_comms_cb)(self.od);
         }
-        self.state.set_nmt_state(NmtState::Bootup);
     }
 
     fn boot_up(&mut self) {
