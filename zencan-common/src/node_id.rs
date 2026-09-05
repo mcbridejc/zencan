@@ -21,7 +21,7 @@ impl ConfiguredNodeId {
     ///
     /// It will fail if value is invalid (i.e. <1 or >127)
     pub const fn new(value: u8) -> Result<Self, InvalidNodeIdError> {
-        if (value > 0 && value < 128) || value == 255 {
+        if value > 0 && value < 128 {
             Ok(ConfiguredNodeId(value))
         } else {
             Err(InvalidNodeIdError)
