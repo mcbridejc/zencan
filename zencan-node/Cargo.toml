@@ -14,7 +14,6 @@ repository.workspace = true
 [dependencies]
 # Local
 zencan-common = { workspace = true, default-features = false }
-zencan-macro.workspace = true
 
 # External
 crc16.workspace = true

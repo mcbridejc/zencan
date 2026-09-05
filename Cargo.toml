@@ -9,7 +9,6 @@ members = [
     "zencan-client",
     "zencan-common",
     "zencan-eds",
-    "zencan-macro",
     "zencan-node",
 ]
 
@@ -25,7 +24,6 @@ repository = "https://github.com/mcbridejc/zencan"
 zencan-build = { path = "zencan-build", version = "0.0.4" }
 zencan-client = { path = "zencan-client", version = "0.0.4" }
 zencan-common = { path = "zencan-common", version = "0.0.4", default-features = false }
-zencan-macro = { path = "zencan-macro", version = "0.0.1" }
 zencan-node = { path = "zencan-node", version = "0.0.4" }
 
 # External

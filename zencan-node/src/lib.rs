@@ -203,9 +203,6 @@ pub mod priority_queue;
 mod sdo_server;
 pub mod storage;
 
-// Re-export proc macros
-pub use zencan_macro::build_object_dict;
-
 // Re-export types used by generated code
 pub use critical_section;
 pub use embedded_io;
