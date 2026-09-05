@@ -2,6 +2,37 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-node crate.
 
+## v0.0.5 - 2026-09-04
+
+### Added
+
+- `Callbacks::pdo_received` callback with the RPDO slot index and mapping entries
+  ([#88](https://github.com/mcbridejc/zencan/pull/88); thanks to @rohel01).
+- `ObjectAccess::read_u24` and `ObjectAccess::read_i24` helpers
+  ([#88](https://github.com/mcbridejc/zencan/pull/88); thanks to @rohel01).
+- `SubInfo::new_boolean` helper in zencan-common ([#77](https://github.com/mcbridejc/zencan/pull/77); thanks
+  to @rohel01).
+
+### Changed
+
+- TPDO frames now use the mapped data length instead of always sending eight bytes
+  ([#79](https://github.com/mcbridejc/zencan/pull/79)).
+- **Breaking:** Rename `SubInfo::new_visibile_str` to `SubInfo::new_visible_str`
+  ([#78](https://github.com/mcbridejc/zencan/pull/78)).
+- Refresh ESP node example dependencies and add ESP32-C3 / ESP32-C6 target selection
+  ([#91](https://github.com/mcbridejc/zencan/pull/91); thanks to @etiennedm).
+
+### Fixed
+
+- Boolean object code generation and construction of `ScalarField<bool>`
+  ([#75](https://github.com/mcbridejc/zencan/pull/75)).
+- `NodeMbox::store_message` incorrectly returned an error for handled SDO requests and did not call
+  `process_notify` ([#83](https://github.com/mcbridejc/zencan/pull/83); thanks to @rohel01).
+- Set the NMT state before calling `reset_app` and `reset_comms`, allowing callbacks to restore PDO mappings
+  ([#93](https://github.com/mcbridejc/zencan/pull/93)).
+- `ConfiguredNodeId::new` now rejects 255 as an invalid configured node ID
+  ([#95](https://github.com/mcbridejc/zencan/pull/95)).
+
 ## v0.0.4 - 2026-05-08
 
 ### Added

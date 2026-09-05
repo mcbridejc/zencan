@@ -2,6 +2,32 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-client crate.
 
+## v0.0.5 - 2026-09-04
+
+### Added
+
+- `SdoClient::read_bool` and `SdoClient::write_bool` helpers
+  ([#75](https://github.com/mcbridejc/zencan/pull/75)).
+- `SdoClient::set_rpdo_cob_id` and `SdoClient::set_tpdo_cob_id` to change a PDO's COB-ID, enabled state, and
+  RTR setting without rewriting its mappings ([#94](https://github.com/mcbridejc/zencan/pull/94)).
+- Public `SocketCanSender` and `SocketCanReceiver` types in zencan-common
+  ([#86](https://github.com/mcbridejc/zencan/pull/86); thanks to @SebKuzminsky).
+
+### Changed
+
+- **Breaking:** Remove typed `SdoClient::upload_*` and `download_*` accessors; use the corresponding `read_*`
+  and `write_*` methods ([#74](https://github.com/mcbridejc/zencan/pull/74)).
+- **Breaking:** Move `PdoConfig` communication fields into `comm: PdoCommParameter`. The TOML configuration
+  format is unchanged ([#94](https://github.com/mcbridejc/zencan/pull/94)).
+
+### Fixed
+
+- Disable PDOs and clear their mapping count before writing new mappings
+  ([#94](https://github.com/mcbridejc/zencan/pull/94)).
+- Honor `rtr_disabled` when writing PDO configuration ([#94](https://github.com/mcbridejc/zencan/pull/94)).
+- Tighten validation on `ConfiguredNodeId::new`. It now rejects 255 as an invalid configured node ID
+  ([#95](https://github.com/mcbridejc/zencan/pull/95)).
+
 ## v0.0.4 - 2026-05-08
 
 ### Added
@@ -48,4 +74,4 @@ The first release!
 
 ### Added
 
-- Everything! 
+- Everything!

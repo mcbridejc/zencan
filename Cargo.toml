@@ -21,10 +21,10 @@ repository = "https://github.com/mcbridejc/zencan"
 
 [workspace.dependencies]
 # Local
-zencan-build = { path = "zencan-build", version = "0.0.4" }
-zencan-client = { path = "zencan-client", version = "0.0.4" }
-zencan-common = { path = "zencan-common", version = "0.0.4", default-features = false }
-zencan-node = { path = "zencan-node", version = "0.0.4" }
+zencan-build = { path = "zencan-build", version = "0.0.5" }
+zencan-client = { path = "zencan-client", version = "0.0.5" }
+zencan-common = { path = "zencan-common", version = "0.0.5", default-features = false }
+zencan-node = { path = "zencan-node", version = "0.0.5" }
 
 # External
 arbitrary-int = "2.1.1"
