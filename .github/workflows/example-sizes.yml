@@ -1,0 +1,23 @@
+name: Example binary sizes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sizes:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-size
+        run: cargo install cargo-binutils --locked
+      - name: Build and report sizes
+        run: |
+          set -o pipefail
+          scripts/example_sizes.sh --locked | tee "$GITHUB_STEP_SUMMARY"
