@@ -1,0 +1,32 @@
+[package]
+name = "stm32l5-minimal"
+publish = false
+edition = "2024"
+
+# Keep this example out of the parent workspace so it can be built on its own.
+[workspace]
+
+[dependencies]
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+critical-section = "1.2.0"
+fdcan = { version = "0.2.1", features = ["fdcan_g0_g4_l5"] }
+panic-halt = "1.0.0"
+portable-atomic = { version = "1.15.0", default-features = false, features = ["fallback", "unsafe-assume-single-core"] }
+stm32-metapac = { version = "18.0.0", features = ["stm32l552rc", "rt"] }
+zencan-node = { path = "../../zencan-node", default-features = false, features = ["defmt"] }
+
+[build-dependencies]
+zencan-build = { path = "../../zencan-build" }
+
+[profile.dev]
+codegen-units = 1
+debug = true
+lto = true
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = true
+lto = true
+opt-level = "s"

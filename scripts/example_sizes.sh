@@ -47,6 +47,7 @@ measure() {
 }
 
 measure stm32g0-lilos-node thumbv6m-none-eabi
+measure stm32l5-minimal thumbv8m.main-none-eabihf
 measure esp-node riscv32imc-unknown-none-elf esp32c3
 
 printf '# Example binary sizes\n\n'

@@ -1,0 +1,10 @@
+device_name = "zencan-minimal"
+software_version = "v0.0.1"
+hardware_version = "rev1"
+heartbeat_period = 1000
+autostart = "enabled"
+
+[identity]
+vendor_id = 0xCAFE
+product_code = 0x0001
+revision_number = 1
