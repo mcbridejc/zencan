@@ -106,7 +106,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> NmtMaster<S, R> {
             } else if list_node.id == 0 || list_node.id > node {
                 // Found end of list or higher node - insert here
                 // Shift all higher nodes
-                for j in self.nodes.len() - 1..i {
+                for j in (i + 1..self.nodes.len()).rev() {
                     self.nodes[j] = self.nodes[j - 1];
                 }
                 self.nodes[i] = Node {
@@ -148,7 +148,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> NmtMaster<S, R> {
         self.send_nmt_cmd(NmtCommandSpecifier::Start, node).await
     }
 
-    /// Send start operation command
+    /// Send stop operation command
     ///
     /// # Arguments
     ///
@@ -157,9 +157,125 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> NmtMaster<S, R> {
         self.send_nmt_cmd(NmtCommandSpecifier::Stop, node).await
     }
 
+    /// Send enter pre-operational command
+    ///
+    /// # Arguments
+    ///
+    /// - `node`: The node ID to command, or 0 to broadcast to all nodes
+    pub async fn nmt_enter_preop(&mut self, node: u8) -> Result<()> {
+        self.send_nmt_cmd(NmtCommandSpecifier::EnterPreOp, node)
+            .await
+    }
+
     async fn send_nmt_cmd(&mut self, cmd: NmtCommandSpecifier, node: u8) -> Result<()> {
         let message = NmtCommand { cs: cmd, node };
         self.sender.send(message.into()).await.map_err(|_| ())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc::{channel, Receiver, Sender};
+    use zencan_common::{can::CanSendError, protocol::Heartbeat, CanId};
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct MockSendError(CanMessage);
+
+    impl CanSendError for MockSendError {
+        fn into_can_message(self) -> CanMessage {
+            self.0
+        }
+
+        fn message(&self) -> String {
+            "mock send failed".into()
+        }
+    }
+
+    struct MockSender {
+        tx: Sender<CanMessage>,
+    }
+
+    impl AsyncCanSender for MockSender {
+        type Error = MockSendError;
+
+        async fn send(&mut self, msg: CanMessage) -> std::result::Result<(), Self::Error> {
+            self.tx.try_send(msg).map_err(|_| MockSendError(msg))
+        }
+    }
+
+    struct MockReceiver {
+        rx: Receiver<CanMessage>,
+    }
+
+    #[derive(Debug)]
+    struct MockReceiveError;
+
+    impl AsyncCanReceiver for MockReceiver {
+        type Error = MockReceiveError;
+
+        fn try_recv(&mut self) -> Option<CanMessage> {
+            self.rx.try_recv().ok()
+        }
+
+        async fn recv(&mut self) -> std::result::Result<CanMessage, Self::Error> {
+            self.rx.recv().await.ok_or(MockReceiveError)
+        }
+    }
+
+    /// Returns the master, the bus side of its receiver, and the bus side of its sender
+    fn mock_master() -> (
+        NmtMaster<MockSender, MockReceiver>,
+        Sender<CanMessage>,
+        Receiver<CanMessage>,
+    ) {
+        let (to_master, master_rx) = channel(16);
+        let (master_tx, from_master) = channel(16);
+        let master = NmtMaster::new(MockSender { tx: master_tx }, MockReceiver { rx: master_rx });
+        (master, to_master, from_master)
+    }
+
+    fn heartbeat(node: u8, state: NmtState) -> CanMessage {
+        Heartbeat {
+            node,
+            toggle: false,
+            state,
+        }
+        .into()
+    }
+
+    #[tokio::test]
+    async fn keeps_nodes_heard_out_of_order() {
+        let (mut master, bus, _) = mock_master();
+
+        bus.send(heartbeat(3, NmtState::Operational)).await.unwrap();
+        bus.send(heartbeat(1, NmtState::PreOperational))
+            .await
+            .unwrap();
+        bus.send(heartbeat(2, NmtState::Stopped)).await.unwrap();
+
+        let nodes: Vec<(u8, NmtState)> =
+            master.get_nodes().iter().map(|n| (n.id, n.state)).collect();
+        assert_eq!(
+            nodes,
+            vec![
+                (1, NmtState::PreOperational),
+                (2, NmtState::Stopped),
+                (3, NmtState::Operational),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn enter_preop_sends_command() {
+        let (mut master, _, mut bus) = mock_master();
+
+        master.nmt_enter_preop(5).await.unwrap();
+
+        let msg = bus.try_recv().unwrap();
+        assert_eq!(msg.id, CanId::std(0));
+        assert_eq!(msg.data(), &[0x80, 5]);
     }
 }
