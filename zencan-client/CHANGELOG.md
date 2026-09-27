@@ -2,6 +2,17 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-client crate.
 
+## Unreleased
+
+### Added
+
+- `NmtMaster::nmt_enter_preop` to command nodes into the PreOperational state.
+
+### Fixed
+
+- `NmtMaster` no longer overwrites a known node when a heartbeat arrives from a lower node ID. The
+  shift that makes room in the sorted node list iterated over an empty range.
+
 ## v0.0.5 - 2026-09-04
 
 ### Added
