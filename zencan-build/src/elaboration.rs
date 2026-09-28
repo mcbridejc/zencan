@@ -26,7 +26,7 @@ fn mandatory_objects(config: &DeviceConfig) -> Vec<ObjectBuildSpec> {
                     parameter_name: "Device Type".to_string(),
                     data_type: DataType::UInt32,
                     access_type: AccessType::Const,
-                    default_value: Some(DefaultValue::Integer(0x00000000)),
+                    default_value: Some(DefaultValue::Integer(config.device_type as i64)),
                     pdo_mapping: PdoMappable::None,
                     persist: false,
                 },
