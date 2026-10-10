@@ -39,10 +39,10 @@ fn repeat_reset_preserves_references_identity_and_scope() {
         array.set(0, 999).unwrap();
         record.set_sub3(-1);
         od.object2002().value.set_str(b"longer string!!").unwrap();
-        od.object1017().set_value(91);
+        od.object1001().set_value(91);
         od.reset_objects(ResetScope::Communication);
         assert_eq!(array.get(0).unwrap(), 999);
-        assert_eq!(od.object1017().get_value(), 0);
+        assert_eq!(od.object1001().get_value(), 0);
         od.reset_objects(ResetScope::Application);
         assert_eq!(array.get(0).unwrap(), 123);
         assert_eq!(array.get(1).unwrap(), u32::MAX);

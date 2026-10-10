@@ -423,6 +423,86 @@ impl ObjectAccess for CallbackObject<'_> {
     }
 }
 
+/// A VAR object whose value never changes, such as the device name
+///
+/// The value is fixed at build time and kept in flash. Every constant VAR in a dictionary shares
+/// this one type, so they share one implementation of [`ObjectAccess`] rather than each getting
+/// its own.
+#[allow(missing_debug_implementations)]
+pub struct ConstVarObject {
+    info: SubInfo,
+    value: &'static [u8],
+}
+
+impl ConstVarObject {
+    /// Create a constant VAR object
+    ///
+    /// `value` holds the object's bytes in little-endian order. A visible or unicode string is
+    /// padded to its declared size with zeros, and reads stop at the first zero.
+    pub const fn new(info: SubInfo, value: &'static [u8]) -> Self {
+        Self { info, value }
+    }
+
+    /// The number of bytes a read returns
+    fn len(&self) -> usize {
+        if matches!(
+            self.info.data_type,
+            DataType::VisibleString(_) | DataType::UnicodeString(_)
+        ) {
+            self.value
+                .iter()
+                .position(|b| *b == 0)
+                .unwrap_or(self.value.len())
+        } else {
+            self.value.len()
+        }
+    }
+}
+
+impl ObjectAccess for ConstVarObject {
+    fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+        if sub != 0 {
+            return Err(AbortCode::NoSuchSubIndex);
+        }
+        let value = &self.value[..self.len()];
+        if offset >= value.len() {
+            return Ok(0);
+        }
+        let read_len = buf.len().min(value.len() - offset);
+        buf[..read_len].copy_from_slice(&value[offset..offset + read_len]);
+        Ok(read_len)
+    }
+
+    fn read_size(&self, sub: u8) -> Result<usize, AbortCode> {
+        self.current_size(sub)
+    }
+
+    fn write(&self, sub: u8, _data: &[u8]) -> Result<(), AbortCode> {
+        if sub != 0 {
+            return Err(AbortCode::NoSuchSubIndex);
+        }
+        Err(AbortCode::ReadOnly)
+    }
+
+    fn object_code(&self) -> ObjectCode {
+        ObjectCode::Var
+    }
+
+    fn sub_info(&self, sub: u8) -> Result<SubInfo, AbortCode> {
+        if sub != 0 {
+            return Err(AbortCode::NoSuchSubIndex);
+        }
+        Ok(self.info)
+    }
+
+    fn current_size(&self, sub: u8) -> Result<usize, AbortCode> {
+        if sub != 0 {
+            return Err(AbortCode::NoSuchSubIndex);
+        }
+        Ok(self.len())
+    }
+}
+
 /// Represents one item in a table of objects.
 ///
 /// Entries contain references only to fully initialized objects.
@@ -548,4 +628,56 @@ pub(crate) fn get_object_write_data<const N: usize>(data: &[u8]) -> Result<[u8; 
     let mut array = [0; N];
     array.copy_from_slice(data);
     Ok(array)
+}
+
+#[cfg(test)]
+mod tests {
+    use zencan_common::object_model::PdoMappable;
+
+    use super::*;
+
+    fn const_var(data_type: DataType, value: &'static [u8]) -> ConstVarObject {
+        ConstVarObject::new(
+            SubInfo {
+                data_type,
+                access_type: AccessType::Const,
+                pdo_mapping: PdoMappable::None,
+                persist: false,
+            },
+            value,
+        )
+    }
+
+    #[test]
+    fn const_var_string_reads_stop_at_the_padding() {
+        let obj = const_var(DataType::VisibleString(8), b"name\0\0\0\0");
+        let mut buf = [0xff; 8];
+        assert_eq!(obj.read(0, 0, &mut buf), Ok(4));
+        assert_eq!(&buf[..4], b"name");
+        assert_eq!(obj.read(0, 2, &mut buf), Ok(2));
+        assert_eq!(&buf[..2], b"me");
+        assert_eq!(obj.read(0, 6, &mut buf), Ok(0));
+        assert_eq!(obj.read_size(0), Ok(4));
+        assert_eq!(obj.current_size(0), Ok(4));
+    }
+
+    #[test]
+    fn const_var_octet_string_keeps_zero_bytes() {
+        let obj = const_var(DataType::OctetString(3), &[1, 0, 2]);
+        let mut buf = [0; 3];
+        assert_eq!(obj.read(0, 0, &mut buf), Ok(3));
+        assert_eq!(buf, [1, 0, 2]);
+    }
+
+    #[test]
+    fn const_var_is_read_only_with_only_sub_zero() {
+        let obj = const_var(DataType::UInt32, const { &0x0002_0192u32.to_le_bytes() });
+        assert_eq!(obj.read_u32(0), Ok(0x0002_0192));
+        assert_eq!(obj.write(0, &[0; 4]), Err(AbortCode::ReadOnly));
+        assert_eq!(obj.begin_partial(0), Err(AbortCode::ReadOnly));
+        assert_eq!(obj.read(1, 0, &mut [0; 4]), Err(AbortCode::NoSuchSubIndex));
+        assert_eq!(obj.write(1, &[0; 4]), Err(AbortCode::NoSuchSubIndex));
+        assert_eq!(obj.sub_info(1), Err(AbortCode::NoSuchSubIndex));
+        assert_eq!(obj.max_sub_number(), 0);
+    }
 }
