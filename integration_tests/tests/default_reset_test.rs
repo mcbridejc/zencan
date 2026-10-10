@@ -130,6 +130,7 @@ fn sparse_large_array_and_domain_array_reset() {
         for i in 1..128 {
             assert_eq!(od.object4000().get(i).unwrap(), 0);
         }
-        assert_eq!(od.object4001().read_u8(2).unwrap(), 42);
+        let object4001: &dyn ObjectAccess = od.object4001();
+        assert_eq!(object4001.read_u8(2).unwrap(), 42);
     }
 }
