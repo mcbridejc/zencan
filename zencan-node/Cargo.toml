@@ -28,13 +28,16 @@ portable-atomic = { version = "1.11.1", features = ["float"] }
 heapless = "0.9.1"
 
 [features]
-default = ["log", "std"]
+default = ["log", "std", "lss"]
 # Optional generic fallback; locks all atomic operations on CAS-less targets.
 atomic-critical-section = ["portable-atomic/critical-section"]
 std = ["critical-section/std", "zencan-common/std"]
 log = ["defmt-or-log/log", "zencan-common/log", "dep:log"]
 defmt = ["defmt-or-log/defmt", "zencan-common/defmt", "dep:defmt"]
 socketcan = ["zencan-common/socketcan", "std"]
+# The LSS slave, for configuring the node ID and bit rate over the bus. A node with a fixed node
+# ID can leave it out.
+lss = []
 
 # docs.rs-specific configuration
 [package.metadata.docs.rs]

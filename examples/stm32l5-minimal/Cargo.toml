@@ -14,7 +14,7 @@ fdcan = { version = "0.2.1", features = ["fdcan_g0_g4_l5"] }
 panic-halt = "1.0.0"
 portable-atomic = { version = "1.15.0", default-features = false, features = ["fallback", "unsafe-assume-single-core"] }
 stm32-metapac = { version = "18.0.0", features = ["stm32l552rc", "rt"] }
-zencan-node = { path = "../../zencan-node", default-features = false, features = ["defmt"] }
+zencan-node = { path = "../../zencan-node", default-features = false, features = ["defmt", "lss"] }
 
 [build-dependencies]
 zencan-build = { path = "../../zencan-build" }

@@ -6,7 +6,8 @@
 //! use it on std environments, for example on linux using socketcan. It provides the following
 //! features:
 //!
-//! * Implements the *LSS* protocol for node discovery and configuration.
+//! * Implements the *LSS* protocol for node discovery and configuration (the `lss` feature, on by
+//!   default).
 //! * Implements the *NMT* protocol for reporting and controlling the operating state of nodes.
 //! * Generates an *object dictionary* to represent all of the data which can be communicated on the
 //!   bus. This includes a number of standard communication objects, as well as application specific
@@ -196,6 +197,7 @@ mod bootloader;
 mod identity_object;
 #[doc(hidden)]
 pub mod init_cell;
+#[cfg(feature = "lss")]
 mod lss_slave;
 mod node;
 mod node_mbox;
