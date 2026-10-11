@@ -227,7 +227,7 @@ pub use node::{Callbacks, Node, NodeCallbacks};
 pub use node_mbox::NodeMbox;
 pub use node_state::{NmtStateAccess, NodeState, ResetScope};
 pub use persist::{restore_stored_comm_objects, restore_stored_objects};
-pub use sdo_server::SDO_BUFFER_SIZE;
+pub use sdo_server::{sdo_buffer_size, SDO_BUFFER_SIZE};
 
 /// Include the code generated for the object dict in the build script.
 #[macro_export]

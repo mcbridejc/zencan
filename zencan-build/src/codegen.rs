@@ -92,6 +92,27 @@ fn validate_pdo_defaults(
     Ok(())
 }
 
+/// The size in bytes of the largest sub-object in the dictionary
+///
+/// Domains report a size of 0, as they have no fixed size.
+fn largest_sub_object(specs: &[crate::object_build_spec::ObjectBuildSpec]) -> usize {
+    use crate::object_build_spec::ObjectBuildShape;
+    specs
+        .iter()
+        .map(|spec| match &spec.shape {
+            ObjectBuildShape::Var(var) => var.value.data_type.size(),
+            ObjectBuildShape::Array(array) => array.data_type().size(),
+            ObjectBuildShape::Record(record) => record
+                .subs
+                .values()
+                .map(|sub| sub.spec.data_type.size())
+                .max()
+                .unwrap_or(0),
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
     let mut specs = dev.elaborate()?;
     specs.sort_by_key(|s| s.index);
@@ -153,6 +174,7 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
     let count = entries.len();
     let nr = dev.pdos.num_rpdo as usize;
     let nt = dev.pdos.num_tpdo as usize;
+    let largest = largest_sub_object(&specs);
     let rp = (0..nr).map(|i| {
         let defaults = pdo_default(dev.pdos.rpdo_defaults.get(&i));
         quote!(rpdo_ptr.add(#i).write(Pdo::new(&LOOKUP, &NMT, &rpdo_data[#i], #defaults));)
@@ -164,7 +186,7 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
     Ok(quote! {
         #[allow(non_snake_case, unused_imports, dead_code, clippy::redundant_closure)]
         mod objects {
-            use zencan_node::{NodeState, NodeMbox, SDO_BUFFER_SIZE};
+            use zencan_node::{NodeState, NodeMbox};
             use zencan_node::common::{i24, u24, can::CanMessage, protocol::AbortCode};
             use zencan_node::common::object_model::{TimeOfDay, TimeDifference};
             use zencan_node::object_dict::*;
@@ -182,6 +204,7 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
             static NODE_STATE: StaticStorage<NodeState<'static>> = StaticStorage::new();
             static NODE_MBOX: StaticStorage<NodeMbox> = StaticStorage::new();
             // This buffer is owned exclusively by the mailbox.
+            const SDO_BUFFER_SIZE: usize = zencan_node::sdo_buffer_size(#largest);
             static mut SDO_BUFFER: [u8; SDO_BUFFER_SIZE] = [0; SDO_BUFFER_SIZE];
             // Only pointer representation bytes are formed here, never references
             // to uninitialized objects. This table requires no runtime writes.
