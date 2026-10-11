@@ -8,7 +8,7 @@ use zencan_common::protocol::{LssIdentity, LSS_RESP_ID};
 use zencan_common::{
     can::{CanId, CanMessage},
     object_model::object_ids,
-    protocol::{Heartbeat, NmtCommandSpecifier, NmtState, SyncObject, ZencanMessage},
+    protocol::{Heartbeat, NmtCommand, NmtCommandSpecifier, NmtState, SyncObject},
     AtomicCell, NodeId,
 };
 
@@ -435,7 +435,8 @@ impl<C: NodeCallbacks> Node<'_, C> {
 
         // Process NMT
         if let Some(msg) = self.mbox.read_nmt_mbox() {
-            if let Ok(ZencanMessage::NmtCommand(cmd)) = msg.try_into() {
+            // The mailbox only holds NMT commands, so parse just that rather than every message type
+            if let Ok(cmd) = NmtCommand::try_from(msg) {
                 self.message_count += 1;
                 // We cannot respond to NMT commands if we do not have a valid node ID
 
