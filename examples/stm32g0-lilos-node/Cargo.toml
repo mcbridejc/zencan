@@ -8,7 +8,7 @@ edition = "2024"
 
 [dependencies]
 # Local
-zencan-node = { path = "../../zencan-node", default-features = false, features = ["defmt", "atomic-critical-section", "lss"]}
+zencan-node = { path = "../../zencan-node", default-features = false, features = ["defmt", "atomic-critical-section", "lss", "sdo-block"]}
 
 # External
 cortex-m = { version = "0.7.4", features=["critical-section-single-core"] }

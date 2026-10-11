@@ -17,7 +17,7 @@ zencan-macro.workspace = true
 zencan-common = { workspace = true, default-features = false }
 
 # External
-crc16.workspace = true
+crc16 = { workspace = true, optional = true }
 critical-section.workspace = true
 defmt = { workspace = true, optional = true }
 defmt-or-log.workspace = true
@@ -28,7 +28,7 @@ portable-atomic = { version = "1.11.1", features = ["float"] }
 heapless = "0.9.1"
 
 [features]
-default = ["log", "std", "lss"]
+default = ["log", "std", "lss", "sdo-block"]
 # Optional generic fallback; locks all atomic operations on CAS-less targets.
 atomic-critical-section = ["portable-atomic/critical-section"]
 std = ["critical-section/std", "zencan-common/std"]
@@ -38,6 +38,9 @@ socketcan = ["zencan-common/socketcan", "std"]
 # The LSS slave, for configuring the node ID and bit rate over the bus. A node with a fixed node
 # ID can leave it out.
 lss = []
+# SDO block transfer, for faster transfers of large objects. Without it, an SDO client uses
+# segmented transfer, which every client supports.
+sdo-block = ["dep:crc16"]
 
 # docs.rs-specific configuration
 [package.metadata.docs.rs]

@@ -237,7 +237,9 @@ mod tests {
     use core::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    use zencan_common::protocol::{BlockSegment, SdoRequest, SDO_REQ_BASE};
+    #[cfg(feature = "sdo-block")]
+    use zencan_common::protocol::BlockSegment;
+    use zencan_common::protocol::{SdoRequest, SDO_REQ_BASE};
 
     use crate::object_dict::ODEntry;
 
@@ -309,21 +311,24 @@ mod tests {
         assert!(process_flag.swap(false, Ordering::Relaxed));
         assert_eq!(Some(req), obj.mbox.sdo_comms().take_request());
 
-        // When SDO server is in the middle of a block upload, message should not trigger a process
-        // notify but the data should be stored in the sdo buffer
-        obj.mbox.sdo_comms().begin_block_download(100);
-        let req = BlockSegment {
-            c: false,
-            seqnum: 1,
-            data: [1, 2, 3, 4, 5, 6, 7],
-        };
-        assert!(obj
-            .mbox
-            .store_message(req.to_can_message(SDO_RX_COB_ID))
-            .is_ok());
-        assert_eq!(false, process_flag.swap(false, Ordering::Relaxed));
-        assert_eq!(None, obj.mbox.sdo_comms().take_request());
-        let buf = obj.mbox.sdo_comms().borrow_buffer();
-        assert_eq!([1, 2, 3, 4, 5, 6, 7], buf[0..7]);
+        #[cfg(feature = "sdo-block")]
+        {
+            // When SDO server is in the middle of a block upload, message should not trigger a process
+            // notify but the data should be stored in the sdo buffer
+            obj.mbox.sdo_comms().begin_block_download(100);
+            let req = BlockSegment {
+                c: false,
+                seqnum: 1,
+                data: [1, 2, 3, 4, 5, 6, 7],
+            };
+            assert!(obj
+                .mbox
+                .store_message(req.to_can_message(SDO_RX_COB_ID))
+                .is_ok());
+            assert_eq!(false, process_flag.swap(false, Ordering::Relaxed));
+            assert_eq!(None, obj.mbox.sdo_comms().take_request());
+            let buf = obj.mbox.sdo_comms().borrow_buffer();
+            assert_eq!([1, 2, 3, 4, 5, 6, 7], buf[0..7]);
+        }
     }
 }

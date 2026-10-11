@@ -8,7 +8,7 @@ edition = "2024"
 
 [dependencies]
 # Local
-zencan-node = { path = "../../zencan-node", default-features = false, features = ["log", "lss"] }
+zencan-node = { path = "../../zencan-node", default-features = false, features = ["log", "lss", "sdo-block"] }
 
 # External
 esp-bootloader-esp-idf = "0.5.0"
