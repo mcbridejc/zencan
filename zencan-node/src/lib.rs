@@ -223,7 +223,7 @@ pub use bootloader::{BootloaderInfo, BootloaderSection, BootloaderSectionCallbac
 pub use common::open_socketcan;
 pub use identity_object::IdentityObject;
 pub use node::{Callbacks, Node};
-pub use node_frame::{NodeFrame, PdoPayload};
+pub use node_frame::{NodeFrame, PdoBuffer, PdoPayload};
 pub use node_mbox::NodeMbox;
 pub use node_state::{NmtStateAccess, NodeState, ResetScope};
 pub use persist::{restore_stored_comm_objects, restore_stored_objects};

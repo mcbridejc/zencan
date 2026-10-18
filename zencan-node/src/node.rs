@@ -15,7 +15,7 @@ use zencan_common::{
 
 use crate::{
     lss_slave::{LssConfig, LssSlave},
-    node_frame::{NodeFrame, PdoPayload},
+    node_frame::NodeFrame,
     node_mbox::NodeMbox,
     node_state::NmtStateAccess as _,
     object_dict::{ODEntry, ObjectDictionary, ObjectLookup},
@@ -396,7 +396,7 @@ impl<'a, F: NodeFrame> Node<'a, F> {
                     continue;
                 }
                 if let Some(new_data) = rpdo.data.buffered_value.take() {
-                    rpdo.store_pdo_data(new_data.as_slice());
+                    rpdo.store_pdo_data(&new_data);
                     if let Some(cb) = &mut self.callbacks.pdo_received {
                         let mapping: heapless::Vec<MappingEntry<'a>, N_MAPPING_PARAMS> =
                             rpdo.data.mapping_params[..rpdo.data.valid_maps.load().into()]
