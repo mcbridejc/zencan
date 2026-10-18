@@ -1,7 +1,9 @@
 //! Implements node state struct
+use zencan_common::can::CanMessage;
 use zencan_common::protocol::NmtState;
 use zencan_common::AtomicCell;
 
+use crate::node_frame::NodeFrame;
 use crate::object_dict::ObjectFlagSync;
 
 use crate::pdo::Pdo;
@@ -24,12 +26,14 @@ impl NmtStateAccess for AtomicCell<NmtState> {
 /// The node state has to get instantiated (statically) by zencan-build, based on the device config
 /// via the [`NodeStateAccess`] trait.
 /// file. It is then provided to the node by the application when it is instantiated, and accessed
+///
+/// `F` is the CAN frame type of the node's PDOs, [`CanMessage`] by default.
 #[allow(missing_debug_implementations)]
-pub struct NodeState<'a> {
+pub struct NodeState<'a, F: NodeFrame = CanMessage> {
     /// Pdo control objects for receive PDOs
-    rpdos: &'a [Pdo<'a>],
+    rpdos: &'a [Pdo<'a, F>],
     /// Pdo control objects for transmit PDOs
-    tpdos: &'a [Pdo<'a>],
+    tpdos: &'a [Pdo<'a, F>],
     /// A global flag used by all objects to synchronize their event flag A/B swapping
     object_flag_sync: ObjectFlagSync,
     /// State shared between the [`StorageCommandObject`](crate::storage::StorageCommandObject) and
@@ -39,15 +43,15 @@ pub struct NodeState<'a> {
     nmt_state: AtomicCell<NmtState>,
 }
 
-impl NmtStateAccess for NodeState<'_> {
+impl<F: NodeFrame> NmtStateAccess for NodeState<'_, F> {
     fn nmt_state(&self) -> NmtState {
         self.nmt_state.load()
     }
 }
 
-impl<'a> NodeState<'a> {
+impl<'a, F: NodeFrame> NodeState<'a, F> {
     /// Create a new NodeState object
-    pub const fn new(rpdos: &'a [Pdo<'a>], tpdos: &'a [Pdo<'a>]) -> Self {
+    pub const fn new(rpdos: &'a [Pdo<'a, F>], tpdos: &'a [Pdo<'a, F>]) -> Self {
         let object_flag_sync = ObjectFlagSync::new();
         let storage_context = StorageContext::new();
 
@@ -61,12 +65,12 @@ impl<'a> NodeState<'a> {
     }
 
     /// Access the RPDOs as a const function
-    pub const fn rpdos(&self) -> &'a [Pdo<'a>] {
+    pub const fn rpdos(&self) -> &'a [Pdo<'a, F>] {
         self.rpdos
     }
 
     /// Access the TPDOs as a const function
-    pub const fn tpdos(&self) -> &'a [Pdo<'a>] {
+    pub const fn tpdos(&self) -> &'a [Pdo<'a, F>] {
         self.tpdos
     }
 

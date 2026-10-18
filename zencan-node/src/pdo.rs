@@ -41,6 +41,7 @@
 //! ```
 
 use crate::{
+    node_frame::{NodeFrame, PdoPayload},
     node_state::NmtStateAccess,
     object_dict::{
         ConstField, ObjectAccess, ObjectLookup, ProvidesSubObjects, SubInfo, SubObjectAccess,
@@ -210,8 +211,10 @@ impl<'a> PdoDefaults<'a> {
 }
 
 /// Mutable PDO storage, constructed once and reset through its cells.
+///
+/// `F` is the CAN frame type the PDO is exchanged in, [`CanMessage`] by default.
 #[allow(missing_debug_implementations)]
-pub struct PdoData<'a> {
+pub struct PdoData<'a, F: NodeFrame = CanMessage> {
     /// Current node ID assignment; Unconfigured after default reset.
     node_id: AtomicCell<NodeId>,
     /// The COB-ID used to send or receive this PDO
@@ -230,7 +233,7 @@ pub struct PdoData<'a> {
     /// Tracks the number of sync signals since this was last sent or received
     sync_counter: AtomicCell<u8>,
     /// The last received data value for an RPDO, or ready to transmit data for a TPDO
-    pub buffered_value: AtomicCell<Option<heapless::Vec<u8, 8>>>,
+    pub buffered_value: AtomicCell<Option<F::PdoPayload>>,
     /// Indicates how many of the values in mapping_params are valid
     ///
     /// This represents sub0 for the mapping object
@@ -241,15 +244,18 @@ pub struct PdoData<'a> {
     pub(crate) mapping_params: [AtomicCell<StoredMappingEntry<'a>>; N_MAPPING_PARAMS],
 }
 
-impl Default for PdoData<'_> {
-    fn default() -> Self {
-        Self::new()
+impl<'a> PdoData<'a> {
+    /// Construct disabled classic CAN PDO storage with no mappings or buffered frame.
+    ///
+    /// Use [`PdoData::default`] to construct storage for another frame type.
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
-impl<'a> PdoData<'a> {
+impl<F: NodeFrame> Default for PdoData<'_, F> {
     /// Construct disabled PDO storage with no mappings or buffered frame.
-    pub fn new() -> Self {
+    fn default() -> Self {
         let cob_id = AtomicCell::new(None);
         let node_id = AtomicCell::new(NodeId::Unconfigured);
         let valid = AtomicCell::new(false);
@@ -274,8 +280,10 @@ impl<'a> PdoData<'a> {
     }
 }
 /// Represents a single PDO state
+///
+/// `F` is the CAN frame type the PDO is exchanged in, [`CanMessage`] by default.
 #[allow(missing_debug_implementations)]
-pub struct Pdo<'a> {
+pub struct Pdo<'a, F: NodeFrame = CanMessage> {
     /// The object dictionary
     ///
     /// PDOs have to access other objects and use this to do so
@@ -283,17 +291,17 @@ pub struct Pdo<'a> {
     /// Accessor for the node NMT state
     pub nmt_state: &'a dyn NmtStateAccess,
     /// The allocated storage for associated data
-    pub data: &'a PdoData<'a>,
+    pub data: &'a PdoData<'a, F>,
     /// The default data for the PDO
     pub defaults: &'a PdoDefaults<'a>,
 }
 
-impl<'a> Pdo<'a> {
+impl<'a, F: NodeFrame> Pdo<'a, F> {
     /// Create a new PDO object
     pub const fn new(
         od: &'a dyn ObjectLookup<'a>,
         nmt_state: &'a dyn NmtStateAccess,
-        data: &'a PdoData<'a>,
+        data: &'a PdoData<'a, F>,
         defaults: &'a PdoDefaults<'a>,
     ) -> Self {
         Self {
@@ -348,13 +356,13 @@ impl<'a> Pdo<'a> {
         })
     }
 
-    pub(crate) fn receive_frame(&self, msg: &CanMessage) -> bool {
+    pub(crate) fn receive_frame(&self, msg: &F) -> bool {
         critical_section::with(|cs| {
             if self.data.valid.borrow(cs).get() && self.cob_id_in(cs) == msg.id() {
                 self.data
                     .buffered_value
                     .borrow(cs)
-                    .set(Some(heapless::Vec::from_slice(msg.data()).unwrap()));
+                    .set(Some(F::PdoPayload::from_slice(msg.data())));
                 true
             } else {
                 false
@@ -362,13 +370,14 @@ impl<'a> Pdo<'a> {
         })
     }
 
-    pub(crate) fn take_frame(&self) -> Option<CanMessage> {
+    pub(crate) fn take_frame(&self) -> Option<F> {
         critical_section::with(|cs| {
             self.data
                 .buffered_value
                 .borrow(cs)
                 .take()
-                .map(|data| CanMessage::new(self.cob_id_in(cs), &data))
+                .map(|data| CanMessage::new(self.cob_id_in(cs), data.as_slice()))
+                .and_then(|msg| F::try_from(msg).ok())
         })
     }
 
@@ -513,7 +522,7 @@ impl<'a> Pdo<'a> {
         // Unwrap: ensured above that data cannot be longer than 8 bytes
         self.data
             .buffered_value
-            .store(Some(heapless::Vec::from_slice(&data[0..offset]).unwrap()));
+            .store(Some(F::PdoPayload::from_slice(&data[0..offset])));
     }
 
     /// Lookup a PDO mapped object and create a StoredMappingEntry if it is valid
@@ -553,6 +562,10 @@ impl<'a> Pdo<'a> {
 
     /// Restore PDO defaults and clear the node ID to Unconfigured.
     pub fn init_defaults(&'a self) {
+        F::pdo_init_defaults(self)
+    }
+
+    pub(crate) fn init_defaults_impl(&'a self) {
         let mut mappings = [StoredMappingEntry::empty(); N_MAPPING_PARAMS];
         let mut bytes = 0usize;
         let mut valid = self.defaults.mappings.len() <= N_MAPPING_PARAMS;
@@ -602,12 +615,12 @@ impl<'a> Pdo<'a> {
     }
 }
 
-struct PdoCobSubObject<'a> {
-    pdo: &'a Pdo<'a>,
+struct PdoCobSubObject<'a, F: NodeFrame> {
+    pdo: &'a Pdo<'a, F>,
 }
 
-impl<'a> PdoCobSubObject<'a> {
-    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+impl<'a, F: NodeFrame> PdoCobSubObject<'a, F> {
+    pub const fn new(pdo: &'a Pdo<'a, F>) -> Self {
         Self { pdo }
     }
 
@@ -619,7 +632,7 @@ impl<'a> PdoCobSubObject<'a> {
     }
 }
 
-impl SubObjectAccess for PdoCobSubObject<'_> {
+impl<F: NodeFrame> SubObjectAccess for PdoCobSubObject<'_, F> {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         let value = critical_section::with(|cs| {
             let cob_id = self.pdo.cob_id_in(cs);
@@ -682,17 +695,17 @@ impl SubObjectAccess for PdoCobSubObject<'_> {
     }
 }
 
-struct PdoTransmissionTypeSubObject<'a> {
-    pdo: &'a Pdo<'a>,
+struct PdoTransmissionTypeSubObject<'a, F: NodeFrame> {
+    pdo: &'a Pdo<'a, F>,
 }
 
-impl<'a> PdoTransmissionTypeSubObject<'a> {
-    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+impl<'a, F: NodeFrame> PdoTransmissionTypeSubObject<'a, F> {
+    pub const fn new(pdo: &'a Pdo<'a, F>) -> Self {
         Self { pdo }
     }
 }
 
-impl SubObjectAccess for PdoTransmissionTypeSubObject<'_> {
+impl<F: NodeFrame> SubObjectAccess for PdoTransmissionTypeSubObject<'_, F> {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         if offset > 1 {
             return Ok(0);
@@ -723,14 +736,14 @@ impl SubObjectAccess for PdoTransmissionTypeSubObject<'_> {
 
 /// Implements a PDO communications config object for both RPDOs and TPDOs
 #[allow(missing_debug_implementations)]
-pub struct PdoCommObject<'a> {
-    cob: PdoCobSubObject<'a>,
-    transmission_type: PdoTransmissionTypeSubObject<'a>,
+pub struct PdoCommObject<'a, F: NodeFrame = CanMessage> {
+    cob: PdoCobSubObject<'a, F>,
+    transmission_type: PdoTransmissionTypeSubObject<'a, F>,
 }
 
-impl<'a> PdoCommObject<'a> {
+impl<'a, F: NodeFrame> PdoCommObject<'a, F> {
     /// Create a new PdoCommObject
-    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+    pub const fn new(pdo: &'a Pdo<'a, F>) -> Self {
         let cob = PdoCobSubObject::new(pdo);
         let transmission_type = PdoTransmissionTypeSubObject::new(pdo);
         Self {
@@ -740,7 +753,7 @@ impl<'a> PdoCommObject<'a> {
     }
 }
 
-impl ProvidesSubObjects for PdoCommObject<'_> {
+impl<F: NodeFrame> ProvidesSubObjects for PdoCommObject<'_, F> {
     fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
         match sub {
             0 => Some((
@@ -768,18 +781,18 @@ impl ProvidesSubObjects for PdoCommObject<'_> {
 
 /// Implements a PDO mapping config object for both TPDOs and RPDOs
 #[allow(missing_debug_implementations)]
-pub struct PdoMappingObject<'a> {
-    pdo: &'a Pdo<'a>,
+pub struct PdoMappingObject<'a, F: NodeFrame = CanMessage> {
+    pdo: &'a Pdo<'a, F>,
 }
 
-impl<'a> PdoMappingObject<'a> {
+impl<'a, F: NodeFrame> PdoMappingObject<'a, F> {
     /// Create a new PdoMappingObject
-    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+    pub const fn new(pdo: &'a Pdo<'a, F>) -> Self {
         Self { pdo }
     }
 }
 
-impl ObjectAccess for PdoMappingObject<'_> {
+impl<F: NodeFrame> ObjectAccess for PdoMappingObject<'_, F> {
     fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         if sub == 0 {
             if offset < 1 && !buf.is_empty() {

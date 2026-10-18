@@ -198,6 +198,7 @@ mod identity_object;
 pub mod init_cell;
 mod lss_slave;
 mod node;
+mod node_frame;
 mod node_mbox;
 mod node_state;
 pub mod object_dict;
@@ -222,6 +223,7 @@ pub use bootloader::{BootloaderInfo, BootloaderSection, BootloaderSectionCallbac
 pub use common::open_socketcan;
 pub use identity_object::IdentityObject;
 pub use node::{Callbacks, Node};
+pub use node_frame::{NodeFrame, PdoPayload};
 pub use node_mbox::NodeMbox;
 pub use node_state::{NmtStateAccess, NodeState, ResetScope};
 pub use persist::{restore_stored_comm_objects, restore_stored_objects};
