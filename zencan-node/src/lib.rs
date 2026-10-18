@@ -142,6 +142,11 @@
 //! zencan::get_od().node_mbox().store_message(msg).ok();
 //! ```
 //!
+//! For a CAN FD node (`frame_format = "fd"` in the device config), the mailbox exchanges
+//! [`CanFdMessage`](common::can::CanFdMessage) frames instead. The generated module exports the
+//! frame type as `Frame`, so a driver written as `zencan::Frame::new(id, data)` works for both
+//! formats. See [Transmitting CAN FD frames](#transmitting-can-fd-frames).
+//!
 //! Outgoing messages can be read from the mbox using the [`NodeMbox::next_transmit_message`]
 //! function. A callback can be registered (see [`NodeMbox::set_transmit_notify_callback`]) to be
 //! notified when new messages are queued for transmission -- this can be used to e.g. push the
@@ -166,6 +171,15 @@
 //!     }
 //! }
 //! ```
+//!
+//! ### Transmitting CAN FD frames
+//!
+//! A CAN FD payload must be padded to a legal CAN FD length (0 to 8, 12, 16, 20, 24, 32, 48 or 64
+//! bytes) before transmission. Drivers should transmit
+//! [`padded_data()`](common::can::CanFrame::padded_data), which is
+//! [`on_wire_len()`](common::can::CanFrame::on_wire_len) bytes long, and request bit rate switching
+//! as given by [`CanFdMessage::brs`](common::can::CanFdMessage::brs). For classic frames these are
+//! just the frame's data. See `docs/canfd.md` in the repository for details.
 //!
 //! ## Calling periodic process method
 //!
