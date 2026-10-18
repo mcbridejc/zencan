@@ -146,10 +146,11 @@ impl SdoComms {
     ///
     /// Returns true if the received message demands further handling in a process call
     pub fn handle_req(&self, msg_data: &[u8]) -> bool {
-        // Ignore invalid lengths
-        if msg_data.len() != 8 {
+        // Ignore frames too short for an SDO message. Longer frames are accepted, so that a request
+        // padded in a CAN FD frame is understood; only the first 8 bytes are significant.
+        let Some(msg_data) = msg_data.get(..8) else {
             return false;
-        }
+        };
 
         match self.state.load() {
             ReceiverState::Normal => match msg_data.try_into() {
@@ -173,7 +174,7 @@ impl SdoComms {
                     }
                 }
 
-                // Unwrap: Can only fail when len is != 8, and that is checked above
+                // Unwrap: Can only fail when len is != 8, and that is ensured above
                 let segment = BlockSegment::try_from(msg_data).unwrap();
                 if segment.seqnum == 0 {
                     // seqnum 0 isn't allowed. Ignore it.
