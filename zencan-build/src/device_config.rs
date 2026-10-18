@@ -24,6 +24,10 @@
 //! product_code = 1032
 //! revision_number = 1
 //!
+//! # Selects the CAN frame format: "classic" (the default when the section is absent) or "fd"
+//! [can]
+//! frame_format = "classic"
+//!
 //! # Defines the number of PDOs the device will support, and their default configurations
 //! [pdos]
 //! num_rpdo = 4
@@ -50,6 +54,17 @@
 //! default_value = [0, 0, 0, 0]
 //! pdo_mapping = "tpdo"
 //! ```
+//!
+//! # CAN FD
+//!
+//! Setting `frame_format = "fd"` in the `[can]` section generates a node exchanging
+//! [`CanFdMessage`](zencan_common::can::CanFdMessage) frames instead of
+//! [`CanMessage`](zencan_common::can::CanMessage): PDOs may then carry up to 64 bytes instead of 8.
+//! The generated module exports the frame type as `Frame`, for use by the application and its CAN
+//! driver.
+//!
+//! CAN FD has no remote frames, so every default PDO of a CAN FD node must set
+//! `rtr_disabled = true`.
 //!
 //! # Object Namespaces
 //!
@@ -82,7 +97,8 @@
 //! When read, sub-object 1 will return a 1 if a storage callback has been provided by the
 //! application, indicating that saving is supported.
 //!
-//! To trigger a save, write a u32 with the [magic value](crate::object_model::values::SAVE_CMD).
+//! To trigger a save, write a u32 with the
+//! [magic value](zencan_common::object_model::values::SAVE_CMD).
 //!
 //! ## 0x1017 - Heartbeat Producer Time
 //!
@@ -227,6 +243,36 @@ pub enum AutoStartConfig {
     Unsupported,
 }
 
+/// The CAN frame format a node uses
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FrameFormat {
+    /// Classic CAN: frames carry up to 8 bytes, and may be remote frames
+    #[default]
+    Classic,
+    /// CAN FD: frames carry up to 64 bytes, and there are no remote frames
+    Fd,
+}
+
+impl FrameFormat {
+    /// The maximum number of data bytes in one frame
+    pub const fn max_len(&self) -> usize {
+        match self {
+            FrameFormat::Classic => zencan_common::can::CLASSIC_MAX_LEN,
+            FrameFormat::Fd => zencan_common::can::FD_MAX_LEN,
+        }
+    }
+}
+
+/// Configuration of the CAN bus interface
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanConfig {
+    /// The frame format used by the node. Defaults to classic CAN.
+    #[serde(default)]
+    pub frame_format: FrameFormat,
+}
+
 /// Represents the configuration parameters for a single PDO
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -241,6 +287,8 @@ pub struct PdoDefaultConfig {
     /// Indicates if this PDO is enabled
     pub enabled: bool,
     /// If set, this PDO will not respond to requests
+    ///
+    /// Must be set for CAN FD nodes, as CAN FD has no remote frames.
     #[serde(default)]
     pub rtr_disabled: bool,
     /// List of mapping specifying what sub objects are mapped to this PDO
@@ -396,6 +444,10 @@ pub struct DeviceConfig {
 
     /// Configures the identity object on the device
     pub identity: IdentityConfig,
+
+    /// Configures the CAN interface, e.g. to select CAN FD
+    #[serde(default)]
+    pub can: CanConfig,
 
     /// Configure PDO settings
     #[serde(default)]

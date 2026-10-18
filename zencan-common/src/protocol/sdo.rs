@@ -150,7 +150,8 @@ impl TryFrom<&[u8]> for BlockSegment {
     type Error = ();
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        if value.len() != 8 {
+        // Longer frames are accepted, so that a segment padded in a CAN FD frame is understood
+        if value.len() < 8 {
             return Err(());
         }
         let c = (value[0] & (1 << 7)) != 0;
@@ -1095,5 +1096,27 @@ impl SdoResponse {
     /// Convert the response to a [CanMessage] using the provided COB ID
     pub fn to_can_message(self, id: CanId) -> CanMessage {
         CanMessage::new(id, &self.to_bytes())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_block_segment_length() {
+        let segment = BlockSegment {
+            c: true,
+            seqnum: 5,
+            data: [1, 2, 3, 4, 5, 6, 7],
+        };
+        let bytes = segment.to_bytes();
+        assert_eq!(Ok(segment), BlockSegment::try_from(&bytes[..]));
+        // A segment padded to 12 bytes in a CAN FD frame is still understood
+        let mut padded = [0; 12];
+        padded[..8].copy_from_slice(&bytes);
+        assert_eq!(Ok(segment), BlockSegment::try_from(&padded[..]));
+        // Truncated segments are rejected
+        assert_eq!(Err(()), BlockSegment::try_from(&bytes[..7]));
     }
 }

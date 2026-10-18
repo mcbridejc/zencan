@@ -22,4 +22,10 @@ fn main() {
         eprintln!("Error building node from example3_bootloader.toml: {}", e);
         std::process::exit(1);
     }
+    if let Err(e) =
+        zencan_build::build_node_from_device_config("EXAMPLE4", "device_configs/example4_fd.toml")
+    {
+        eprintln!("Error building node from example4_fd.toml: {}", e);
+        std::process::exit(1);
+    }
 }

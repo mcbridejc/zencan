@@ -1,0 +1,42 @@
+# The CAN FD variant of zencan_config.toml, used by the `fd` feature
+device_name = "zencan-minimal-fd"
+software_version = "v0.0.1"
+hardware_version = "rev1"
+heartbeat_period = 1000
+autostart = "enabled"
+
+[can]
+frame_format = "fd"
+
+[identity]
+vendor_id = 0xCAFE
+product_code = 0x0002
+revision_number = 1
+
+# A 64-byte TPDO, sent when an element of 0x2000 is flagged. CAN FD has no remote frames.
+[pdos.tpdo.0]
+enabled = true
+cob_id = 0x180
+add_node_id = true
+rtr_disabled = true
+transmission_type = 254
+mappings = [
+    { index = 0x2000, sub = 1, size = 64 },
+    { index = 0x2000, sub = 2, size = 64 },
+    { index = 0x2000, sub = 3, size = 64 },
+    { index = 0x2000, sub = 4, size = 64 },
+    { index = 0x2000, sub = 5, size = 64 },
+    { index = 0x2000, sub = 6, size = 64 },
+    { index = 0x2000, sub = 7, size = 64 },
+    { index = 0x2000, sub = 8, size = 64 },
+]
+
+[[objects]]
+index = 0x2000
+parameter_name = "Wide process data"
+object_type = "array"
+data_type = "uint64"
+access_type = "rw"
+array_size = 8
+default_value = [0, 0, 0, 0, 0, 0, 0, 0]
+pdo_mapping = "tpdo"

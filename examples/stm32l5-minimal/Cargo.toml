@@ -19,6 +19,11 @@ zencan-node = { path = "../../zencan-node", default-features = false, features =
 [build-dependencies]
 zencan-build = { path = "../../zencan-build" }
 
+[features]
+# Build the node for CAN FD, from zencan_config_fd.toml. The default build is classic CAN, and is the
+# one tracked for binary size.
+fd = []
+
 [profile.dev]
 codegen-units = 1
 debug = true

@@ -4,10 +4,43 @@ use crate::{pac, zencan};
 use critical_section::Mutex;
 use fdcan::{
     FdCan, NormalOperationMode,
-    config::{DataBitTiming, FdCanConfig, GlobalFilter, NominalBitTiming},
+    config::{DataBitTiming, FdCanConfig, FrameTransmissionConfig, GlobalFilter, NominalBitTiming},
     filter::{StandardFilter, StandardFilterSlot},
+    frame::FrameFormat,
 };
 use pac::interrupt;
+use zencan_node::common::can::CanFrame;
+
+/// The frame type of the node, selected by the device config
+use zencan::Frame;
+
+/// Classic CAN at 500 kbit/s
+#[cfg(not(feature = "fd"))]
+mod timing {
+    use super::*;
+
+    pub const FRAME_TRANSMIT: FrameTransmissionConfig = FrameTransmissionConfig::ClassicCanOnly;
+    pub const FRAME_FORMAT: FrameFormat = FrameFormat::Standard;
+    /// Unused in classic CAN
+    pub const DATA_SEG1: u8 = 13;
+    pub const DATA_SEG2: u8 = 2;
+    pub const DATA_SJW: u8 = 1;
+}
+
+/// CAN FD at 500 kbit/s in the arbitration phase and 1 Mbit/s in the data phase
+///
+/// With the 8 MHz kernel clock, the data bit is 8 time quanta with a 75% sample point. Faster data
+/// phases need transceiver delay compensation, which the fdcan crate does not configure yet.
+#[cfg(feature = "fd")]
+mod timing {
+    use super::*;
+
+    pub const FRAME_TRANSMIT: FrameTransmissionConfig = FrameTransmissionConfig::AllowFdCanAndBRS;
+    pub const FRAME_FORMAT: FrameFormat = FrameFormat::Fdcan;
+    pub const DATA_SEG1: u8 = 5;
+    pub const DATA_SEG2: u8 = 2;
+    pub const DATA_SJW: u8 = 2;
+}
 
 struct FdCan1;
 
@@ -28,13 +61,13 @@ pub fn init() {
     can.apply_config(
         FdCanConfig::default()
             .set_automatic_retransmit(false)
-            .set_frame_transmit(fdcan::config::FrameTransmissionConfig::ClassicCanOnly)
+            .set_frame_transmit(timing::FRAME_TRANSMIT)
             .set_data_bit_timing(DataBitTiming {
                 transceiver_delay_compensation: false,
                 prescaler,
-                seg1: NonZeroU8::new(13).unwrap(),
-                seg2: NonZeroU8::new(2).unwrap(),
-                sync_jump_width: NonZeroU8::new(1).unwrap(),
+                seg1: NonZeroU8::new(timing::DATA_SEG1).unwrap(),
+                seg2: NonZeroU8::new(timing::DATA_SEG2).unwrap(),
+                sync_jump_width: NonZeroU8::new(timing::DATA_SJW).unwrap(),
             })
             .set_nominal_bit_timing(NominalBitTiming {
                 prescaler: prescaler.into(),
@@ -85,15 +118,28 @@ fn transmit_can_messages(can: &mut FdCan<FdCan1, NormalOperationMode>) {
                 fdcan::id::StandardId::new(id).unwrap().into()
             }
         };
+        // CAN FD frames are padded to a legal CAN FD length; classic frames are sent as they are
         let header = fdcan::frame::TxFrameHeader {
-            len: msg.dlc,
-            frame_format: fdcan::frame::FrameFormat::Standard,
+            len: msg.on_wire_len() as u8,
+            frame_format: timing::FRAME_FORMAT,
             id,
-            bit_rate_switching: false,
+            bit_rate_switching: bit_rate_switching(&msg),
             marker: None,
         };
-        let _ = can.transmit(header, msg.data());
+        let _ = can.transmit(header, msg.padded_data());
     }
+}
+
+/// Classic CAN frames have no bit rate switch
+#[cfg(not(feature = "fd"))]
+fn bit_rate_switching(_msg: &Frame) -> bool {
+    false
+}
+
+/// Bit rate switching as requested by the frame (zencan requests it for all its frames)
+#[cfg(feature = "fd")]
+fn bit_rate_switching(msg: &Frame) -> bool {
+    msg.brs()
 }
 
 #[interrupt]
@@ -104,7 +150,7 @@ fn FDCAN1_IT0() {
 
     if can.has_interrupt(fdcan::interrupt::Interrupt::RxFifo0NewMsg) {
         can.clear_interrupt(fdcan::interrupt::Interrupt::RxFifo0NewMsg);
-        let mut buffer = [0u8; 8];
+        let mut buffer = [0u8; <Frame as CanFrame>::MAX_LEN];
         while let Ok(frame) = can.receive0(&mut buffer) {
             let frame = frame.unwrap();
             let id = match frame.id {
@@ -113,8 +159,7 @@ fn FDCAN1_IT0() {
                     zencan_node::common::can::CanId::extended(id.as_raw())
                 }
             };
-            let message =
-                zencan_node::common::can::CanMessage::new(id, &buffer[..frame.len as usize]);
+            let message = Frame::new(id, &buffer[..frame.len as usize]);
             zencan::get_od().node_mbox().store_message(message).ok();
         }
     }

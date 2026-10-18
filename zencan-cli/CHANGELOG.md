@@ -2,6 +2,14 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-cli crate.
 
+## Unreleased
+
+### Added
+
+- `--fd` flag for `zencan-cli` and `zencandump`, to open the socket in CAN FD mode and talk to CAN FD
+  nodes. `zencandump --fd` prints CAN FD frames, and decodes those of up to 8 bytes as CANopen
+  messages.
+
 ## v0.0.5 - 2026-09-04
 
 ### Added

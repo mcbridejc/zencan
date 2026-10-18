@@ -29,13 +29,16 @@ use zencan_client::{
 };
 
 #[cfg(target_os = "linux")]
-use zencan_client::open_socketcan;
+use zencan_client::{common::can::ClassicAdapter, open_socketcan, open_socketcan_fd};
 
 #[derive(Parser)]
 struct Args {
     /// Execute a single command
     #[arg(short, long)]
     command: Option<String>,
+    /// Open the socket in CAN FD mode, to talk to CAN FD nodes
+    #[arg(long)]
+    fd: bool,
     /// The CAN socket to connect to (e.g. 'can0' or 'vcan0')
     socket: String,
 }
@@ -506,12 +509,24 @@ async fn main() {
     env_logger::init();
     let args = Args::parse();
 
+    if args.fd {
+        // The client speaks classic CAN frames, which CANopen messages other than PDOs fit in
+        let (tx, rx) = open_socketcan_fd(&args.socket).expect("Failed to open bus socket");
+        run(
+            args,
+            BusManager::new(ClassicAdapter::new(tx), ClassicAdapter::new(rx)),
+        )
+        .await
+    } else {
+        let (tx, rx) = open_socketcan(&args.socket).expect("Failed to open bus socket");
+        run(args, BusManager::new(tx, rx)).await
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn run<S: AsyncCanSender + Sync + Send>(args: Args, mut manager: BusManager<S>) {
     let node_state = Arc::new(Mutex::new(0));
     let prompt = ZencanPrompt::new(&args.socket, node_state.clone());
-
-    #[cfg(target_os = "linux")]
-    let (tx, rx) = open_socketcan(&args.socket).expect("Failed to open bus socket");
-    let mut manager = BusManager::new(tx, rx);
 
     if let Some(cmd_string) = args.command {
         match parse_command(&cmd_string) {
