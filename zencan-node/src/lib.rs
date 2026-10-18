@@ -20,8 +20,11 @@
 //!
 //! ## Device Configuration
 //!
-//! A zencan node is configured using a [DeviceConfig](common::device_config::DeviceConfig) TOML
-//! file, see [common::device_config] module docs for more info.
+//! A zencan node is configured using a
+//! [DeviceConfig](https://docs.rs/zencan-build/latest/zencan_build/device_config/struct.DeviceConfig.html)
+//! TOML file, see the
+//! [`zencan_build::device_config`](https://docs.rs/zencan-build/latest/zencan_build/device_config/index.html)
+//! module docs for more info.
 //!
 //! ## Code Generation
 //!

@@ -23,9 +23,9 @@ impl NmtStateAccess for AtomicCell<NmtState> {
 
 /// The NodeState provides config-dependent storage to the [`Node`](crate::Node) object
 ///
-/// The node state has to get instantiated (statically) by zencan-build, based on the device config
-/// via the [`NodeStateAccess`] trait.
-/// file. It is then provided to the node by the application when it is instantiated, and accessed
+/// The node state is instantiated statically by the code zencan-build generates from the device
+/// config file. It is then provided to the node by the application when it is instantiated, and
+/// its NMT state is shared through the [`NmtStateAccess`] trait.
 ///
 /// `F` is the CAN frame type of the node's PDOs, [`CanMessage`] by default.
 #[allow(missing_debug_implementations)]

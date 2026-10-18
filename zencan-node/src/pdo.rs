@@ -5,7 +5,8 @@
 //! PDO default configuration can be controlled in the device config, so that PDOs may be mapped to
 //! certain object and enabled by default in a device. This is done in the `[pdos]` section of the
 //! config, which is defined by the
-//! [`PdoDefaultConfig`](crate::common::device_config::PdoDefaultConfig) struct.
+//! [`PdoDefaultConfig`](https://docs.rs/zencan-build/latest/zencan_build/device_config/struct.PdoDefaultConfig.html)
+//! struct.
 //!
 //! The default PDO COB ID may be specified as an absolute value, or it may be offset by the node ID
 //! at runtime.

@@ -97,7 +97,8 @@
 //! When read, sub-object 1 will return a 1 if a storage callback has been provided by the
 //! application, indicating that saving is supported.
 //!
-//! To trigger a save, write a u32 with the [magic value](crate::object_model::values::SAVE_CMD).
+//! To trigger a save, write a u32 with the
+//! [magic value](zencan_common::object_model::values::SAVE_CMD).
 //!
 //! ## 0x1017 - Heartbeat Producer Time
 //!
