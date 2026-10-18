@@ -1,0 +1,129 @@
+# A CAN FD node, exercising PDOs larger than a classic CAN frame
+device_name = "Example 4 FD"
+hardware_version = "v1.0.0"
+software_version = "v1.0.0"
+autostart = "disabled"
+
+[can]
+frame_format = "fd"
+
+[identity]
+vendor_id = 1234
+product_code = 12004
+revision_number = 1
+
+[pdos]
+num_rpdo = 2
+num_tpdo = 2
+
+# A full 64-byte TPDO. CAN FD has no remote frames, so RTR must be disabled.
+[pdos.tpdo.0]
+enabled = true
+cob_id = 0x180
+add_node_id = true
+rtr_disabled = true
+transmission_type = 254
+mappings = [
+    { index = 0x2000, sub = 1, size = 64 },
+    { index = 0x2000, sub = 2, size = 64 },
+    { index = 0x2000, sub = 3, size = 64 },
+    { index = 0x2000, sub = 4, size = 64 },
+    { index = 0x2000, sub = 5, size = 64 },
+    { index = 0x2000, sub = 6, size = 64 },
+    { index = 0x2000, sub = 7, size = 64 },
+    { index = 0x2000, sub = 8, size = 64 },
+]
+
+# A 10-byte TPDO, padded to a 12-byte frame on the wire
+[pdos.tpdo.1]
+enabled = true
+cob_id = 0x280
+add_node_id = true
+rtr_disabled = true
+transmission_type = 254
+mappings = [
+    { index = 0x2001, sub = 0, size = 64 },
+    { index = 0x2002, sub = 0, size = 16 },
+]
+
+# A full 64-byte RPDO
+[pdos.rpdo.0]
+enabled = true
+cob_id = 0x200
+add_node_id = true
+rtr_disabled = true
+transmission_type = 254
+mappings = [
+    { index = 0x2100, sub = 1, size = 64 },
+    { index = 0x2100, sub = 2, size = 64 },
+    { index = 0x2100, sub = 3, size = 64 },
+    { index = 0x2100, sub = 4, size = 64 },
+    { index = 0x2100, sub = 5, size = 64 },
+    { index = 0x2100, sub = 6, size = 64 },
+    { index = 0x2100, sub = 7, size = 64 },
+    { index = 0x2100, sub = 8, size = 64 },
+]
+
+# A 10-byte RPDO
+[pdos.rpdo.1]
+enabled = true
+cob_id = 0x300
+add_node_id = true
+rtr_disabled = true
+transmission_type = 254
+mappings = [
+    { index = 0x2101, sub = 0, size = 64 },
+    { index = 0x2102, sub = 0, size = 16 },
+]
+
+[[objects]]
+index = 0x2000
+parameter_name = "TPDO values"
+object_type = "array"
+data_type = "uint64"
+access_type = "rw"
+array_size = 8
+default_value = [0, 0, 0, 0, 0, 0, 0, 0]
+pdo_mapping = "tpdo"
+
+[[objects]]
+index = 0x2001
+parameter_name = "TPDO u64"
+object_type = "var"
+data_type = "uint64"
+access_type = "rw"
+pdo_mapping = "tpdo"
+
+[[objects]]
+index = 0x2002
+parameter_name = "TPDO u16"
+object_type = "var"
+data_type = "uint16"
+access_type = "rw"
+pdo_mapping = "tpdo"
+
+[[objects]]
+index = 0x2100
+parameter_name = "RPDO values"
+object_type = "array"
+data_type = "uint64"
+access_type = "rw"
+array_size = 8
+default_value = [0, 0, 0, 0, 0, 0, 0, 0]
+pdo_mapping = "rpdo"
+
+[[objects]]
+index = 0x2101
+parameter_name = "RPDO u64"
+object_type = "var"
+data_type = "uint64"
+access_type = "rw"
+pdo_mapping = "rpdo"
+
+[[objects]]
+index = 0x2102
+parameter_name = "RPDO u16"
+object_type = "var"
+data_type = "uint16"
+access_type = "rw"
+pdo_mapping = "rpdo"

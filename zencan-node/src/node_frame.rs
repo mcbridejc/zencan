@@ -6,7 +6,11 @@ use zencan_common::{
     NodeId,
 };
 
-use crate::{object_dict::ObjectDictionary, pdo::Pdo, Callbacks, Node, NodeMbox, NodeState};
+use crate::{
+    object_dict::ObjectDictionary,
+    pdo::{Pdo, PdoData},
+    Callbacks, Node, NodeMbox, NodeState,
+};
 
 mod sealed {
     pub trait Sealed {}
@@ -45,6 +49,9 @@ pub trait NodeFrame: CanFrame + TryFrom<CanMessage> + sealed::Sealed + 'static {
 
     #[doc(hidden)]
     fn mbox_next_transmit_message(mbox: &NodeMbox<Self>) -> Option<Self>;
+
+    #[doc(hidden)]
+    fn pdo_data_default<'a>() -> PdoData<'a, Self>;
 
     #[doc(hidden)]
     fn pdo_init_defaults<'a>(pdo: &'a Pdo<'a, Self>);
@@ -144,6 +151,10 @@ macro_rules! impl_node_frame {
 
             fn mbox_next_transmit_message(mbox: &NodeMbox<Self>) -> Option<Self> {
                 mbox.next_transmit_message_impl()
+            }
+
+            fn pdo_data_default<'a>() -> PdoData<'a, Self> {
+                PdoData::default_impl()
             }
 
             fn pdo_init_defaults<'a>(pdo: &'a Pdo<'a, Self>) {

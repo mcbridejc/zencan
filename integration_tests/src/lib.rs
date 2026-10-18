@@ -7,6 +7,10 @@ pub mod object_dict2 {
 pub mod object_dict3 {
     zencan_node::include_modules!(EXAMPLE3);
 }
+/// A CAN FD node
+pub mod object_dict4 {
+    zencan_node::include_modules!(EXAMPLE4);
+}
 pub mod sim_bus;
 pub mod utils;
 

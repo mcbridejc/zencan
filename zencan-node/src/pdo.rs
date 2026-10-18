@@ -264,6 +264,12 @@ impl<'a> PdoData<'a> {
 impl<F: NodeFrame> Default for PdoData<'_, F> {
     /// Construct disabled PDO storage with no mappings or buffered frame.
     fn default() -> Self {
+        F::pdo_data_default()
+    }
+}
+
+impl<F: NodeFrame> PdoData<'_, F> {
+    pub(crate) fn default_impl() -> Self {
         let cob_id = AtomicCell::new(None);
         let node_id = AtomicCell::new(NodeId::Unconfigured);
         let valid = AtomicCell::new(false);

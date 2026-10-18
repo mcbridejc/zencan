@@ -1,6 +1,6 @@
 //! Assemble a dictionary from per-object generators.
 use crate::{
-    device_config::{DeviceConfig, PdoDefaultConfig},
+    device_config::{DeviceConfig, FrameFormat, PdoDefaultConfig},
     errors::CompileError,
     object_build_spec::ObjectImplementation,
     system_objects::{
@@ -52,10 +52,26 @@ fn validate_pdo_defaults(
             {
                 return Err(invalid("COB-ID exceeds the CAN identifier range"));
             }
-            if cfg.mappings.len() > 8
-                || cfg.mappings.iter().map(|m| m.size as usize).sum::<usize>() > 64
-            {
-                return Err(invalid("mappings exceed one CAN frame"));
+            let mapped_bits = cfg.mappings.iter().map(|m| m.size as usize).sum::<usize>();
+            match dev.can.frame_format {
+                FrameFormat::Classic => {
+                    if cfg.mappings.len() > 8 || mapped_bits > 64 {
+                        return Err(invalid("mappings exceed one CAN frame"));
+                    }
+                }
+                FrameFormat::Fd => {
+                    if cfg.mappings.len() > 8 {
+                        return Err(invalid("more than 8 mappings"));
+                    }
+                    if mapped_bits > 8 * FrameFormat::Fd.max_len() {
+                        return Err(invalid("mappings exceed one CAN FD frame (64 bytes)"));
+                    }
+                    if !cfg.rtr_disabled {
+                        return Err(invalid(
+                            "CAN FD has no remote frames, so rtr_disabled must be set to true",
+                        ));
+                    }
+                }
             }
             for mapping in &cfg.mappings {
                 let object = specs
@@ -151,6 +167,17 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
         }
     }
     let count = entries.len();
+    let frame = match dev.can.frame_format {
+        FrameFormat::Classic => quote!(zencan_node::common::can::CanMessage),
+        FrameFormat::Fd => quote!(zencan_node::common::can::CanFdMessage),
+    };
+    let is_fd = if dev.can.frame_format == FrameFormat::Fd {
+        quote!(<Frame as CanFrame>::IS_FD)
+    } else {
+        quote!(!<Frame as CanFrame>::IS_FD)
+    };
+    // PDOs were validated against this payload size, so the frame type must carry it
+    let max_len = dev.can.frame_format.max_len();
     let nr = dev.pdos.num_rpdo as usize;
     let nt = dev.pdos.num_tpdo as usize;
     let rp = (0..nr).map(|i| {
@@ -165,28 +192,35 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
         #[allow(non_snake_case, unused_imports, dead_code, clippy::redundant_closure)]
         mod objects {
             use zencan_node::{NodeState, NodeMbox, SDO_BUFFER_SIZE};
-            use zencan_node::common::{i24, u24, can::CanMessage, protocol::AbortCode};
+            use zencan_node::common::{i24, u24, can::CanFrame, protocol::AbortCode};
             use zencan_node::common::object_model::{TimeOfDay, TimeDifference};
             use zencan_node::object_dict::*;
             use zencan_node::pdo::{Pdo, PdoData, PdoDefaults, PdoCommObject, PdoMappingObject};
             use zencan_node::storage::StorageCommandObject;
             use zencan_node::priority_queue::PriorityQueue;
             use zencan_node::init_cell::{InitCell, StaticStorage};
+            /// The CAN frame type exchanged with the node, as selected by the device config
+            pub type Frame = #frame;
+            // Guards against a frame type which disagrees with the device config
+            const _: () = assert!(
+                #is_fd && <Frame as CanFrame>::MAX_LEN >= #max_len,
+                "the frame type does not match the device config frame_format",
+            );
             #definitions
             #allocations
             static DICT: InitCell<ObjectDict> = InitCell::new();
-            static RPDO_DATA: StaticStorage<[PdoData<'static>; #nr]> = StaticStorage::new();
-            static TPDO_DATA: StaticStorage<[PdoData<'static>; #nt]> = StaticStorage::new();
-            static RPDOS: StaticStorage<[Pdo<'static>; #nr]> = StaticStorage::new();
-            static TPDOS: StaticStorage<[Pdo<'static>; #nt]> = StaticStorage::new();
-            static NODE_STATE: StaticStorage<NodeState<'static>> = StaticStorage::new();
-            static NODE_MBOX: StaticStorage<NodeMbox> = StaticStorage::new();
+            static RPDO_DATA: StaticStorage<[PdoData<'static, Frame>; #nr]> = StaticStorage::new();
+            static TPDO_DATA: StaticStorage<[PdoData<'static, Frame>; #nt]> = StaticStorage::new();
+            static RPDOS: StaticStorage<[Pdo<'static, Frame>; #nr]> = StaticStorage::new();
+            static TPDOS: StaticStorage<[Pdo<'static, Frame>; #nt]> = StaticStorage::new();
+            static NODE_STATE: StaticStorage<NodeState<'static, Frame>> = StaticStorage::new();
+            static NODE_MBOX: StaticStorage<NodeMbox<Frame>> = StaticStorage::new();
             // This buffer is owned exclusively by the mailbox.
             static mut SDO_BUFFER: [u8; SDO_BUFFER_SIZE] = [0; SDO_BUFFER_SIZE];
             // Only pointer representation bytes are formed here, never references
             // to uninitialized objects. This table requires no runtime writes.
             static OD_TABLE: [ODEntryUninit; #count] = [#(#entries),*];
-            static TX_QUEUE: PriorityQueue<4, CanMessage> = PriorityQueue::new();
+            static TX_QUEUE: PriorityQueue<4, Frame> = PriorityQueue::new();
             static LOOKUP: Lookup = Lookup;
             static NMT: Nmt = Nmt;
             struct Lookup;
@@ -209,12 +243,12 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
             impl ObjectDict {
                 #getters
                 #[inline(always)]
-                pub fn node_state(&self) -> &'static NodeState<'static> {
+                pub fn node_state(&self) -> &'static NodeState<'static, Frame> {
                     // SAFETY: This token is available only after initialization.
                     unsafe { NODE_STATE.assume_init_ref() }
                 }
                 #[inline(always)]
-                pub fn node_mbox(&self) -> &'static NodeMbox {
+                pub fn node_mbox(&self) -> &'static NodeMbox<Frame> {
                     // SAFETY: This token is available only after initialization.
                     unsafe { NODE_MBOX.assume_init_ref() }
                 }
@@ -266,18 +300,18 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
                 // initialization the cell is poisoned.
                 let od = DICT.get_or_init(|| unsafe {
 
-                    let rpdo_data_ptr = RPDO_DATA.as_ptr().cast::<PdoData<'static>>();
-                    for i in 0..#nr { rpdo_data_ptr.add(i).write(PdoData::new()); }
-                    let rpdo_data: &'static [PdoData<'static>; #nr] = &*rpdo_data_ptr.cast();
-                    let tpdo_data_ptr = TPDO_DATA.as_ptr().cast::<PdoData<'static>>();
-                    for i in 0..#nt { tpdo_data_ptr.add(i).write(PdoData::new()); }
-                    let tpdo_data: &'static [PdoData<'static>; #nt] = &*tpdo_data_ptr.cast();
-                    let rpdo_ptr = RPDOS.as_ptr().cast::<Pdo<'static>>();
+                    let rpdo_data_ptr = RPDO_DATA.as_ptr().cast::<PdoData<'static, Frame>>();
+                    for i in 0..#nr { rpdo_data_ptr.add(i).write(PdoData::default()); }
+                    let rpdo_data: &'static [PdoData<'static, Frame>; #nr] = &*rpdo_data_ptr.cast();
+                    let tpdo_data_ptr = TPDO_DATA.as_ptr().cast::<PdoData<'static, Frame>>();
+                    for i in 0..#nt { tpdo_data_ptr.add(i).write(PdoData::default()); }
+                    let tpdo_data: &'static [PdoData<'static, Frame>; #nt] = &*tpdo_data_ptr.cast();
+                    let rpdo_ptr = RPDOS.as_ptr().cast::<Pdo<'static, Frame>>();
                     #(#rp)*
-                    let rpdos: &'static [Pdo<'static>; #nr] = &*rpdo_ptr.cast();
-                    let tpdo_ptr = TPDOS.as_ptr().cast::<Pdo<'static>>();
+                    let rpdos: &'static [Pdo<'static, Frame>; #nr] = &*rpdo_ptr.cast();
+                    let tpdo_ptr = TPDOS.as_ptr().cast::<Pdo<'static, Frame>>();
                     #(#tp)*
-                    let tpdos: &'static [Pdo<'static>; #nt] = &*tpdo_ptr.cast();
+                    let tpdos: &'static [Pdo<'static, Frame>; #nt] = &*tpdo_ptr.cast();
                     let node_state = NODE_STATE.write(NodeState::new(rpdos, tpdos));
                     #constructors
 
