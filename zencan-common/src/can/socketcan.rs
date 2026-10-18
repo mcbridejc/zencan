@@ -78,13 +78,13 @@ struct AsyncCanSocket(AsyncFd<CanSocket>);
 impl AsyncCanSocket {
     pub fn new(inner: CanSocket) -> Result<Self, std::io::Error> {
         inner.set_nonblocking(true)?;
-        Ok(Self(AsyncFd::new(inner)?))
+        // SAFETY: The socket owns its file descriptor, which stays open and unchanged until the
+        // socket is dropped together with the AsyncFd.
+        Ok(Self(unsafe { AsyncFd::register(inner) }?))
     }
 
     pub fn open(ifname: &str) -> Result<Self, std::io::Error> {
-        let socket = CanSocket::open(ifname)?;
-        socket.set_nonblocking(true)?;
-        Ok(Self(AsyncFd::new(socket)?))
+        Self::new(CanSocket::open(ifname)?)
     }
 
     /// Attempt to read a CAN frame from the socket without blocking

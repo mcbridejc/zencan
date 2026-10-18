@@ -19,7 +19,7 @@ int-enum = "1.2.0"
 regex = { version = "1.11.1", optional = true }
 serde = { workspace = true, optional = true }
 snafu.workspace = true
-tokio = { version = "1.47.1", features = ["net"], optional = true }
+tokio = { version = "1.53.3", features = ["net"], optional = true }
 toml = { workspace = true, optional = true }
 arbitrary-int.workspace = true
 
