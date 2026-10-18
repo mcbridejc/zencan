@@ -493,9 +493,12 @@ mod tests {
         msg.set_esi(true);
         assert!(msg.brs());
         assert!(msg.esi());
-        assert!(CanFdMessage::IS_FD);
-        assert!(!CanFdMessage::SUPPORTS_RTR);
-        assert!(!CanMessage::IS_FD);
-        assert!(CanMessage::SUPPORTS_RTR);
+
+        /// The format constants of a frame type: (IS_FD, SUPPORTS_RTR, MAX_LEN)
+        fn format<F: CanFrame>() -> (bool, bool, usize) {
+            (F::IS_FD, F::SUPPORTS_RTR, F::MAX_LEN)
+        }
+        assert_eq!((true, false, 64), format::<CanFdMessage>());
+        assert_eq!((false, true, 8), format::<CanMessage>());
     }
 }

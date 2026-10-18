@@ -19,7 +19,7 @@ pub mod protocol;
 pub use arbitrary_int::{i24, u24};
 #[cfg(all(feature = "socketcan", target_os = "linux"))]
 #[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
-pub use can::open_socketcan;
+pub use can::{open_socketcan, open_socketcan_fd};
 pub use can::{CanError, CanFdMessage, CanFrame, CanId, CanMessage};
 pub use object_model::{TimeDifference, TimeOfDay};
 pub use protocol::NodeId;
