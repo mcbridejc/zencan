@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use super::{AsyncCanReceiver, AsyncCanSender, CanError, CanId, CanMessage, CanSendError};
 use snafu::{ResultExt, Snafu};
-use socketcan::{CanFrame, CanSocket, EmbeddedFrame, Frame, ShouldRetry, Socket};
-use tokio::io::{unix::AsyncFd, Interest};
+use socketcan::{tokio::CanSocket, CanFrame, EmbeddedFrame, Frame, ShouldRetry};
 
 fn socketcan_id_to_zencan_id(id: socketcan::CanId) -> CanId {
     match id {
@@ -43,7 +42,7 @@ fn zencan_message_to_socket_frame(frame: CanMessage) -> socketcan::CanFrame {
 /// A handle to a socketcan CAN socket implementing AsyncCanReceiver.
 #[derive(Debug, Clone)]
 pub struct SocketCanReceiver {
-    socket: Arc<AsyncCanSocket>,
+    socket: Arc<CanSocket>,
 }
 
 #[derive(Debug, Snafu)]
@@ -65,51 +64,6 @@ impl CanSendError for SendError {
 
     fn message(&self) -> String {
         self.source.to_string()
-    }
-}
-
-/// Create an Async socket around a socketcan CanSocket. This is just a reimplemenation of the tokio
-/// socket in the `socketcan` crate, but with support for `try_read_frame` and `try_write_frame`
-/// added.
-#[derive(Debug)]
-struct AsyncCanSocket(AsyncFd<CanSocket>);
-
-#[allow(dead_code)]
-impl AsyncCanSocket {
-    pub fn new(inner: CanSocket) -> Result<Self, std::io::Error> {
-        inner.set_nonblocking(true)?;
-        Ok(Self(AsyncFd::new(inner)?))
-    }
-
-    pub fn open(ifname: &str) -> Result<Self, std::io::Error> {
-        let socket = CanSocket::open(ifname)?;
-        socket.set_nonblocking(true)?;
-        Ok(Self(AsyncFd::new(socket)?))
-    }
-
-    /// Attempt to read a CAN frame from the socket without blocking
-    ///
-    /// If no message is immediately available, a WouldBlock error is returned.
-    pub fn try_read_frame(&self) -> Result<CanFrame, std::io::Error> {
-        self.0.get_ref().read_frame()
-    }
-
-    /// Read a CAN frame from the socket asynchronously
-    pub async fn read_frame(&self) -> Result<CanFrame, std::io::Error> {
-        self.0
-            .async_io(Interest::READABLE, |inner| inner.read_frame())
-            .await
-    }
-
-    pub async fn write_frame(&self, frame: &CanFrame) -> Result<(), std::io::Error> {
-        self.0
-            .async_io(Interest::WRITABLE, |inner| inner.write_frame(frame))
-            .await
-    }
-
-    /// Attempt to write a CAN frame to the socket without blocking
-    pub fn try_write_frame(&self, frame: CanFrame) -> Result<(), std::io::Error> {
-        self.0.get_ref().write_frame(&frame)
     }
 }
 
@@ -140,7 +94,7 @@ impl AsyncCanReceiver for SocketCanReceiver {
 /// A handle to a socketcan CAN socket implementing AsyncCanSender.
 #[derive(Debug, Clone)]
 pub struct SocketCanSender {
-    socket: Arc<AsyncCanSocket>,
+    socket: Arc<CanSocket>,
 }
 
 impl AsyncCanSender for SocketCanSender {
@@ -149,7 +103,7 @@ impl AsyncCanSender for SocketCanSender {
         let socketcan_frame = zencan_message_to_socket_frame(msg);
 
         self.socket
-            .write_frame(&socketcan_frame)
+            .write_frame(socketcan_frame)
             .await
             .context(SendSnafu { message: msg })
     }
@@ -168,7 +122,7 @@ pub fn open_socketcan<S: AsRef<str>>(
     device: S,
 ) -> Result<(SocketCanSender, SocketCanReceiver), socketcan::IoError> {
     let device: &str = device.as_ref();
-    let socket = Arc::new(AsyncCanSocket::open(device)?);
+    let socket = Arc::new(CanSocket::open(device)?);
     let receiver = SocketCanReceiver {
         socket: socket.clone(),
     };
