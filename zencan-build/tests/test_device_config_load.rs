@@ -77,3 +77,23 @@ fn test_system_defaults() {
         }
     );
 }
+
+#[test]
+fn test_device_type() {
+    const IDENTITY: &str = r#"
+        [identity]
+        vendor_id = 1
+        product_code = 2
+        revision_number = 3
+    "#;
+
+    let cfg = DeviceConfig::load_from_str(&format!("device_name = \"test\"\n{IDENTITY}"))
+        .expect("Failed to parse device config");
+    assert_eq!(cfg.device_type, 0);
+
+    let cfg = DeviceConfig::load_from_str(&format!(
+        "device_name = \"test\"\ndevice_type = 0x20192\n{IDENTITY}"
+    ))
+    .expect("Failed to parse device config");
+    assert_eq!(cfg.device_type, 0x20192);
+}
