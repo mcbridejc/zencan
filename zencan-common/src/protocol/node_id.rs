@@ -34,6 +34,18 @@ impl ConfiguredNodeId {
     }
 }
 
+impl core::cmp::Ord for ConfiguredNodeId {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl core::cmp::PartialOrd for ConfiguredNodeId {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl core::fmt::Display for ConfiguredNodeId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.0)
@@ -49,6 +61,18 @@ impl From<ConfiguredNodeId> for u8 {
 impl From<ConfiguredNodeId> for NodeId {
     fn from(value: ConfiguredNodeId) -> Self {
         NodeId::Configured(value)
+    }
+}
+
+impl core::cmp::Ord for NodeId {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.raw().cmp(&other.raw())
+    }
+}
+
+impl core::cmp::PartialOrd for NodeId {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use zencan_common::{
     can::{AsyncCanReceiver, AsyncCanSender, CanMessage},
-    protocol::{NmtCommand, NmtCommandSpecifier, NmtState, ZencanMessage},
+    protocol::{ConfiguredNodeId, NmtCommand, NmtCommandSpecifier, NmtState, ZencanMessage},
 };
 
 type Result<T> = std::result::Result<T, ()>;
@@ -12,23 +12,11 @@ type Result<T> = std::result::Result<T, ()>;
 #[derive(Copy, Clone, Debug)]
 pub struct Node {
     /// The ID of the node
-    pub id: u8,
+    pub id: ConfiguredNodeId,
     /// The last NMT state reported by the node
     pub state: NmtState,
     /// The time when the last heartbeat message from received from the node
     pub last_status: Instant,
-    last_toggle: bool,
-}
-
-impl Default for Node {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            state: NmtState::Bootup,
-            last_status: Instant::now(),
-            last_toggle: true,
-        }
-    }
 }
 
 const MAX_NODES: usize = 127;
@@ -38,7 +26,7 @@ const MAX_NODES: usize = 127;
 pub struct NmtMaster<S, R> {
     sender: S,
     receiver: R,
-    nodes: [Node; MAX_NODES],
+    nodes: heapless::Vec<Node, MAX_NODES>,
 }
 
 impl<S: AsyncCanSender, R: AsyncCanReceiver> NmtMaster<S, R> {
@@ -52,7 +40,7 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> NmtMaster<S, R> {
     ///
     /// When using socketcan, these can be created with [`crate::open_socketcan`].
     pub fn new(sender: S, receiver: R) -> Self {
-        let nodes = [Node::default(); MAX_NODES];
+        let nodes = heapless::Vec::new();
         Self {
             sender,
             receiver,
@@ -76,48 +64,47 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> NmtMaster<S, R> {
         };
 
         if let ZencanMessage::Heartbeat(heartbeat) = open_msg {
-            self.handle_heartbeat(heartbeat.node, heartbeat.state, heartbeat.toggle)
+            self.handle_heartbeat(heartbeat.node, heartbeat.state)
         }
     }
 
     /// Get a list of all nodes detected on the bus via heartbeat/reset messages
     pub fn get_nodes(&mut self) -> &[Node] {
         self.process_rx();
-
-        // Find the first empty slot; this indicates the end of the list
-        let n = self
-            .nodes
-            .iter()
-            .position(|n| n.id == 0)
-            .unwrap_or(MAX_NODES);
-        &self.nodes[0..n]
+        &self.nodes
     }
 
-    fn handle_heartbeat(&mut self, node: u8, state: NmtState, toggle: bool) {
+    fn handle_heartbeat(&mut self, node: u8, state: NmtState) {
+        // Validate node ID: it must be 1..127
+        let node_id = match ConfiguredNodeId::new(node) {
+            Ok(id) => id,
+            Err(_) => {
+                #[cfg(feature = "log")]
+                log::warn!("Received heartbeat with invalid node ID: {}", node);
+                return;
+            }
+        };
+        let rx_node = Node {
+            id: node_id,
+            state,
+            last_status: Instant::now(),
+        };
         // Find the node in the ordered list, inserting if needed.
         for i in 0..self.nodes.len() {
             let list_node = &mut self.nodes[i];
-            if list_node.id == node {
-                // Node already in list. Update it
-                list_node.last_status = Instant::now();
-                list_node.last_toggle = toggle;
-                list_node.state = state;
-                break;
-            } else if list_node.id == 0 || list_node.id > node {
-                // Found end of list or higher node - insert here
-                // Shift all higher nodes
-                for j in (i + 1..self.nodes.len()).rev() {
-                    self.nodes[j] = self.nodes[j - 1];
-                }
-                self.nodes[i] = Node {
-                    id: node,
-                    state,
-                    last_status: Instant::now(),
-                    last_toggle: toggle,
-                };
-                break;
+            if list_node.id == node_id {
+                *list_node = rx_node;
+                return;
+            } else if list_node.id > node_id {
+                // It's not possible to overrun the list, because node_id is validated to be 1..127
+                // and MAX_NODES is 127, so there is room for all possible IDs.
+                self.nodes.insert(i, rx_node).ok();
+                return;
             }
         }
+        // Didn't find a place to update or insert, so append to the end
+        // Error is ignored because it is not possible to overrun the list
+        self.nodes.push(rx_node).ok();
     }
 
     /// Send application reset command
@@ -256,8 +243,11 @@ mod tests {
             .unwrap();
         bus.send(heartbeat(2, NmtState::Stopped)).await.unwrap();
 
-        let nodes: Vec<(u8, NmtState)> =
-            master.get_nodes().iter().map(|n| (n.id, n.state)).collect();
+        let nodes: Vec<(u8, NmtState)> = master
+            .get_nodes()
+            .iter()
+            .map(|n| (n.id.raw(), n.state))
+            .collect();
         assert_eq!(
             nodes,
             vec![
