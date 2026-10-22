@@ -35,7 +35,7 @@ async fn test_nmt_init() {
     // Master should have received a boot up message
     let nodes = master.get_nodes();
     assert_eq!(1, nodes.len());
-    assert_eq!(NODE_ID, nodes[0].id);
+    assert_eq!(NODE_ID, nodes[0].id.raw());
     assert_eq!(NmtState::PreOperational, nodes[0].state);
 
     // Broadcast start command
