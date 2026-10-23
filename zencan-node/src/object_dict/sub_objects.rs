@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn test_record_with_provides_sub_objects() {
-        let record = ExampleRecord::default();
+        let record: &dyn ObjectAccess = &ExampleRecord::default();
 
         assert_eq!(3, record.read_u8(0).unwrap());
         record.write(1, &42u32.to_le_bytes()).unwrap();

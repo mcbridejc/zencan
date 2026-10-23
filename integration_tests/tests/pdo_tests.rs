@@ -22,7 +22,7 @@ use zencan_common::{
     u24, AtomicCell,
 };
 use zencan_node::{
-    object_dict::{ODEntry, ObjectAccess as _},
+    object_dict::{ODEntry, ObjectAccess},
     pdo::MappingEntry,
 };
 
@@ -54,8 +54,10 @@ async fn test_rpdo_assignment() {
         assert_eq!(mapping.sub, 12);
         assert_eq!(mapping.length, 3);
 
-        assert_eq!(od.object2000().read_u32(1), Ok(500));
-        assert_eq!(od.object300c().read_u24(12), Ok(u24::new(0x010203)));
+        let object2000: &dyn ObjectAccess = od.object2000();
+        let object300c: &dyn ObjectAccess = od.object300c();
+        assert_eq!(object2000.read_u32(1), Ok(500));
+        assert_eq!(object300c.read_u24(12), Ok(u24::new(0x010203)));
     };
 
     let callbacks = Callbacks {

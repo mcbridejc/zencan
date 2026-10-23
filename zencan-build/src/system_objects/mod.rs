@@ -15,6 +15,9 @@ pub struct ObjectInstance {
     pub object_type: TokenStream,
     pub initializer: TokenStream,
     pub reset: Option<TokenStream>,
+    /// The initializer is a constant expression, so the object is a plain `static`, needing no
+    /// initialization or reset at run time
+    pub constant: bool,
 }
 
 pub trait ObjectGenerator {

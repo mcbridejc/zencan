@@ -84,6 +84,7 @@ impl ObjectGenerator for SystemObjectGenerator {
             object_type,
             initializer,
             reset,
+            constant: false,
         }))
     }
 }
