@@ -13,8 +13,8 @@ pub const SDO_BUFFER_SIZE: usize = 889;
 ///
 /// Block transfer needs the full [`SDO_BUFFER_SIZE`]. Segmented transfer only needs to hold the
 /// largest sub-object, so that an object which does not support partial writes can be written in
-/// one piece, rounded up to whole 7-byte segments. Larger data, such as a domain, is written in
-/// parts.
+/// one piece, rounded up to whole 7-byte segments. A domain has no fixed size, so zencan-build
+/// uses the full [`SDO_BUFFER_SIZE`] for a dictionary with a domain instead.
 pub const fn sdo_buffer_size(largest_object: usize) -> usize {
     if cfg!(feature = "sdo-block") {
         SDO_BUFFER_SIZE

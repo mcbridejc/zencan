@@ -9,6 +9,7 @@ use crate::{
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use zencan_common::object_model::DataType;
 
 fn pdo_default(cfg: Option<&PdoDefaultConfig>) -> TokenStream {
     if let Some(cfg) = cfg {
@@ -94,23 +95,37 @@ fn validate_pdo_defaults(
 
 /// The size in bytes of the largest sub-object in the dictionary
 ///
-/// Domains report a size of 0, as they have no fixed size.
-fn largest_sub_object(specs: &[crate::object_build_spec::ObjectBuildSpec]) -> usize {
+/// Returns `None` if the dictionary has a domain, as a domain has no fixed size.
+fn largest_sub_object(specs: &[crate::object_build_spec::ObjectBuildSpec]) -> Option<usize> {
     use crate::object_build_spec::ObjectBuildShape;
-    specs
-        .iter()
-        .map(|spec| match &spec.shape {
-            ObjectBuildShape::Var(var) => var.value.data_type.size(),
-            ObjectBuildShape::Array(array) => array.data_type().size(),
-            ObjectBuildShape::Record(record) => record
-                .subs
-                .values()
-                .map(|sub| sub.spec.data_type.size())
-                .max()
-                .unwrap_or(0),
-        })
-        .max()
-        .unwrap_or(0)
+    let mut largest = 0;
+    for spec in specs {
+        let data_types: Vec<DataType> = match &spec.shape {
+            ObjectBuildShape::Var(var) => vec![var.value.data_type],
+            ObjectBuildShape::Array(array) => vec![array.data_type()],
+            ObjectBuildShape::Record(record) => {
+                record.subs.values().map(|sub| sub.spec.data_type).collect()
+            }
+        };
+        for data_type in data_types {
+            if matches!(data_type, DataType::Domain) {
+                return None;
+            }
+            largest = largest.max(data_type.size());
+        }
+    }
+    Some(largest)
+}
+
+/// The size of the SDO buffer for the dictionary
+///
+/// A domain may be handled by a callback that does not support partial writes, so a dictionary
+/// with a domain keeps the full buffer, which holds up to 889 bytes in one write.
+fn sdo_buffer_size(specs: &[crate::object_build_spec::ObjectBuildSpec]) -> TokenStream {
+    match largest_sub_object(specs) {
+        Some(largest) => quote!(zencan_node::sdo_buffer_size(#largest)),
+        None => quote!(zencan_node::SDO_BUFFER_SIZE),
+    }
 }
 
 fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
@@ -174,7 +189,7 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
     let count = entries.len();
     let nr = dev.pdos.num_rpdo as usize;
     let nt = dev.pdos.num_tpdo as usize;
-    let largest = largest_sub_object(&specs);
+    let sdo_buffer_size = sdo_buffer_size(&specs);
     let rp = (0..nr).map(|i| {
         let defaults = pdo_default(dev.pdos.rpdo_defaults.get(&i));
         quote!(rpdo_ptr.add(#i).write(Pdo::new(&LOOKUP, &NMT, &rpdo_data[#i], #defaults));)
@@ -204,7 +219,7 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
             static NODE_STATE: StaticStorage<NodeState<'static>> = StaticStorage::new();
             static NODE_MBOX: StaticStorage<NodeMbox> = StaticStorage::new();
             // This buffer is owned exclusively by the mailbox.
-            const SDO_BUFFER_SIZE: usize = zencan_node::sdo_buffer_size(#largest);
+            const SDO_BUFFER_SIZE: usize = #sdo_buffer_size;
             static mut SDO_BUFFER: [u8; SDO_BUFFER_SIZE] = [0; SDO_BUFFER_SIZE];
             // Only pointer representation bytes are formed here, never references
             // to uninitialized objects. This table requires no runtime writes.
