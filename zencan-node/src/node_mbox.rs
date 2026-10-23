@@ -1,14 +1,17 @@
 //! Implements mailbox for receiving CAN messages
+#[cfg(feature = "lss")]
 use defmt_or_log::warn;
 use zencan_common::{
     can::{CanId, CanMessage},
-    protocol::{SyncObject, LSS_REQ_ID, NMT_CMD_ID, SYNC_ID},
+    protocol::{SyncObject, NMT_CMD_ID, SYNC_ID},
     AtomicCell,
 };
 
-use crate::{
-    lss_slave::LssReceiver, pdo::Pdo, priority_queue::PriorityQueue, sdo_server::SdoComms,
-};
+#[cfg(feature = "lss")]
+use crate::lss_slave::LssReceiver;
+use crate::{pdo::Pdo, priority_queue::PriorityQueue, sdo_server::SdoComms};
+#[cfg(feature = "lss")]
+use zencan_common::protocol::LSS_REQ_ID;
 
 pub trait CanMessageQueue: Send + Sync {
     fn push(&self, msg: CanMessage) -> Result<(), CanMessage>;
@@ -41,6 +44,7 @@ pub struct NodeMbox {
     sdo_rx_cob_id: AtomicCell<Option<CanId>>,
     sdo_comms: SdoComms,
     nmt_mbox: AtomicCell<Option<CanMessage>>,
+    #[cfg(feature = "lss")]
     lss_receiver: LssReceiver,
     sync_flag: AtomicCell<Option<SyncObject>>,
     process_notify_cb: AtomicCell<Option<&'static (dyn Fn() + Sync)>>,
@@ -64,7 +68,6 @@ impl NodeMbox {
         let sdo_tx_cob_id = AtomicCell::new(None);
         let sdo_comms = SdoComms::new(sdo_buffer);
         let nmt_mbox = AtomicCell::new(None);
-        let lss_receiver = LssReceiver::new();
         let sync_flag = AtomicCell::new(None);
         let process_notify_cb = AtomicCell::new(None);
         let transmit_notify_cb = AtomicCell::new(None);
@@ -75,7 +78,8 @@ impl NodeMbox {
             sdo_tx_cob_id,
             sdo_comms,
             nmt_mbox,
-            lss_receiver,
+            #[cfg(feature = "lss")]
+            lss_receiver: LssReceiver::new(),
             sync_flag,
             process_notify_cb,
             transmit_notify_cb,
@@ -126,6 +130,7 @@ impl NodeMbox {
         self.nmt_mbox.take()
     }
 
+    #[cfg(feature = "lss")]
     pub(crate) fn lss_receiver(&self) -> &LssReceiver {
         &self.lss_receiver
     }
@@ -153,6 +158,7 @@ impl NodeMbox {
             return Ok(());
         }
 
+        #[cfg(feature = "lss")]
         if id == LSS_REQ_ID {
             if let Ok(lss_req) = msg.data().try_into() {
                 if self.lss_receiver.handle_req(lss_req) {
@@ -231,7 +237,9 @@ mod tests {
     use core::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    use zencan_common::protocol::{BlockSegment, SdoRequest, SDO_REQ_BASE};
+    #[cfg(feature = "sdo-block")]
+    use zencan_common::protocol::BlockSegment;
+    use zencan_common::protocol::{SdoRequest, SDO_REQ_BASE};
 
     use crate::object_dict::ODEntry;
 
@@ -303,21 +311,24 @@ mod tests {
         assert!(process_flag.swap(false, Ordering::Relaxed));
         assert_eq!(Some(req), obj.mbox.sdo_comms().take_request());
 
-        // When SDO server is in the middle of a block upload, message should not trigger a process
-        // notify but the data should be stored in the sdo buffer
-        obj.mbox.sdo_comms().begin_block_download(100);
-        let req = BlockSegment {
-            c: false,
-            seqnum: 1,
-            data: [1, 2, 3, 4, 5, 6, 7],
-        };
-        assert!(obj
-            .mbox
-            .store_message(req.to_can_message(SDO_RX_COB_ID))
-            .is_ok());
-        assert_eq!(false, process_flag.swap(false, Ordering::Relaxed));
-        assert_eq!(None, obj.mbox.sdo_comms().take_request());
-        let buf = obj.mbox.sdo_comms().borrow_buffer();
-        assert_eq!([1, 2, 3, 4, 5, 6, 7], buf[0..7]);
+        #[cfg(feature = "sdo-block")]
+        {
+            // When SDO server is in the middle of a block upload, message should not trigger a process
+            // notify but the data should be stored in the sdo buffer
+            obj.mbox.sdo_comms().begin_block_download(100);
+            let req = BlockSegment {
+                c: false,
+                seqnum: 1,
+                data: [1, 2, 3, 4, 5, 6, 7],
+            };
+            assert!(obj
+                .mbox
+                .store_message(req.to_can_message(SDO_RX_COB_ID))
+                .is_ok());
+            assert_eq!(false, process_flag.swap(false, Ordering::Relaxed));
+            assert_eq!(None, obj.mbox.sdo_comms().take_request());
+            let buf = obj.mbox.sdo_comms().borrow_buffer();
+            assert_eq!([1, 2, 3, 4, 5, 6, 7], buf[0..7]);
+        }
     }
 }
