@@ -1,5 +1,5 @@
 use zencan_client::nmt_master::NmtMaster;
-use zencan_common::protocol::{NmtState, NodeId};
+use zencan_common::protocol::{Heartbeat, NmtState, NodeId};
 use zencan_node::{Callbacks, Node};
 
 use integration_tests::prelude::*;
@@ -36,7 +36,7 @@ async fn test_nmt_init() {
     let nodes = master.get_nodes();
     assert_eq!(1, nodes.len());
     assert_eq!(NODE_ID, nodes[0].id.raw());
-    assert_eq!(NmtState::PreOperational, nodes[0].state);
+    assert_eq!(NmtState::Bootup, nodes[0].state);
 
     // Broadcast start command
     master.nmt_start(0).await.unwrap();
