@@ -5,7 +5,7 @@ use crate::can::CanMessage;
 use super::{MessageError, NMT_CMD_ID};
 
 /// Possible NMT states for a node
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum NmtState {

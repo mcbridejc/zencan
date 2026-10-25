@@ -95,7 +95,7 @@ impl LssCommandSpecifier {
 }
 
 /// An LSS request send by the master to the slave
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum LssRequest {
     /// Switch the mode of all LSS slaves
@@ -365,7 +365,7 @@ impl From<LssRequest> for CanMessage {
 }
 
 /// An LSS response message sent from the Slave to Master
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum LssResponse {
     /// Sent when a slave's identity matches a FastScan request

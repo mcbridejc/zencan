@@ -7,7 +7,7 @@ use super::SYNC_ID;
 /// A single CAN node can serve as the SYNC provider, sending a periodic sync object to all other
 /// nodes. When used, the one byte count value starts at 1, and increments. On overflow, it should be reset to
 /// 1. It is optional, and when not provided the sync message DLC will be zero.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SyncObject {
     /// The (optional) count of this SyncObject

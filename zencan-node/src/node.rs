@@ -390,9 +390,8 @@ impl<C: NodeCallbacks> Node<'_, C> {
         }
 
         if self.nmt_state() == NmtState::Bootup {
-            // Set state before calling boot_up, so the heartbeat state is correct
-            self.enter_preoperational();
             self.boot_up();
+            self.enter_preoperational();
         }
 
         // If auto start is set on boot, and we already have an ID, we make the first transition to
@@ -689,31 +688,29 @@ const _: fn() = || {
 mod tests {
     use zencan_common::{
         can::CanMessage,
-        object_model::ObjectCode,
-        protocol::{NmtCommand, NmtCommandSpecifier, NmtState, NodeId},
+        object_model::{object_ids, ObjectCode},
+        protocol::{Heartbeat, NmtCommand, NmtCommandSpecifier, NmtState, NodeId, ZencanMessage},
     };
 
     use crate::{
         object_dict::{
             ODEntry, ObjectAccess, ObjectDictionary, ObjectLookup, ProvidesSubObjects,
-            ScalarFieldU8, SubInfo, SubObjectAccess,
+            ScalarFieldU16, ScalarFieldU8, SubInfo, SubObjectAccess,
         },
         priority_queue::PriorityQueue,
-        Callbacks, Node, NodeCallbacks, NodeMbox, NodeState,
+        Node, NodeCallbacks, NodeMbox, NodeState,
     };
 
-    struct AutoStartObject {
-        value: ScalarFieldU8,
+    struct VarObject<T: SubObjectAccess> {
+        value: T,
     }
 
-    impl AutoStartObject {
-        pub fn new(value: u8) -> Self {
-            Self {
-                value: ScalarFieldU8::new(value),
-            }
+    impl<T: SubObjectAccess> VarObject<T> {
+        pub fn new(value: T) -> Self {
+            Self { value }
         }
     }
-    impl ProvidesSubObjects for AutoStartObject {
+    impl<T: SubObjectAccess> ProvidesSubObjects for VarObject<T> {
         fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
             match sub {
                 0 => Some((SubInfo::new_u8(), &self.value)),
@@ -743,31 +740,56 @@ mod tests {
         fn reset_objects(&self, _scope: crate::ResetScope) {}
     }
 
-    #[test]
-    fn test_node_autostart_enabled() {
-        let object5000 = Box::leak(Box::new(AutoStartObject::new(1)));
-        let entries = Box::leak(Box::new([ODEntry {
-            index: 0x5000,
-            object: object5000,
-        }]));
-        let od = Box::leak(Box::new(TestOd { entries }));
+    #[allow(dead_code)]
+    struct TestNodeCtx<CB> {
+        node: Node<'static, CB>,
+        mbox: &'static NodeMbox,
+        state: &'static NodeState<'static>,
+        object_dict: &'static dyn ObjectDictionary<'static>,
+    }
 
+    fn new_test_node<CB>(
+        node_id: NodeId,
+        entries: Option<&'static [ODEntry]>,
+        callbacks: CB,
+    ) -> TestNodeCtx<CB>
+    where
+        CB: NodeCallbacks,
+    {
         let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
         let sdo_buffer = Box::leak(Box::new([0u8; 100]));
         let mbox = Box::leak(Box::new(NodeMbox::new(&[], &[], tx_queue, sdo_buffer)));
+        let entries = entries.unwrap_or(Box::leak(Box::new([])));
+        let object_dict = Box::leak(Box::new(TestOd { entries }));
         let state = Box::leak(Box::new(NodeState::new(&[], &[])));
 
-        let mut node = Node::new(
-            NodeId::new(1).unwrap(),
-            Callbacks::default(),
+        let node = Node::new(node_id, callbacks, mbox, state, object_dict);
+
+        TestNodeCtx {
+            node,
             mbox,
             state,
-            od,
-        );
+            object_dict,
+        }
+    }
 
+    #[test]
+    fn test_node_autostart_enabled() {
+        let autostart_object = Box::leak(Box::new(VarObject::new(ScalarFieldU8::new(1))));
+        let entries = Box::leak(Box::new([ODEntry {
+            index: object_ids::AUTO_START,
+            object: autostart_object,
+        }]));
+
+        let mut sys = new_test_node(NodeId::new(1).unwrap(), Some(entries), ());
+        let node = &mut sys.node;
+        let mbox = &mut sys.mbox;
+
+        assert_eq!(NmtState::Bootup, node.nmt_state());
         node.process(0);
         assert_eq!(NmtState::Operational, node.nmt_state());
 
+        // On NMT commanded reset, it should not autostart again
         mbox.store_message(
             NmtCommand {
                 cs: NmtCommandSpecifier::ResetApp,
@@ -785,29 +807,20 @@ mod tests {
 
     #[test]
     fn test_node_autostart_disabled() {
-        let object5000 = Box::leak(Box::new(AutoStartObject::new(0)));
+        let autostart_object = Box::leak(Box::new(VarObject::new(ScalarFieldU8::new(0))));
         let entries = Box::leak(Box::new([ODEntry {
-            index: 0x5000,
-            object: object5000,
+            index: object_ids::AUTO_START,
+            object: autostart_object,
         }]));
-        let od = Box::leak(Box::new(TestOd { entries }));
 
-        let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
-        let sdo_buffer = Box::leak(Box::new([0u8; 100]));
-        let mbox = Box::leak(Box::new(NodeMbox::new(&[], &[], tx_queue, sdo_buffer)));
-        let state = Box::leak(Box::new(NodeState::new(&[], &[])));
+        let mut sys = new_test_node(NodeId::new(1).unwrap(), Some(entries), ());
+        let node = &mut sys.node;
 
-        let mut node = Node::new(
-            NodeId::new(1).unwrap(),
-            Callbacks::default(),
-            mbox,
-            state,
-            od,
-        );
-
+        assert_eq!(NmtState::Bootup, node.nmt_state());
         node.process(0);
         assert_eq!(NmtState::PreOperational, node.nmt_state());
     }
+
     /// Records the events a node reports, as an application's own callbacks type would
     #[derive(Default)]
     struct EventRecorder {
@@ -830,25 +843,17 @@ mod tests {
 
     #[test]
     fn test_node_calls_custom_callbacks() {
-        let object5000 = Box::leak(Box::new(AutoStartObject::new(1)));
+        // Enable autostart so node transitions immediately into operational
+        let autostart_object = Box::leak(Box::new(VarObject::new(ScalarFieldU8::new(1))));
         let entries = Box::leak(Box::new([ODEntry {
-            index: 0x5000,
-            object: object5000,
+            index: object_ids::AUTO_START,
+            object: autostart_object,
         }]));
-        let od = Box::leak(Box::new(TestOd { entries }));
+        let callbacks = EventRecorder::default();
+        let mut sys = new_test_node(NodeId::new(1).unwrap(), Some(entries), callbacks);
+        let node = &mut sys.node;
+        let mbox = &mut sys.mbox;
 
-        let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
-        let sdo_buffer = Box::leak(Box::new([0u8; 100]));
-        let mbox = Box::leak(Box::new(NodeMbox::new(&[], &[], tx_queue, sdo_buffer)));
-        let state = Box::leak(Box::new(NodeState::new(&[], &[])));
-
-        let mut node = Node::new(
-            NodeId::new(1).unwrap(),
-            EventRecorder::default(),
-            mbox,
-            state,
-            od,
-        );
         node.process(0);
 
         mbox.store_message(
@@ -871,6 +876,60 @@ mod tests {
                 "reset_app",
                 "enter_preoperational",
             ]
+        );
+    }
+
+    #[test]
+    fn test_nmt_boot_up_messages() {
+        let heartbeat_object = Box::leak(Box::new(VarObject::new(ScalarFieldU16::new(1000))));
+        let entries = Box::leak(Box::new([ODEntry {
+            index: object_ids::HEARTBEAT_PRODUCER_TIME,
+            object: heartbeat_object,
+        }]));
+        let node_id = NodeId::new(1).unwrap();
+        let mut sys = new_test_node(node_id, Some(entries), ());
+        let node = &mut sys.node;
+        let mbox = &mut sys.mbox;
+
+        node.process(0);
+        node.process(node.heartbeat_period_ms as u64 * 1000 + 1);
+
+        mbox.store_message(
+            NmtCommand {
+                cs: NmtCommandSpecifier::Start,
+                node: node_id.raw(),
+            }
+            .into(),
+        )
+        .unwrap();
+        node.process(2 * node.heartbeat_period_ms as u64 * 1000 + 2);
+
+        let mut heartbeats = Vec::new();
+        while let Some(msg) = mbox.next_transmit_message() {
+            if let Ok(ZencanMessage::Heartbeat(heartbeat)) = msg.try_into() {
+                heartbeats.push(heartbeat);
+            }
+        }
+
+        assert_eq!(
+            vec![
+                Heartbeat {
+                    node: node_id.into(),
+                    state: NmtState::Bootup,
+                    toggle: false,
+                },
+                Heartbeat {
+                    node: node_id.into(),
+                    state: NmtState::PreOperational,
+                    toggle: false,
+                },
+                Heartbeat {
+                    node: node_id.into(),
+                    state: NmtState::Operational,
+                    toggle: false,
+                }
+            ],
+            heartbeats
         );
     }
 }

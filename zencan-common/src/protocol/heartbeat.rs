@@ -3,7 +3,7 @@ use crate::can::{CanId, CanMessage};
 use super::{NmtState, HEARTBEAT_ID};
 
 /// A Heartbeat message
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Heartbeat {
     /// The ID of the node transmitting the heartbeat
