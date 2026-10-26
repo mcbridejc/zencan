@@ -227,3 +227,62 @@ async fn test_classic_and_fd_nodes_coexist() {
 
     test_with_background_process(&mut [&mut fd_node, &mut classic_node], &mut bus, test_task).await;
 }
+
+/// A CAN FD master may pad every frame, NMT and SYNC included, beyond its significant bytes
+#[serial]
+#[tokio::test]
+async fn test_fd_padded_nmt_and_sync() {
+    let od = object_dict4::get_od();
+    let mut bus = SimBus::<CanFdMessage>::new();
+    bus.add_node(od.node_mbox());
+    let mut node = fd_node();
+    let mut client = get_fd_sdo_client(&mut bus, FD_NODE_ID);
+    let mut sender = bus.new_sender();
+    let mut rx = bus.new_receiver();
+
+    let test_task = move |mut ctx: TestContext| async move {
+        // Make TPDO1 synchronous, sent on every SYNC
+        client.download(0x1801, 2, &[1]).await.unwrap();
+        od.object2002().set_value(0xBEEF);
+
+        // NMT Start for all nodes, padded to a 64-byte frame
+        let mut nmt_start = [0u8; 64];
+        nmt_start[0] = 1;
+        sender
+            .send(CanFdMessage::new(CanId::std(0), &nmt_start))
+            .await
+            .unwrap();
+        ctx.wait_for_process(2).await;
+
+        // An RPDO is only received in Operational, so this one shows the node was started
+        let mut data = element(7).to_le_bytes().to_vec();
+        data.extend_from_slice(&[0x34, 0x12, 0, 0]);
+        sender
+            .send(CanFdMessage::new(
+                CanId::std(0x300 + FD_NODE_ID as u16),
+                &data,
+            ))
+            .await
+            .unwrap();
+        ctx.wait_for_process(2).await;
+        assert_eq!(0x1234, od.object2102().get_value());
+
+        // SYNC padded to a 64-byte frame triggers the synchronous TPDO
+        rx.flush();
+        sender
+            .send(CanFdMessage::new(CanId::std(0x80), &[0; 64]))
+            .await
+            .unwrap();
+        ctx.wait_for_process(2).await;
+        let tpdo1 = CanId::std(0x280 + FD_NODE_ID as u16);
+        let mut tpdos = 0;
+        while let Some(frame) = rx.try_recv() {
+            if frame.id() == tpdo1 {
+                tpdos += 1;
+            }
+        }
+        assert_eq!(1, tpdos);
+    };
+
+    test_with_background_process(&mut [&mut node], &mut bus, test_task).await;
+}

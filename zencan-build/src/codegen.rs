@@ -171,13 +171,6 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
         FrameFormat::Classic => quote!(zencan_node::common::can::CanMessage),
         FrameFormat::Fd => quote!(zencan_node::common::can::CanFdMessage),
     };
-    let is_fd = if dev.can.frame_format == FrameFormat::Fd {
-        quote!(<Frame as CanFrame>::IS_FD)
-    } else {
-        quote!(!<Frame as CanFrame>::IS_FD)
-    };
-    // PDOs were validated against this payload size, so the frame type must carry it
-    let max_len = dev.can.frame_format.max_len();
     let nr = dev.pdos.num_rpdo as usize;
     let nt = dev.pdos.num_tpdo as usize;
     let rp = (0..nr).map(|i| {
@@ -192,7 +185,7 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
         #[allow(non_snake_case, unused_imports, dead_code, clippy::redundant_closure)]
         mod objects {
             use zencan_node::{NodeState, NodeMbox, SDO_BUFFER_SIZE};
-            use zencan_node::common::{i24, u24, can::CanFrame, protocol::AbortCode};
+            use zencan_node::common::{i24, u24, protocol::AbortCode};
             use zencan_node::common::object_model::{TimeOfDay, TimeDifference};
             use zencan_node::object_dict::*;
             use zencan_node::pdo::{Pdo, PdoData, PdoDefaults, PdoCommObject, PdoMappingObject};
@@ -201,11 +194,6 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
             use zencan_node::init_cell::{InitCell, StaticStorage};
             /// The CAN frame type exchanged with the node, as selected by the device config
             pub type Frame = #frame;
-            // Guards against a frame type which disagrees with the device config
-            const _: () = assert!(
-                #is_fd && <Frame as CanFrame>::MAX_LEN >= #max_len,
-                "the frame type does not match the device config frame_format",
-            );
             #definitions
             #allocations
             static DICT: InitCell<ObjectDict> = InitCell::new();

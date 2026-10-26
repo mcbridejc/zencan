@@ -29,8 +29,9 @@ pub trait NodeFrame: CanFrame + TryFrom<CanMessage> + sealed::Sealed + 'static {
     /// buffer holds the payload only, not a whole frame: the PDO already stores its COB-ID.
     type PdoPayload: PdoPayload;
 
+    /// Convert to a classic frame, keeping only the first 8 bytes of a longer CAN FD frame
     #[doc(hidden)]
-    fn into_classic(self) -> Option<CanMessage>;
+    fn into_classic(self) -> CanMessage;
 
     #[doc(hidden)]
     fn node_new<'a>(
@@ -127,8 +128,13 @@ macro_rules! impl_node_frame {
         impl NodeFrame for $frame {
             type PdoPayload = PdoBuffer<$max_len>;
 
-            fn into_classic(self) -> Option<CanMessage> {
-                CanMessage::try_from(self).ok()
+            fn into_classic(self) -> CanMessage {
+                match CanMessage::try_from(self) {
+                    Ok(msg) => msg,
+                    // A CAN FD peer may pad a frame beyond its significant bytes, which never
+                    // exceed 8 for the messages converted here. Unreachable for classic CAN.
+                    Err(_) => CanMessage::new(self.id(), &self.data()[..CLASSIC_MAX_LEN]),
+                }
             }
 
             fn node_new<'a>(

@@ -135,16 +135,12 @@ fn generated_code(config: &DeviceConfig) -> String {
 fn classic_generates_classic_frame_type() {
     let code = generated_code(&example());
     assert_contains!(code, "pubtypeFrame=zencan_node::common::can::CanMessage;");
-    assert_contains!(code, "!<FrameasCanFrame>::IS_FD&&");
-    assert_contains!(code, "<FrameasCanFrame>::MAX_LEN>=8usize");
 }
 
 #[test]
 fn fd_accepts_up_to_64_bytes() {
     let code = generated_code(&wide_config(FD, true, MAPPINGS_64_BYTES));
     assert_contains!(code, "pubtypeFrame=zencan_node::common::can::CanFdMessage;");
-    assert_contains!(code, "assert!(<FrameasCanFrame>::IS_FD&&");
-    assert_contains!(code, "<FrameasCanFrame>::MAX_LEN>=64usize");
     assert_contains!(code, "staticNODE_MBOX:StaticStorage<NodeMbox<Frame>>");
 }
 

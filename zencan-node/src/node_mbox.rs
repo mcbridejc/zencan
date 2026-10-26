@@ -150,20 +150,15 @@ impl<F: NodeFrame> NodeMbox<F> {
 
     pub(crate) fn store_message_impl(&self, msg: F) -> Result<(), F> {
         let id = msg.id();
+        // NMT and SYNC frames padded by a CAN FD peer are accepted, as SDO and LSS frames are
         if id == NMT_CMD_ID {
-            let Some(nmt) = msg.into_classic() else {
-                return Err(msg);
-            };
-            self.nmt_mbox.store(Some(nmt));
+            self.nmt_mbox.store(Some(msg.into_classic()));
             self.process_notify();
             return Ok(());
         }
 
         if id == SYNC_ID {
-            let Some(sync) = msg.into_classic() else {
-                return Err(msg);
-            };
-            let sync_object = SyncObject::from(sync);
+            let sync_object = SyncObject::from(msg.into_classic());
             self.sync_flag.store(Some(sync_object));
             self.process_notify();
             return Ok(());
