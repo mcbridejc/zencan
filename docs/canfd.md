@@ -32,7 +32,7 @@ still built as `CanMessage` and are converted to the node's frame type at the ma
 CAN FD bus they travel in 8-byte CAN FD frames, with the data phase at the data bit rate.
 
 The node's transport path is generic over the frame type, with `CanMessage` as the default
-everywhere: `NodeMbox<F>`, `Node<F>`, `NodeState<F>`, `Pdo<F>`, `PdoData<F>`, the PDO objects,
+everywhere: `NodeMbox<F>`, `Node<C, F>`, `NodeState<F>`, `Pdo<F>`, `PdoData<F>`, the PDO objects,
 and the transport traits `CanSender<F>`, `CanReceiver<F>`, `AsyncCanSender<F>` and
 `AsyncCanReceiver<F>`. Code written before CAN FD support compiles unchanged.
 
@@ -43,13 +43,12 @@ and the transport traits `CanSender<F>`, `CanReceiver<F>`, `AsyncCanSender<F>` a
 - **The switch is in the device config, not a Cargo feature.** Cargo features are unified across
   the dependency graph: one CAN FD node in a workspace would turn every node into a 64-byte one.
   The device config is per node, and already drives code generation.
-- **Frame-dependent code is compiled inside zencan-node.** Node types are bound by the sealed
-  `NodeFrame` trait, implemented for `CanMessage` and `CanFdMessage`. Its impls route the large
-  entry points (`Node::new`/`process`, `NodeMbox::store_message`/`next_transmit_message`,
-  `PdoData::default`, `Pdo::init_defaults`) to code monomorphized in zencan-node. The application
-  therefore links precompiled code, as it did before, and does not instantiate the node logic
-  itself. With plain generics, LLVM inlined `Node::process` into `main` and stm32l5-minimal grew by
-  about 880 bytes.
+- **Frame-dependent mailbox and PDO code is compiled inside zencan-node.** Node types are bound by
+  the sealed `NodeFrame` trait, implemented for `CanMessage` and `CanFdMessage`. Its impls route
+  `NodeMbox::store_message`/`next_transmit_message`, `PdoData::default` and `Pdo::init_defaults`
+  to code monomorphized in zencan-node, so the application links precompiled code for them.
+  `Node::process`, generic over the callbacks as well, is compiled in the application crate and
+  marked `#[inline(never)]` so that it is not inlined into `main`.
 - **PDO buffers hold only the payload.** `PdoData::buffered_value` is an
   `Option<F::PdoPayload>`, i.e. a `PdoBuffer<8>` for classic and a `PdoBuffer<64>` for CAN FD, not a
   whole frame. The frame would repeat the COB-ID the PDO already stores.

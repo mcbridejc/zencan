@@ -21,7 +21,7 @@ fn wide_payload() -> Vec<u8> {
     (0..8).flat_map(|i| element(i).to_le_bytes()).collect()
 }
 
-fn fd_node() -> Node<'static, CanFdMessage> {
+fn fd_node() -> Node<'static, Callbacks<'static>, CanFdMessage> {
     let od = object_dict4::get_od();
     Node::new(
         NodeId::new(FD_NODE_ID).unwrap(),

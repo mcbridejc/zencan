@@ -1,15 +1,11 @@
 //! The frame types a node can be built for
 use core::ops::Deref;
 
-use zencan_common::{
-    can::{CanFdMessage, CanFrame, CanMessage, CLASSIC_MAX_LEN, FD_MAX_LEN},
-    NodeId,
-};
+use zencan_common::can::{CanFdMessage, CanFrame, CanMessage, CLASSIC_MAX_LEN, FD_MAX_LEN};
 
 use crate::{
-    object_dict::ObjectDictionary,
     pdo::{Pdo, PdoData},
-    Callbacks, Node, NodeMbox, NodeState,
+    NodeMbox,
 };
 
 mod sealed {
@@ -18,10 +14,9 @@ mod sealed {
 
 /// A CAN frame type a node can run on: [`CanMessage`] (classic CAN) or [`CanFdMessage`] (CAN FD)
 ///
-/// This trait is sealed. Besides carrying the frame-dependent PDO storage type, it lets the node's
-/// frame-dependent code be compiled inside this crate, once per frame type, rather than in the
-/// application crate. An application built for classic CAN therefore links exactly the code it
-/// linked before CAN FD support existed, and pays nothing for it.
+/// This trait is sealed. Besides carrying the frame-dependent PDO storage type, it lets the frame
+/// dependent code of the mailbox and the PDOs be compiled inside this crate, once per frame type,
+/// rather than in the application crate.
 pub trait NodeFrame: CanFrame + TryFrom<CanMessage> + sealed::Sealed + 'static {
     /// Storage for the payload of one buffered PDO, with room for [`CanFrame::MAX_LEN`] bytes
     ///
@@ -32,18 +27,6 @@ pub trait NodeFrame: CanFrame + TryFrom<CanMessage> + sealed::Sealed + 'static {
     /// Convert to a classic frame, keeping only the first 8 bytes of a longer CAN FD frame
     #[doc(hidden)]
     fn into_classic(self) -> CanMessage;
-
-    #[doc(hidden)]
-    fn node_new<'a>(
-        node_id: NodeId,
-        callbacks: Callbacks<'a>,
-        mbox: &'static NodeMbox<Self>,
-        state: &'static NodeState<'static, Self>,
-        od: &'static dyn ObjectDictionary,
-    ) -> Node<'a, Self>;
-
-    #[doc(hidden)]
-    fn node_process(node: &mut Node<'_, Self>, now_us: u64) -> bool;
 
     #[doc(hidden)]
     fn mbox_store_message(mbox: &NodeMbox<Self>, msg: Self) -> Result<(), Self>;
@@ -135,20 +118,6 @@ macro_rules! impl_node_frame {
                     // exceed 8 for the messages converted here. Unreachable for classic CAN.
                     Err(_) => CanMessage::new(self.id(), &self.data()[..CLASSIC_MAX_LEN]),
                 }
-            }
-
-            fn node_new<'a>(
-                node_id: NodeId,
-                callbacks: Callbacks<'a>,
-                mbox: &'static NodeMbox<Self>,
-                state: &'static NodeState<'static, Self>,
-                od: &'static dyn ObjectDictionary,
-            ) -> Node<'a, Self> {
-                Node::new_impl(node_id, callbacks, mbox, state, od)
-            }
-
-            fn node_process(node: &mut Node<'_, Self>, now_us: u64) -> bool {
-                node.process_impl(now_us)
             }
 
             fn mbox_store_message(mbox: &NodeMbox<Self>, msg: Self) -> Result<(), Self> {

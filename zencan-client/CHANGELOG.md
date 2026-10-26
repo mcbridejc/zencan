@@ -9,11 +9,17 @@ Human-friendly documentation of releases and what's changed in them for the zenc
 - `open_socketcan_fd` re-export, to open a CAN FD socketcan interface. Wrap its handles in
   `zencan_common::can::ClassicAdapter` to run `SdoClient`, `NmtMaster`, `LssMaster` or `BusManager`
   on a CAN FD bus. See [docs/canfd.md](../docs/canfd.md).
+- `NmtMaster::nmt_enter_preop` to command nodes into the PreOperational state.
 
 ### Changed
 
 - The CAN transport traits from zencan-common take a frame type parameter which defaults to
   `CanMessage`. The client keeps using classic frames, so existing code is unaffected.
+
+### Fixed
+
+- `NmtMaster` no longer overwrites a known node when a heartbeat arrives from a lower node ID. The
+  shift that makes room in the sorted node list iterated over an empty range.
 
 ## v0.0.5 - 2026-09-04
 

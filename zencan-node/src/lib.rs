@@ -239,7 +239,7 @@ pub use bootloader::{BootloaderInfo, BootloaderSection, BootloaderSectionCallbac
 #[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
 pub use common::{open_socketcan, open_socketcan_fd};
 pub use identity_object::IdentityObject;
-pub use node::{Callbacks, Node};
+pub use node::{Callbacks, Node, NodeCallbacks};
 pub use node_frame::{NodeFrame, PdoBuffer, PdoPayload};
 pub use node_mbox::NodeMbox;
 pub use node_state::{NmtStateAccess, NodeState, ResetScope};

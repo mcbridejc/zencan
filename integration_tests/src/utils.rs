@@ -7,7 +7,7 @@ use zencan_common::{
     can::{AsyncCanReceiver, CanFdMessage, ClassicAdapter},
     protocol::ZencanMessage,
 };
-use zencan_node::{Node, NodeFrame};
+use zencan_node::{Node, NodeCallbacks, NodeFrame};
 
 pub fn get_sdo_client<'a>(
     bus: &mut SimBus<'a>,
@@ -34,12 +34,12 @@ pub fn get_fd_sdo_client<'a>(bus: &mut SimBus<'a, CanFdMessage>, node_id: u8) ->
     )
 }
 
-/// A node the background process task can run, whatever its frame type
+/// A node the background process task can run, whatever its callbacks and frame type
 pub trait ProcessNode {
     fn process(&mut self, now_us: u64) -> bool;
 }
 
-impl<F: NodeFrame> ProcessNode for Node<'_, F> {
+impl<C: NodeCallbacks, F: NodeFrame> ProcessNode for Node<'_, C, F> {
     fn process(&mut self, now_us: u64) -> bool {
         Node::process(self, now_us)
     }

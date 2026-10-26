@@ -1,7 +1,7 @@
 //! Implements the core Node object
 //!
 
-use core::{convert::Infallible, sync::atomic::Ordering};
+use core::{convert::Infallible, marker::PhantomData, sync::atomic::Ordering};
 
 use zencan_common::{
     can::{CanId, CanMessage},
@@ -104,6 +104,133 @@ impl<'a> Callbacks<'a> {
     }
 }
 
+/// Events which a [`Node`] reports to the application
+///
+/// Every method has an empty default, so an implementation only overrides the events it handles.
+/// [`Callbacks`] implements it from a set of optional closures, and `()` implements it with no
+/// callbacks at all.
+///
+/// A [`Node`] is `Send` when its callbacks are, so it can be built in one context and run in
+/// another, e.g. moved into an RTIC task. [`Callbacks`] holds plain closure references and is not
+/// `Send`; implement this trait on a `Send` type, or use `()`, for that.
+pub trait NodeCallbacks {
+    /// Whether [`store_node_config`](Self::store_node_config) is implemented
+    ///
+    /// The node only accepts the LSS StoreConfiguration command when it is.
+    fn store_node_config_supported(&self) -> bool {
+        false
+    }
+
+    /// Store node config to flash; see [`Callbacks::store_node_config`]
+    fn store_node_config(&mut self, _node_id: NodeId) {}
+
+    /// Whether [`store_objects`](Self::store_objects) is implemented
+    ///
+    /// The node only accepts the object save command when it is.
+    fn store_objects_supported(&self) -> bool {
+        false
+    }
+
+    /// Store object data to persistent flash; see [`Callbacks::store_objects`]
+    fn store_objects(
+        &mut self,
+        _reader: &mut dyn embedded_io::Read<Error = Infallible>,
+        _len: usize,
+    ) {
+    }
+
+    /// The RESET_APP NMT state has been entered; see [`Callbacks::reset_app`]
+    fn reset_app(&mut self, _od: &[ODEntry<'static>]) {}
+
+    /// The RESET_COMMS NMT state has been entered; see [`Callbacks::reset_comms`]
+    fn reset_comms(&mut self, _od: &[ODEntry<'static>]) {}
+
+    /// The node is entering OPERATIONAL state
+    fn enter_operational(&mut self, _od: &[ODEntry<'static>]) {}
+
+    /// The node is entering the STOPPED state
+    fn enter_stopped(&mut self, _od: &[ODEntry<'static>]) {}
+
+    /// The node is entering the PRE-OPERATIONAL state
+    fn enter_preoperational(&mut self, _od: &[ODEntry<'static>]) {}
+
+    /// The node has received a SYNC object
+    fn sync_received(&mut self, _sync: SyncObject) {}
+
+    /// The node has received a PDO
+    fn pdo_received(&mut self, _pdo: u8, _mapping: &[MappingEntry<'static>]) {}
+}
+
+impl NodeCallbacks for () {}
+
+impl NodeCallbacks for Callbacks<'_> {
+    fn store_node_config_supported(&self) -> bool {
+        self.store_node_config.is_some()
+    }
+
+    fn store_node_config(&mut self, node_id: NodeId) {
+        if let Some(cb) = &mut self.store_node_config {
+            cb(node_id)
+        }
+    }
+
+    fn store_objects_supported(&self) -> bool {
+        self.store_objects.is_some()
+    }
+
+    fn store_objects(
+        &mut self,
+        reader: &mut dyn embedded_io::Read<Error = Infallible>,
+        len: usize,
+    ) {
+        if let Some(cb) = &mut self.store_objects {
+            cb(reader, len)
+        }
+    }
+
+    fn reset_app(&mut self, od: &[ODEntry<'static>]) {
+        if let Some(cb) = &mut self.reset_app {
+            cb(od)
+        }
+    }
+
+    fn reset_comms(&mut self, od: &[ODEntry<'static>]) {
+        if let Some(cb) = &mut self.reset_comms {
+            cb(od)
+        }
+    }
+
+    fn enter_operational(&mut self, od: &[ODEntry<'static>]) {
+        if let Some(cb) = &mut self.enter_operational {
+            cb(od)
+        }
+    }
+
+    fn enter_stopped(&mut self, od: &[ODEntry<'static>]) {
+        if let Some(cb) = &mut self.enter_stopped {
+            cb(od)
+        }
+    }
+
+    fn enter_preoperational(&mut self, od: &[ODEntry<'static>]) {
+        if let Some(cb) = &mut self.enter_preoperational {
+            cb(od)
+        }
+    }
+
+    fn sync_received(&mut self, sync: SyncObject) {
+        if let Some(cb) = &mut self.sync_received {
+            cb(sync)
+        }
+    }
+
+    fn pdo_received(&mut self, pdo: u8, mapping: &[MappingEntry<'static>]) {
+        if let Some(cb) = &mut self.pdo_received {
+            cb(pdo, mapping)
+        }
+    }
+}
+
 fn read_identity(od: &[ODEntry<'static>]) -> Option<LssIdentity> {
     let obj = od.find_object(object_ids::IDENTITY)?;
     let vendor_id = obj.read_u32(1).ok()?;
@@ -139,10 +266,11 @@ fn read_autostart(od: &dyn ObjectLookup<'_>) -> Option<bool> {
 /// [`NodeMbox::set_process_notify_callback`], and use this callback to trigger an immediate call to
 /// process, e.g. by waking a task or signaling the processing thread.
 ///
-/// `F` is the CAN frame type exchanged with the driver through the [`NodeMbox`]: [`CanMessage`]
-/// (classic CAN, the default) or [`CanFdMessage`](zencan_common::can::CanFdMessage) (CAN FD).
+/// `C` receives the events the node reports: see [`NodeCallbacks`]. `F` is the CAN frame type
+/// exchanged with the driver through the [`NodeMbox`]: [`CanMessage`] (classic CAN, the default) or
+/// [`CanFdMessage`](zencan_common::can::CanFdMessage) (CAN FD).
 #[allow(missing_debug_implementations)]
-pub struct Node<'a, F: NodeFrame = CanMessage> {
+pub struct Node<'a, C = Callbacks<'a>, F: NodeFrame = CanMessage> {
     node_id: NodeId,
     sdo_server: SdoServer<'static>,
     lss_slave: LssSlave,
@@ -155,11 +283,12 @@ pub struct Node<'a, F: NodeFrame = CanMessage> {
     heartbeat_period_ms: u16,
     auto_start: bool,
     last_process_time_us: u64,
-    callbacks: Callbacks<'a>,
+    callbacks: C,
     transmit_flag: bool,
+    _callbacks_lifetime: PhantomData<&'a ()>,
 }
 
-impl<'a, F: NodeFrame> Node<'a, F> {
+impl<C: NodeCallbacks, F: NodeFrame> Node<'_, C, F> {
     /// Create a new [`Node`]
     ///
     /// # Arguments
@@ -170,17 +299,7 @@ impl<'a, F: NodeFrame> Node<'a, F> {
     /// * `od` - The `OD_TABLE` object containing the object dictionary created by `zencan-build`
     pub fn new(
         node_id: NodeId,
-        callbacks: Callbacks<'a>,
-        mbox: &'static NodeMbox<F>,
-        state: &'static NodeState<'static, F>,
-        od: &'static dyn ObjectDictionary,
-    ) -> Self {
-        F::node_new(node_id, callbacks, mbox, state, od)
-    }
-
-    pub(crate) fn new_impl(
-        node_id: NodeId,
-        callbacks: Callbacks<'a>,
+        callbacks: C,
         mbox: &'static NodeMbox<F>,
         state: &'static NodeState<'static, F>,
         od: &'static dyn ObjectDictionary,
@@ -198,7 +317,7 @@ impl<'a, F: NodeFrame> Node<'a, F> {
         state
             .storage_context()
             .store_supported
-            .store(callbacks.store_objects.is_some(), Ordering::Relaxed);
+            .store(callbacks.store_objects_supported(), Ordering::Relaxed);
 
         let heartbeat_period_ms = read_heartbeat_period(od).unwrap_or(0);
         let next_heartbeat_time_us = 0;
@@ -225,6 +344,7 @@ impl<'a, F: NodeFrame> Node<'a, F> {
             auto_start,
             last_process_time_us,
             transmit_flag,
+            _callbacks_lifetime: PhantomData,
         };
 
         node.reset_app();
@@ -256,11 +376,10 @@ impl<'a, F: NodeFrame> Node<'a, F> {
     ///
     /// A boolean indicating if objects were updated. This will be true when an SDO download has
     /// been completed, or when one or more RPDOs have been received.
+    // Node is generic over its callbacks, so process is compiled in the application crate, where
+    // inlining it into the caller grows the binary.
+    #[inline(never)]
     pub fn process(&mut self, now_us: u64) -> bool {
-        F::node_process(self, now_us)
-    }
-
-    pub(crate) fn process_impl(&mut self, now_us: u64) -> bool {
         let elapsed = (now_us - self.last_process_time_us) as u32;
         self.last_process_time_us = now_us;
 
@@ -307,8 +426,11 @@ impl<'a, F: NodeFrame> Node<'a, F> {
             .swap(false, Ordering::Relaxed)
         {
             // If the flag is set, and the user has provided a callback, call it
-            if let Some(cb) = &mut self.callbacks.store_objects {
-                crate::persist::serialize(self.od.od_table(), *cb);
+            if self.callbacks.store_objects_supported() {
+                let callbacks = &mut self.callbacks;
+                crate::persist::serialize(self.od.od_table(), &mut |reader, len| {
+                    callbacks.store_objects(reader, len)
+                });
             }
         }
 
@@ -334,9 +456,7 @@ impl<'a, F: NodeFrame> Node<'a, F> {
                 info!("LSS Slave Event: {:?}", event);
                 match event {
                     crate::lss_slave::LssEvent::StoreConfiguration => {
-                        if let Some(cb) = &mut self.callbacks.store_node_config {
-                            (cb)(self.node_id)
-                        }
+                        self.callbacks.store_node_config(self.node_id)
                     }
                     crate::lss_slave::LssEvent::ActivateBitTiming {
                         table: _,
@@ -397,16 +517,13 @@ impl<'a, F: NodeFrame> Node<'a, F> {
                 }
                 if let Some(new_data) = rpdo.data.buffered_value.take() {
                     rpdo.store_pdo_data(&new_data);
-                    if let Some(cb) = &mut self.callbacks.pdo_received {
-                        let mapping: heapless::Vec<MappingEntry<'a>, N_MAPPING_PARAMS> =
-                            rpdo.data.mapping_params[..rpdo.data.valid_maps.load().into()]
-                                .iter()
-                                .map(AtomicCell::load)
-                                .map(|entry| entry.try_get_valid_entry().unwrap())
-                                .collect();
-
-                        (*cb)(i as u8, mapping.as_slice());
-                    }
+                    let mapping: heapless::Vec<MappingEntry<'static>, N_MAPPING_PARAMS> =
+                        rpdo.data.mapping_params[..rpdo.data.valid_maps.load().into()]
+                            .iter()
+                            .map(AtomicCell::load)
+                            .map(|entry| entry.try_get_valid_entry().unwrap())
+                            .collect();
+                    self.callbacks.pdo_received(i as u8, mapping.as_slice());
                     update_flag = true;
                 }
             }
@@ -419,10 +536,8 @@ impl<'a, F: NodeFrame> Node<'a, F> {
             self.nmt_state(),
             NmtState::Operational | NmtState::PreOperational
         ) {
-            if let Some(cb) = &mut self.callbacks.sync_received {
-                if let Some(obj) = sync {
-                    (*cb)(obj);
-                }
+            if let Some(obj) = sync {
+                self.callbacks.sync_received(obj);
             }
         }
 
@@ -486,23 +601,17 @@ impl<'a, F: NodeFrame> Node<'a, F> {
 
     fn enter_operational(&mut self) {
         self.state.set_nmt_state(NmtState::Operational);
-        if let Some(cb) = &mut self.callbacks.enter_operational {
-            (*cb)(self.od.od_table());
-        }
+        self.callbacks.enter_operational(self.od.od_table());
     }
 
     fn enter_stopped(&mut self) {
         self.state.set_nmt_state(NmtState::Stopped);
-        if let Some(cb) = &mut self.callbacks.enter_stopped {
-            (*cb)(self.od.od_table());
-        }
+        self.callbacks.enter_stopped(self.od.od_table());
     }
 
     fn enter_preoperational(&mut self) {
         self.state.set_nmt_state(NmtState::PreOperational);
-        if let Some(cb) = &mut self.callbacks.enter_preoperational {
-            (*cb)(self.od.od_table());
-        }
+        self.callbacks.enter_preoperational(self.od.od_table());
     }
 
     fn reset_object_values(&self, scope: crate::ResetScope) {
@@ -530,9 +639,7 @@ impl<'a, F: NodeFrame> Node<'a, F> {
         self.reset_object_values(crate::ResetScope::Application);
         self.state.set_nmt_state(NmtState::Bootup);
 
-        if let Some(reset_app_cb) = &mut self.callbacks.reset_app {
-            (*reset_app_cb)(self.od.od_table());
-        }
+        self.callbacks.reset_app(self.od.od_table());
         self.finish_reset();
     }
 
@@ -542,9 +649,7 @@ impl<'a, F: NodeFrame> Node<'a, F> {
 
         self.state.set_nmt_state(NmtState::Bootup);
 
-        if let Some(reset_comms_cb) = &mut self.callbacks.reset_comms {
-            (*reset_comms_cb)(self.od.od_table());
-        }
+        self.callbacks.reset_comms(self.od.od_table());
         self.finish_reset();
     }
 
@@ -553,7 +658,7 @@ impl<'a, F: NodeFrame> Node<'a, F> {
         self.lss_slave.update_config(LssConfig {
             identity: read_identity(self.od.od_table()).unwrap_or_default(),
             node_id: self.node_id,
-            store_supported: self.callbacks.store_node_config.is_some(),
+            store_supported: self.callbacks.store_node_config_supported(),
         });
 
         if let NodeId::Configured(node_id) = self.node_id {
@@ -580,6 +685,13 @@ impl<'a, F: NodeFrame> Node<'a, F> {
     }
 }
 
+// A node is built in one context and often run in another, so it must be `Send` when its
+// callbacks are.
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<Node<'static, ()>>();
+};
+
 #[cfg(test)]
 mod tests {
     use zencan_common::{
@@ -594,7 +706,7 @@ mod tests {
             ScalarFieldU8, SubInfo, SubObjectAccess,
         },
         priority_queue::PriorityQueue,
-        Callbacks, Node, NodeMbox, NodeState,
+        Callbacks, Node, NodeCallbacks, NodeMbox, NodeState,
     };
 
     struct AutoStartObject {
@@ -702,5 +814,70 @@ mod tests {
 
         node.process(0);
         assert_eq!(NmtState::PreOperational, node.nmt_state());
+    }
+    /// Records the events a node reports, as an application's own callbacks type would
+    #[derive(Default)]
+    struct EventRecorder {
+        events: Vec<&'static str>,
+    }
+
+    impl NodeCallbacks for EventRecorder {
+        fn reset_app(&mut self, _od: &[ODEntry<'static>]) {
+            self.events.push("reset_app");
+        }
+
+        fn enter_operational(&mut self, _od: &[ODEntry<'static>]) {
+            self.events.push("enter_operational");
+        }
+
+        fn enter_preoperational(&mut self, _od: &[ODEntry<'static>]) {
+            self.events.push("enter_preoperational");
+        }
+    }
+
+    #[test]
+    fn test_node_calls_custom_callbacks() {
+        let object5000 = Box::leak(Box::new(AutoStartObject::new(1)));
+        let entries = Box::leak(Box::new([ODEntry {
+            index: 0x5000,
+            object: object5000,
+        }]));
+        let od = Box::leak(Box::new(TestOd { entries }));
+
+        let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
+        let sdo_buffer = Box::leak(Box::new([0u8; 100]));
+        let mbox = Box::leak(Box::new(NodeMbox::new(&[], &[], tx_queue, sdo_buffer)));
+        let state = Box::leak(Box::new(NodeState::new(&[], &[])));
+
+        let mut node = Node::new(
+            NodeId::new(1).unwrap(),
+            EventRecorder::default(),
+            mbox,
+            state,
+            od,
+        );
+        node.process(0);
+
+        mbox.store_message(
+            NmtCommand {
+                cs: NmtCommandSpecifier::ResetApp,
+                node: 1,
+            }
+            .into(),
+        )
+        .unwrap();
+        node.process(0);
+        node.process(0);
+
+        assert_eq!(
+            node.callbacks.events,
+            [
+                "reset_app",
+                "enter_preoperational",
+                "enter_operational",
+                "reset_app",
+                "enter_preoperational",
+            ]
+        );
     }
 }

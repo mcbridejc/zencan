@@ -159,7 +159,7 @@ impl<F: Future> embedded_io::Read for PersistSerializer<'_, '_, F> {
 /// Serialize node data
 pub fn serialize<'a>(
     objects: &'a [ODEntry<'a>],
-    callback: &dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize),
+    callback: &mut dyn FnMut(&mut dyn embedded_io::Read<Error = Infallible>, usize),
 ) {
     let reg = RefCell::new(0);
     let size = serialized_size(objects);
@@ -410,7 +410,7 @@ mod tests {
         inst200.string.set_str("test".as_bytes()).unwrap();
 
         let data = RefCell::new(Vec::new());
-        serialize(od.entries, &|reader, _size| {
+        serialize(od.entries, &mut |reader, _size| {
             const CHUNK_SIZE: usize = 2;
             let mut buf = [0; CHUNK_SIZE];
             loop {
