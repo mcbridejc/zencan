@@ -53,19 +53,21 @@ and the transport traits `CanSender<F>`, `CanReceiver<F>`, `AsyncCanSender<F>` a
   `Option<F::PdoPayload>`, i.e. a `PdoBuffer<8>` for classic and a `PdoBuffer<64>` for CAN FD, not a
   whole frame. The frame would repeat the COB-ID the PDO already stores.
 
-Example binary sizes (bytes, `scripts/example_sizes.sh`), before CAN FD support and after:
+Example binary sizes (bytes, `scripts/example_sizes.sh`), on the main branch without CAN FD support
+and with it:
 
 | Example              | Text (before → after) | Data         | BSS          | RAM (data + bss) |
 | -------------------- | --------------------- | ------------ | ------------ | ---------------- |
-| stm32g0-lilos-node   | 58212 → 57772         | 132 → 132    | 3180 → 3148  | 3312 → 3280      |
-| stm32l5-minimal      | 31790 → 31698         | 132 → 132    | 2488 → 2456  | 2620 → 2588      |
-| esp-node             | 475474 → 475456       | 1824 → 1816  | 4172 → 4140  | 5996 → 5956      |
-| stm32l5-minimal (fd) | 34550 (new)           | 356          | 2984         | 3340             |
+| stm32g0-lilos-node   | 60872 → 59100         | 132 → 132    | 3180 → 3148  | 3312 → 3280      |
+| stm32l5-minimal      | 32330 → 32386         | 132 → 132    | 2488 → 2456  | 2620 → 2588      |
+| esp-node             | 477276 → 476000       | 1824 → 1816  | 4172 → 4140  | 5996 → 5956      |
+| stm32l5-minimal (fd) | 35210 (new)           | 356          | 2984         | 3340             |
 
-Classic builds got slightly smaller. TPDOs are now read straight into a zero-initialized buffer,
-which removes a stack array, a copy and a panic path. `Option<PdoBuffer<8>>` is 10 bytes, against
-16 for the `Option<heapless::Vec<u8, 8>>` it replaces; after alignment, each PDO is 4 bytes smaller
-(the examples have 8 PDOs each, hence 32 bytes less BSS).
+Every classic build uses less RAM. TPDOs are now read straight into a zero-initialized buffer, which
+removes a stack array, a copy and a panic path. `Option<PdoBuffer<8>>` is 10 bytes, against 16 for
+the `Option<heapless::Vec<u8, 8>>` it replaces; after alignment, each PDO is 4 bytes smaller (the
+examples have 8 PDOs each, hence 32 bytes less BSS). Flash shrinks for stm32g0-lilos-node and
+esp-node, and grows by 56 bytes for stm32l5-minimal.
 
 ## Building a CAN FD node
 
