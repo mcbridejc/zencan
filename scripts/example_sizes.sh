@@ -17,6 +17,7 @@ measure() {
     local name=$1
     local target=$2
     local features=${3:-}
+    local label=${4:-$name}
     local directory="$root/examples/$name"
     local output values text data bss sections flash ram
 
@@ -27,15 +28,15 @@ measure() {
 
     if ! output=$(cd "$directory" && cargo size --release --bin "$name" --target "$target" "${feature_args[@]}" "${locked[@]}" 2>&1); then
         printf '%s\n' "$output" >&2
-        rows+=("$name|—|—|—|—|—|—")
+        rows+=("$label|—|—|—|—|—|—")
         failures=$((failures + 1))
         return 0
     fi
     values=$(printf '%s\n' "$output" | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ { print $1, $2, $3, $4 }' | tail -n 1)
     if [[ -z $values ]]; then
         printf '%s\n' "$output" >&2
-        echo "cargo size did not produce a Berkeley-format size row for $name" >&2
-        rows+=("$name|—|—|—|—|—|—")
+        echo "cargo size did not produce a Berkeley-format size row for $label" >&2
+        rows+=("$label|—|—|—|—|—|—")
         failures=$((failures + 1))
         return 0
     fi
@@ -43,12 +44,13 @@ measure() {
     read -r text data bss sections <<< "$values"
     flash=$((text + data))
     ram=$((data + bss))
-    rows+=("$name|$flash|$ram|$text|$data|$bss|$sections")
+    rows+=("$label|$flash|$ram|$text|$data|$bss|$sections")
 }
 
 measure stm32g0-lilos-node thumbv6m-none-eabi
 measure stm32l5-minimal thumbv8m.main-none-eabihf
 measure esp-node riscv32imc-unknown-none-elf esp32c3
+measure stm32l5-minimal thumbv8m.main-none-eabihf fd "stm32l5-minimal (fd)"
 
 printf '# Example binary sizes\n\n'
 printf '| %-21s | %18s | %16s | %10s | %10s | %10s | %25s |\n' \

@@ -1,28 +1,29 @@
 //! Implements mailbox for receiving CAN messages
 use defmt_or_log::warn;
 use zencan_common::{
-    can::{CanId, CanMessage},
+    can::{CanFrame, CanId, CanMessage},
     protocol::{SyncObject, LSS_REQ_ID, NMT_CMD_ID, SYNC_ID},
     AtomicCell,
 };
 
 use crate::{
-    lss_slave::LssReceiver, pdo::Pdo, priority_queue::PriorityQueue, sdo_server::SdoComms,
+    lss_slave::LssReceiver, node_frame::NodeFrame, pdo::Pdo, priority_queue::PriorityQueue,
+    sdo_server::SdoComms,
 };
 
-pub trait CanMessageQueue: Send + Sync {
-    fn push(&self, msg: CanMessage) -> Result<(), CanMessage>;
+pub trait CanMessageQueue<F = CanMessage>: Send + Sync {
+    fn push(&self, msg: F) -> Result<(), F>;
 
-    fn pop(&self) -> Option<CanMessage>;
+    fn pop(&self) -> Option<F>;
 }
 
-impl<const N: usize> CanMessageQueue for PriorityQueue<N, CanMessage> {
-    fn push(&self, msg: CanMessage) -> Result<(), CanMessage> {
+impl<const N: usize, F: CanFrame> CanMessageQueue<F> for PriorityQueue<N, F> {
+    fn push(&self, msg: F) -> Result<(), F> {
         let prio = msg.id().raw();
         self.push(prio, msg)
     }
 
-    fn pop(&self) -> Option<CanMessage> {
+    fn pop(&self) -> Option<F> {
         self.pop()
     }
 }
@@ -31,10 +32,15 @@ impl<const N: usize> CanMessageQueue for PriorityQueue<N, CanMessage> {
 /// [`Node`](crate::Node) object.
 ///
 /// Incoming messages should be passed to [NodeMbox::store_message].
+///
+/// The mailbox is generic over the frame type `F` exchanged with the CAN driver: [`CanMessage`] for
+/// classic CAN (the default) or [`CanFdMessage`](zencan_common::can::CanFdMessage) for CAN FD.
+/// Protocol messages which always fit in 8 bytes (NMT, SYNC, LSS, SDO, heartbeat) are converted to
+/// and from `F` at this boundary.
 #[allow(missing_debug_implementations)]
-pub struct NodeMbox {
-    rx_pdos: &'static [Pdo<'static>],
-    tx_pdos: &'static [Pdo<'static>],
+pub struct NodeMbox<F: NodeFrame = CanMessage> {
+    rx_pdos: &'static [Pdo<'static, F>],
+    tx_pdos: &'static [Pdo<'static, F>],
     /// ID used for transmitting SDO server responses
     sdo_tx_cob_id: AtomicCell<Option<CanId>>,
     /// ID used for receiving SDO server requests
@@ -45,19 +51,19 @@ pub struct NodeMbox {
     sync_flag: AtomicCell<Option<SyncObject>>,
     process_notify_cb: AtomicCell<Option<&'static (dyn Fn() + Sync)>>,
     transmit_notify_cb: AtomicCell<Option<&'static (dyn Fn() + Sync)>>,
-    tx_queue: &'static dyn CanMessageQueue,
+    tx_queue: &'static dyn CanMessageQueue<F>,
 }
 
-impl NodeMbox {
+impl<F: NodeFrame> NodeMbox<F> {
     /// Create a new NodeMbox
     ///
     /// # Args
     ///
     /// - `rx_pdos`: A slice of Pdo objects for all of the receive PDOs
     pub const fn new(
-        rx_pdos: &'static [Pdo],
-        tx_pdos: &'static [Pdo],
-        tx_queue: &'static dyn CanMessageQueue,
+        rx_pdos: &'static [Pdo<'static, F>],
+        tx_pdos: &'static [Pdo<'static, F>],
+        tx_queue: &'static dyn CanMessageQueue<F>,
         sdo_buffer: &'static mut [u8],
     ) -> Self {
         let sdo_rx_cob_id = AtomicCell::new(None);
@@ -138,16 +144,21 @@ impl NodeMbox {
     ///
     /// If the message is recognized and handled, `Ok(())` is returned. Otherwise, the message is
     /// returned inside an Err.
-    pub fn store_message(&self, msg: CanMessage) -> Result<(), CanMessage> {
+    pub fn store_message(&self, msg: F) -> Result<(), F> {
+        F::mbox_store_message(self, msg)
+    }
+
+    pub(crate) fn store_message_impl(&self, msg: F) -> Result<(), F> {
         let id = msg.id();
+        // NMT and SYNC frames padded by a CAN FD peer are accepted, as SDO and LSS frames are
         if id == NMT_CMD_ID {
-            self.nmt_mbox.store(Some(msg));
+            self.nmt_mbox.store(Some(msg.into_classic()));
             self.process_notify();
             return Ok(());
         }
 
         if id == SYNC_ID {
-            let sync_object = SyncObject::from(msg);
+            let sync_object = SyncObject::from(msg.into_classic());
             self.sync_flag.store(Some(sync_object));
             self.process_notify();
             return Ok(());
@@ -190,7 +201,11 @@ impl NodeMbox {
     /// - TPDOs first, if available, starting with TPDO0
     /// - Other non-SDO messages (SYNC, LSS, NMT)
     /// - SDO server responses
-    pub fn next_transmit_message(&self) -> Option<CanMessage> {
+    pub fn next_transmit_message(&self) -> Option<F> {
+        F::mbox_next_transmit_message(self)
+    }
+
+    pub(crate) fn next_transmit_message_impl(&self) -> Option<F> {
         for pdo in self.tx_pdos.iter() {
             if let Some(msg) = pdo.take_frame() {
                 return Some(msg);
@@ -203,7 +218,7 @@ impl NodeMbox {
 
         if let Some(msg) = self.sdo_comms.next_transmit_message() {
             if let Some(id) = self.sdo_tx_cob_id.load() {
-                return Some(CanMessage::new(id, &msg));
+                return F::try_from(CanMessage::new(id, &msg)).ok();
             }
         }
 
@@ -221,7 +236,7 @@ impl NodeMbox {
     }
 
     /// Store a message for transmission in the general transmit queue
-    pub fn queue_transmit_message(&self, msg: CanMessage) -> Result<(), CanMessage> {
+    pub fn queue_transmit_message(&self, msg: F) -> Result<(), F> {
         self.tx_queue.push(msg)
     }
 }

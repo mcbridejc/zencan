@@ -20,8 +20,11 @@
 //!
 //! ## Device Configuration
 //!
-//! A zencan node is configured using a [DeviceConfig](common::device_config::DeviceConfig) TOML
-//! file, see [common::device_config] module docs for more info.
+//! A zencan node is configured using a
+//! [DeviceConfig](https://docs.rs/zencan-build/latest/zencan_build/device_config/struct.DeviceConfig.html)
+//! TOML file, see the
+//! [`zencan_build::device_config`](https://docs.rs/zencan-build/latest/zencan_build/device_config/index.html)
+//! module docs for more info.
 //!
 //! ## Code Generation
 //!
@@ -139,6 +142,11 @@
 //! zencan::get_od().node_mbox().store_message(msg).ok();
 //! ```
 //!
+//! For a CAN FD node (`frame_format = "fd"` in the device config), the mailbox exchanges
+//! [`CanFdMessage`](common::can::CanFdMessage) frames instead. The generated module exports the
+//! frame type as `Frame`, so a driver written as `zencan::Frame::new(id, data)` works for both
+//! formats. See [Transmitting CAN FD frames](#transmitting-can-fd-frames).
+//!
 //! Outgoing messages can be read from the mbox using the [`NodeMbox::next_transmit_message`]
 //! function. A callback can be registered (see [`NodeMbox::set_transmit_notify_callback`]) to be
 //! notified when new messages are queued for transmission -- this can be used to e.g. push the
@@ -163,6 +171,15 @@
 //!     }
 //! }
 //! ```
+//!
+//! ### Transmitting CAN FD frames
+//!
+//! A CAN FD payload must be padded to a legal CAN FD length (0 to 8, 12, 16, 20, 24, 32, 48 or 64
+//! bytes) before transmission. Drivers should transmit
+//! [`padded_data()`](common::can::CanFrame::padded_data), which is
+//! [`on_wire_len()`](common::can::CanFrame::on_wire_len) bytes long, and request bit rate switching
+//! as given by [`CanFdMessage::brs`](common::can::CanFdMessage::brs). For classic frames these are
+//! just the frame's data. See `docs/canfd.md` in the repository for details.
 //!
 //! ## Calling periodic process method
 //!
@@ -198,6 +215,7 @@ mod identity_object;
 pub mod init_cell;
 mod lss_slave;
 mod node;
+mod node_frame;
 mod node_mbox;
 mod node_state;
 pub mod object_dict;
@@ -219,9 +237,10 @@ pub use zencan_common as common;
 pub use bootloader::{BootloaderInfo, BootloaderSection, BootloaderSectionCallbacks};
 #[cfg(all(feature = "socketcan", target_os = "linux"))]
 #[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
-pub use common::open_socketcan;
+pub use common::{open_socketcan, open_socketcan_fd};
 pub use identity_object::IdentityObject;
 pub use node::{Callbacks, Node, NodeCallbacks};
+pub use node_frame::{NodeFrame, PdoBuffer, PdoPayload};
 pub use node_mbox::NodeMbox;
 pub use node_state::{NmtStateAccess, NodeState, ResetScope};
 pub use persist::{restore_stored_comm_objects, restore_stored_objects};

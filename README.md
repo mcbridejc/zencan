@@ -28,7 +28,8 @@ I like CAN, and I wanted to make it easy to build devices with lots of communica
 - Support embedded targets with `no_std`/`no_alloc` with statically allocated object storage
 - Support enumeration of devices on a bus
 - Support software version reporting and bootloading over the bus
-- Support CAN-FD
+- Support CAN FD: PDOs of up to 64 bytes, selected per node in the device config, at no cost to
+  classic CAN nodes (see [docs/canfd.md](docs/canfd.md))
 - Support bulk data transfer
 - Generate EDS and DBC files for integration into existing tools
 - Support persistence of configuration to flash via application provided callbacks

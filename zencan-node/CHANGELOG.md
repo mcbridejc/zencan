@@ -2,6 +2,52 @@
 
 Human-friendly documentation of releases and what's changed in them for the zencan-node crate.
 
+## Unreleased
+
+### Added
+
+- CAN FD support: nodes exchanging frames of up to 64 bytes, with PDOs of up to 64 bytes. See
+  [docs/canfd.md](../docs/canfd.md).
+  - `CanFdMessage`, the CAN FD frame type (zencan-common), with BRS and ESI flags, and the `CanFrame`
+    trait implemented by `CanMessage` and `CanFdMessage`, with `fd_padded_len` and `TryFrom`
+    conversions between the two.
+  - A `[can] frame_format = "classic" | "fd"` device config setting (zencan-build). The generated
+    module exports the selected frame type as `Frame`. CAN FD PDO defaults may map up to 64 bytes
+    and must set `rtr_disabled = true`, since CAN FD has no remote frames.
+  - `open_socketcan_fd`, a CAN FD socketcan backend (zencan-common, re-exported here).
+  - `ClassicAdapter` (zencan-common), to run classic CAN code such as the zencan-client masters on a
+    CAN FD transport.
+  - The sealed `NodeFrame` trait, implemented for `CanMessage` and `CanFdMessage`, and `PdoBuffer`.
+  - A CAN FD build of the stm32l5-minimal example (`--features fd`).
+
+  CAN FD is selected in the device config rather than with a Cargo feature. A type which is never
+  instantiated costs no RAM or flash, so keeping the two frame types separate is enough to spare
+  classic nodes any cost. Cargo features are unified across the dependency graph, so a feature would
+  have turned every node of a workspace into a 64-byte one as soon as one node used CAN FD. The
+  device config is per node, and already drives code generation.
+
+### Changed
+
+- `NodeMbox`, `Node`, `NodeState`, `Pdo`, `PdoData`, `PdoCommObject` and `PdoMappingObject` take a
+  frame type parameter, and the CAN transport traits (`CanSender`, `CanReceiver`, `AsyncCanSender`,
+  `AsyncCanReceiver`, `CanSendError`) take a frame type parameter. All default to `CanMessage`, so
+  classic CAN code is unaffected.
+- **Breaking:** `PdoData::buffered_value` holds a `PdoBuffer<8>` instead of a
+  `heapless::Vec<u8, 8>` for classic CAN. It dereferences to the payload bytes as before, and saves
+  4 bytes of RAM per PDO.
+- **Breaking:** `PdoData::new()` constructs classic CAN storage only; `PdoData::default()` is
+  generic over the frame type.
+- **Breaking:** `DeviceConfig` (zencan-build) has a new `can` field.
+- TPDOs are read straight into their payload buffer, without an intermediate stack array.
+- The SDO server mailbox and `BlockSegment` parsing accept frames longer than 8 bytes, using the
+  first 8, so that SDO messages padded in CAN FD frames are understood.
+- zencan-common requires tokio 1.53.3 or later, for `AsyncFd::register`.
+
+### Fixed
+
+- Deprecation warning from tokio 1.53.3 in the socketcan backend (`AsyncFd::new`).
+- Broken intra-doc links.
+
 ## v0.0.5 - 2026-09-04
 
 ### Added

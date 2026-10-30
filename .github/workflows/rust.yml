@@ -36,3 +36,9 @@ jobs:
       - name: Build stm32g0-lilos-node example
         working-directory: examples/stm32g0-lilos-node
         run: cargo build
+      - name: Build stm32l5-minimal example
+        working-directory: examples/stm32l5-minimal
+        run: cargo build
+      - name: Build stm32l5-minimal example for CAN FD
+        working-directory: examples/stm32l5-minimal
+        run: cargo build --features fd

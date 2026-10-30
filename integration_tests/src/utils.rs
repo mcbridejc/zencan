@@ -3,8 +3,11 @@ use std::{future::Future, time::Instant};
 
 use crate::sim_bus::{SimBus, SimBusReceiver, SimBusSender};
 use zencan_client::SdoClient;
-use zencan_common::{can::AsyncCanReceiver, protocol::ZencanMessage};
-use zencan_node::Node;
+use zencan_common::{
+    can::{AsyncCanReceiver, CanFdMessage, ClassicAdapter},
+    protocol::ZencanMessage,
+};
+use zencan_node::{Node, NodeCallbacks, NodeFrame};
 
 pub fn get_sdo_client<'a>(
     bus: &mut SimBus<'a>,
@@ -13,6 +16,33 @@ pub fn get_sdo_client<'a>(
     let sender = bus.new_sender();
     let receiver = bus.new_receiver();
     SdoClient::new_std(node_id, sender, receiver)
+}
+
+/// Create an SDO client on a CAN FD bus
+///
+/// The SDO protocol is unchanged on CAN FD: its 8-byte messages are carried in CAN FD frames.
+pub type FdSdoClient<'a> = SdoClient<
+    ClassicAdapter<SimBusSender<'a, CanFdMessage>>,
+    ClassicAdapter<SimBusReceiver<CanFdMessage>>,
+>;
+
+pub fn get_fd_sdo_client<'a>(bus: &mut SimBus<'a, CanFdMessage>, node_id: u8) -> FdSdoClient<'a> {
+    SdoClient::new_std(
+        node_id,
+        bus.new_classic_sender(),
+        bus.new_classic_receiver(),
+    )
+}
+
+/// A node the background process task can run, whatever its callbacks and frame type
+pub trait ProcessNode {
+    fn process(&mut self, now_us: u64) -> bool;
+}
+
+impl<C: NodeCallbacks, F: NodeFrame> ProcessNode for Node<'_, C, F> {
+    fn process(&mut self, now_us: u64) -> bool {
+        Node::process(self, now_us)
+    }
 }
 
 pub struct TestContext {
@@ -32,12 +62,13 @@ impl TestContext {
 }
 
 #[allow(dead_code)]
-pub async fn test_with_background_process<F, T, Fut>(
-    nodes: &mut [&mut Node<'_>],
-    bus: &mut SimBus<'_>,
+pub async fn test_with_background_process<Frame, F, T, Fut>(
+    nodes: &mut [&mut dyn ProcessNode],
+    bus: &mut SimBus<'_, Frame>,
     test_task: F,
 ) -> T
 where
+    Frame: NodeFrame,
     F: (FnOnce(TestContext) -> Fut) + 'static,
     Fut: Future<Output = T>,
 {

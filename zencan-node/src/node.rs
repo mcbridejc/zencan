@@ -15,6 +15,7 @@ use zencan_common::{
 
 use crate::{
     lss_slave::{LssConfig, LssSlave},
+    node_frame::NodeFrame,
     node_mbox::NodeMbox,
     node_state::NmtStateAccess as _,
     object_dict::{ODEntry, ObjectDictionary, ObjectLookup},
@@ -264,15 +265,19 @@ fn read_autostart(od: &dyn ObjectLookup<'_>) -> Option<bool> {
 /// down communication to your node. It is recommended to register a callback using
 /// [`NodeMbox::set_process_notify_callback`], and use this callback to trigger an immediate call to
 /// process, e.g. by waking a task or signaling the processing thread.
+///
+/// `C` receives the events the node reports: see [`NodeCallbacks`]. `F` is the CAN frame type
+/// exchanged with the driver through the [`NodeMbox`]: [`CanMessage`] (classic CAN, the default) or
+/// [`CanFdMessage`](zencan_common::can::CanFdMessage) (CAN FD).
 #[allow(missing_debug_implementations)]
-pub struct Node<'a, C = Callbacks<'a>> {
+pub struct Node<'a, C = Callbacks<'a>, F: NodeFrame = CanMessage> {
     node_id: NodeId,
     sdo_server: SdoServer<'static>,
     lss_slave: LssSlave,
     message_count: u32,
     od: &'static dyn ObjectDictionary<'static>,
-    mbox: &'static NodeMbox,
-    state: &'static NodeState<'static>,
+    mbox: &'static NodeMbox<F>,
+    state: &'static NodeState<'static, F>,
     reassigned_node_id: Option<NodeId>,
     next_heartbeat_time_us: u64,
     heartbeat_period_ms: u16,
@@ -283,7 +288,7 @@ pub struct Node<'a, C = Callbacks<'a>> {
     _callbacks_lifetime: PhantomData<&'a ()>,
 }
 
-impl<C: NodeCallbacks> Node<'_, C> {
+impl<C: NodeCallbacks, F: NodeFrame> Node<'_, C, F> {
     /// Create a new [`Node`]
     ///
     /// # Arguments
@@ -295,8 +300,8 @@ impl<C: NodeCallbacks> Node<'_, C> {
     pub fn new(
         node_id: NodeId,
         callbacks: C,
-        mbox: &'static NodeMbox,
-        state: &'static NodeState<'static>,
+        mbox: &'static NodeMbox<F>,
+        state: &'static NodeState<'static, F>,
         od: &'static dyn ObjectDictionary,
     ) -> Self {
         let message_count = 0;
@@ -588,7 +593,9 @@ impl<C: NodeCallbacks> Node<'_, C> {
     fn send_message(&mut self, msg: CanMessage) {
         self.transmit_flag = true;
         // TODO: return  the error, and then handle it everywhere
-        self.mbox.queue_transmit_message(msg).ok();
+        if let Ok(msg) = F::try_from(msg) {
+            self.mbox.queue_transmit_message(msg).ok();
+        }
     }
 
     fn enter_operational(&mut self) {

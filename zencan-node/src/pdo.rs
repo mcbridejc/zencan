@@ -5,7 +5,8 @@
 //! PDO default configuration can be controlled in the device config, so that PDOs may be mapped to
 //! certain object and enabled by default in a device. This is done in the `[pdos]` section of the
 //! config, which is defined by the
-//! [`PdoDefaultConfig`](crate::common::device_config::PdoDefaultConfig) struct.
+//! [`PdoDefaultConfig`](https://docs.rs/zencan-build/latest/zencan_build/device_config/struct.PdoDefaultConfig.html)
+//! struct.
 //!
 //! The default PDO COB ID may be specified as an absolute value, or it may be offset by the node ID
 //! at runtime.
@@ -41,6 +42,7 @@
 //! ```
 
 use crate::{
+    node_frame::{NodeFrame, PdoPayload},
     node_state::NmtStateAccess,
     object_dict::{
         ConstField, ObjectAccess, ObjectLookup, ProvidesSubObjects, SubInfo, SubObjectAccess,
@@ -55,8 +57,11 @@ use zencan_common::{
 
 /// Specifies the number of mapping parameters supported per PDO
 ///
-/// Since we do not yet support CAN-FD, or sub-byte mapping, it's not possible to map more than 8
-/// objects to a single PDO
+/// This bounds the number of mapped objects, not the PDO length: the mapped objects may span up to
+/// [`CanFrame::MAX_LEN`](zencan_common::can::CanFrame::MAX_LEN) bytes, i.e. 8 bytes in classic CAN
+/// and 64 bytes in CAN FD. As only byte-aligned mappings are supported, 8 entries are always enough
+/// to fill a classic frame, and 8 entries of up to 8 bytes fill a CAN FD frame. Every PDO stores
+/// this many entries, so raising it costs RAM on every PDO.
 pub const N_MAPPING_PARAMS: usize = 8;
 
 #[allow(missing_debug_implementations)]
@@ -210,8 +215,10 @@ impl<'a> PdoDefaults<'a> {
 }
 
 /// Mutable PDO storage, constructed once and reset through its cells.
+///
+/// `F` is the CAN frame type the PDO is exchanged in, [`CanMessage`] by default.
 #[allow(missing_debug_implementations)]
-pub struct PdoData<'a> {
+pub struct PdoData<'a, F: NodeFrame = CanMessage> {
     /// Current node ID assignment; Unconfigured after default reset.
     node_id: AtomicCell<NodeId>,
     /// The COB-ID used to send or receive this PDO
@@ -219,6 +226,8 @@ pub struct PdoData<'a> {
     /// Indicates if the PDO is enabled
     valid: AtomicCell<bool>,
     /// If set, this PDO cannot be requested via RTR
+    ///
+    /// Always reported as set for CAN FD, which has no remote frames.
     rtr_disabled: AtomicCell<bool>,
     /// Transmission type field (subindex 0x2)
     /// Determines when the PDO is sent/received
@@ -229,8 +238,11 @@ pub struct PdoData<'a> {
     transmission_type: AtomicCell<u8>,
     /// Tracks the number of sync signals since this was last sent or received
     sync_counter: AtomicCell<u8>,
-    /// The last received data value for an RPDO, or ready to transmit data for a TPDO
-    pub buffered_value: AtomicCell<Option<heapless::Vec<u8, 8>>>,
+    /// The last received payload for an RPDO, or the payload ready to transmit for a TPDO
+    ///
+    /// This is a [`PdoBuffer<8>`](crate::PdoBuffer) for classic CAN, and a
+    /// [`PdoBuffer<64>`](crate::PdoBuffer) for CAN FD.
+    pub buffered_value: AtomicCell<Option<F::PdoPayload>>,
     /// Indicates how many of the values in mapping_params are valid
     ///
     /// This represents sub0 for the mapping object
@@ -241,15 +253,24 @@ pub struct PdoData<'a> {
     pub(crate) mapping_params: [AtomicCell<StoredMappingEntry<'a>>; N_MAPPING_PARAMS],
 }
 
-impl Default for PdoData<'_> {
-    fn default() -> Self {
-        Self::new()
+impl<'a> PdoData<'a> {
+    /// Construct disabled classic CAN PDO storage with no mappings or buffered frame.
+    ///
+    /// Use [`PdoData::default`] to construct storage for another frame type.
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
-impl<'a> PdoData<'a> {
+impl<F: NodeFrame> Default for PdoData<'_, F> {
     /// Construct disabled PDO storage with no mappings or buffered frame.
-    pub fn new() -> Self {
+    fn default() -> Self {
+        F::pdo_data_default()
+    }
+}
+
+impl<F: NodeFrame> PdoData<'_, F> {
+    pub(crate) fn default_impl() -> Self {
         let cob_id = AtomicCell::new(None);
         let node_id = AtomicCell::new(NodeId::Unconfigured);
         let valid = AtomicCell::new(false);
@@ -274,8 +295,10 @@ impl<'a> PdoData<'a> {
     }
 }
 /// Represents a single PDO state
+///
+/// `F` is the CAN frame type the PDO is exchanged in, [`CanMessage`] by default.
 #[allow(missing_debug_implementations)]
-pub struct Pdo<'a> {
+pub struct Pdo<'a, F: NodeFrame = CanMessage> {
     /// The object dictionary
     ///
     /// PDOs have to access other objects and use this to do so
@@ -283,17 +306,17 @@ pub struct Pdo<'a> {
     /// Accessor for the node NMT state
     pub nmt_state: &'a dyn NmtStateAccess,
     /// The allocated storage for associated data
-    pub data: &'a PdoData<'a>,
+    pub data: &'a PdoData<'a, F>,
     /// The default data for the PDO
     pub defaults: &'a PdoDefaults<'a>,
 }
 
-impl<'a> Pdo<'a> {
+impl<'a, F: NodeFrame> Pdo<'a, F> {
     /// Create a new PDO object
     pub const fn new(
         od: &'a dyn ObjectLookup<'a>,
         nmt_state: &'a dyn NmtStateAccess,
-        data: &'a PdoData<'a>,
+        data: &'a PdoData<'a, F>,
         defaults: &'a PdoDefaults<'a>,
     ) -> Self {
         Self {
@@ -348,13 +371,13 @@ impl<'a> Pdo<'a> {
         })
     }
 
-    pub(crate) fn receive_frame(&self, msg: &CanMessage) -> bool {
+    pub(crate) fn receive_frame(&self, msg: &F) -> bool {
         critical_section::with(|cs| {
             if self.data.valid.borrow(cs).get() && self.cob_id_in(cs) == msg.id() {
                 self.data
                     .buffered_value
                     .borrow(cs)
-                    .set(Some(heapless::Vec::from_slice(msg.data()).unwrap()));
+                    .set(Some(F::PdoPayload::from_slice(msg.data())));
                 true
             } else {
                 false
@@ -362,13 +385,11 @@ impl<'a> Pdo<'a> {
         })
     }
 
-    pub(crate) fn take_frame(&self) -> Option<CanMessage> {
+    pub(crate) fn take_frame(&self) -> Option<F> {
         critical_section::with(|cs| {
-            self.data
-                .buffered_value
-                .borrow(cs)
-                .take()
-                .map(|data| CanMessage::new(self.cob_id_in(cs), &data))
+            let data = self.data.buffered_value.borrow(cs).take()?;
+            // The payload never exceeds the frame's capacity, so this cannot fail
+            F::try_new(self.cob_id_in(cs), &data).ok()
         })
     }
 
@@ -482,26 +503,22 @@ impl<'a> Pdo<'a> {
     }
 
     pub(crate) fn send_pdo(&self) {
-        let mut data = [0u8; 8];
-        let mut offset = 0;
+        // The mapped objects are read straight into the payload buffer, which has room for one
+        // full frame of the PDO's frame type
+        let mut payload = F::PdoPayload::default();
         let valid_maps = self.data.valid_maps.load() as usize;
         for (i, param) in self.data.mapping_params.iter().enumerate() {
             if i >= valid_maps {
                 break;
             }
             if let Some(param) = param.load().try_get_valid_entry() {
-                let length = param.length as usize;
-                if offset + length > data.len() {
+                // Mappings beyond the frame capacity are not sent
+                let Some(dest) = payload.extend_zeroed(param.length as usize) else {
                     break;
-                }
+                };
                 // validity of the mappings must be validated during write, so that error here is not
                 // possible
-
-                param
-                    .object
-                    .read(param.sub, 0, &mut data[offset..offset + length])
-                    .ok();
-                offset += length;
+                param.object.read(param.sub, 0, dest).ok();
             } else {
                 // The first N params will be valid. If a None is reached, all remaining will be
                 // None
@@ -510,10 +527,7 @@ impl<'a> Pdo<'a> {
         }
         // If there is an old value here which has not been sent yet, replace it with the latest
         // Data will be sent by mbox in message handling thread.
-        // Unwrap: ensured above that data cannot be longer than 8 bytes
-        self.data
-            .buffered_value
-            .store(Some(heapless::Vec::from_slice(&data[0..offset]).unwrap()));
+        self.data.buffered_value.store(Some(payload));
     }
 
     /// Lookup a PDO mapped object and create a StoredMappingEntry if it is valid
@@ -553,6 +567,10 @@ impl<'a> Pdo<'a> {
 
     /// Restore PDO defaults and clear the node ID to Unconfigured.
     pub fn init_defaults(&'a self) {
+        F::pdo_init_defaults(self)
+    }
+
+    pub(crate) fn init_defaults_impl(&'a self) {
         let mut mappings = [StoredMappingEntry::empty(); N_MAPPING_PARAMS];
         let mut bytes = 0usize;
         let mut valid = self.defaults.mappings.len() <= N_MAPPING_PARAMS;
@@ -565,7 +583,7 @@ impl<'a> Pdo<'a> {
                 Err(_) => valid = false,
             }
         }
-        valid &= bytes <= 8;
+        valid &= bytes <= F::MAX_LEN;
         // Publish the complete configuration together; never retain mappings or
         // buffered data from the preceding configuration. Borrowing each cell
         // under this token avoids entering another critical section per field.
@@ -575,7 +593,7 @@ impl<'a> Pdo<'a> {
             self.data
                 .rtr_disabled
                 .borrow(cs)
-                .set(self.defaults.rtr_disabled());
+                .set(self.defaults.rtr_disabled() || !F::SUPPORTS_RTR);
             self.data
                 .transmission_type
                 .borrow(cs)
@@ -602,12 +620,12 @@ impl<'a> Pdo<'a> {
     }
 }
 
-struct PdoCobSubObject<'a> {
-    pdo: &'a Pdo<'a>,
+struct PdoCobSubObject<'a, F: NodeFrame> {
+    pdo: &'a Pdo<'a, F>,
 }
 
-impl<'a> PdoCobSubObject<'a> {
-    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+impl<'a, F: NodeFrame> PdoCobSubObject<'a, F> {
+    pub const fn new(pdo: &'a Pdo<'a, F>) -> Self {
         Self { pdo }
     }
 
@@ -619,7 +637,7 @@ impl<'a> PdoCobSubObject<'a> {
     }
 }
 
-impl SubObjectAccess for PdoCobSubObject<'_> {
+impl<F: NodeFrame> SubObjectAccess for PdoCobSubObject<'_, F> {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         let value = critical_section::with(|cs| {
             let cob_id = self.pdo.cob_id_in(cs);
@@ -664,7 +682,8 @@ impl SubObjectAccess for PdoCobSubObject<'_> {
         } else {
             let value = u32::from_le_bytes(data.try_into().unwrap());
             let not_valid = (value & (1 << 31)) != 0;
-            let no_rtr = (value & (1 << 30)) != 0;
+            // CAN FD has no remote frames, so RTR stays disabled whatever is written
+            let no_rtr = (value & (1 << 30)) != 0 || !F::SUPPORTS_RTR;
             let extended_id = (value & (1 << 29)) != 0;
 
             let can_id = if extended_id {
@@ -682,17 +701,17 @@ impl SubObjectAccess for PdoCobSubObject<'_> {
     }
 }
 
-struct PdoTransmissionTypeSubObject<'a> {
-    pdo: &'a Pdo<'a>,
+struct PdoTransmissionTypeSubObject<'a, F: NodeFrame> {
+    pdo: &'a Pdo<'a, F>,
 }
 
-impl<'a> PdoTransmissionTypeSubObject<'a> {
-    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+impl<'a, F: NodeFrame> PdoTransmissionTypeSubObject<'a, F> {
+    pub const fn new(pdo: &'a Pdo<'a, F>) -> Self {
         Self { pdo }
     }
 }
 
-impl SubObjectAccess for PdoTransmissionTypeSubObject<'_> {
+impl<F: NodeFrame> SubObjectAccess for PdoTransmissionTypeSubObject<'_, F> {
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         if offset > 1 {
             return Ok(0);
@@ -723,14 +742,14 @@ impl SubObjectAccess for PdoTransmissionTypeSubObject<'_> {
 
 /// Implements a PDO communications config object for both RPDOs and TPDOs
 #[allow(missing_debug_implementations)]
-pub struct PdoCommObject<'a> {
-    cob: PdoCobSubObject<'a>,
-    transmission_type: PdoTransmissionTypeSubObject<'a>,
+pub struct PdoCommObject<'a, F: NodeFrame = CanMessage> {
+    cob: PdoCobSubObject<'a, F>,
+    transmission_type: PdoTransmissionTypeSubObject<'a, F>,
 }
 
-impl<'a> PdoCommObject<'a> {
+impl<'a, F: NodeFrame> PdoCommObject<'a, F> {
     /// Create a new PdoCommObject
-    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+    pub const fn new(pdo: &'a Pdo<'a, F>) -> Self {
         let cob = PdoCobSubObject::new(pdo);
         let transmission_type = PdoTransmissionTypeSubObject::new(pdo);
         Self {
@@ -740,7 +759,7 @@ impl<'a> PdoCommObject<'a> {
     }
 }
 
-impl ProvidesSubObjects for PdoCommObject<'_> {
+impl<F: NodeFrame> ProvidesSubObjects for PdoCommObject<'_, F> {
     fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
         match sub {
             0 => Some((
@@ -768,18 +787,18 @@ impl ProvidesSubObjects for PdoCommObject<'_> {
 
 /// Implements a PDO mapping config object for both TPDOs and RPDOs
 #[allow(missing_debug_implementations)]
-pub struct PdoMappingObject<'a> {
-    pdo: &'a Pdo<'a>,
+pub struct PdoMappingObject<'a, F: NodeFrame = CanMessage> {
+    pdo: &'a Pdo<'a, F>,
 }
 
-impl<'a> PdoMappingObject<'a> {
+impl<'a, F: NodeFrame> PdoMappingObject<'a, F> {
     /// Create a new PdoMappingObject
-    pub const fn new(pdo: &'a Pdo<'a>) -> Self {
+    pub const fn new(pdo: &'a Pdo<'a, F>) -> Self {
         Self { pdo }
     }
 }
 
-impl ObjectAccess for PdoMappingObject<'_> {
+impl<F: NodeFrame> ObjectAccess for PdoMappingObject<'_, F> {
     fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
         if sub == 0 {
             if offset < 1 && !buf.is_empty() {
@@ -870,7 +889,8 @@ impl ObjectAccess for PdoMappingObject<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object_dict::ScalarFieldU32;
+    use crate::object_dict::{ScalarFieldU16, ScalarFieldU32, ScalarFieldU64};
+    use zencan_common::can::{CanFdMessage, CanFrame};
 
     #[derive(Default)]
     struct TestObject {
@@ -935,5 +955,204 @@ mod tests {
         assert_eq!(Err(AbortCode::GeneralError), result);
         let result = comm_obj.write(2, &0u32.to_le_bytes());
         assert_eq!(Err(AbortCode::GeneralError), result);
+    }
+
+    /// A VAR object holding a single scalar field, mappable to both RPDOs and TPDOs
+    struct VarObject<T> {
+        data_type: DataType,
+        value: T,
+    }
+
+    impl<T: SubObjectAccess> ProvidesSubObjects for VarObject<T> {
+        fn get_sub_object(&self, sub: u8) -> Option<(SubInfo, &dyn SubObjectAccess)> {
+            let info = SubInfo {
+                data_type: self.data_type,
+                access_type: AccessType::Rw,
+                pdo_mapping: PdoMappable::Both,
+                persist: false,
+            };
+            match sub {
+                0 => Some((info, &self.value)),
+                _ => None,
+            }
+        }
+
+        fn object_code(&self) -> ObjectCode {
+            ObjectCode::Var
+        }
+    }
+
+    /// Eight u64 objects at 0x2000..=0x2007 and one u16 object at 0x2100
+    struct WideOd {
+        u64_objects: [&'static VarObject<ScalarFieldU64>; 8],
+        u16_object: &'static VarObject<ScalarFieldU16>,
+    }
+
+    impl WideOd {
+        fn new() -> &'static Self {
+            Box::leak(Box::new(Self {
+                u64_objects: core::array::from_fn(|i| {
+                    &*Box::leak(Box::new(VarObject {
+                        data_type: DataType::UInt64,
+                        value: ScalarFieldU64::new(0x0101_0101_0101_0101 * (i as u64 + 1)),
+                    }))
+                }),
+                u16_object: Box::leak(Box::new(VarObject {
+                    data_type: DataType::UInt16,
+                    value: ScalarFieldU16::new(0xBEEF),
+                })),
+            }))
+        }
+    }
+
+    impl ObjectLookup<'static> for WideOd {
+        fn find_object(&self, index: u16) -> Option<&'static dyn ObjectAccess> {
+            match index {
+                0x2000..=0x2007 => Some(self.u64_objects[(index - 0x2000) as usize]),
+                0x2100 => Some(self.u16_object),
+                _ => None,
+            }
+        }
+    }
+
+    const TPDO_COB_ID: u32 = 0x181;
+
+    /// Build a valid PDO for frame type `F` with the given default mappings
+    fn wide_pdo<F: NodeFrame>(
+        od: &'static WideOd,
+        mappings: &'static [u32],
+    ) -> &'static Pdo<'static, F> {
+        let nmt_state = Box::leak(Box::new(AtomicCell::new(NmtState::PreOperational)));
+        let data = Box::leak(Box::new(PdoData::<F>::default()));
+        let defaults = Box::leak(Box::new(PdoDefaults::new(
+            TPDO_COB_ID,
+            false,
+            false,
+            true,
+            false,
+            254,
+            mappings,
+        )));
+        let pdo = Box::leak(Box::new(Pdo::new(od, nmt_state, data, defaults)));
+        pdo.init_defaults();
+        pdo
+    }
+
+    const fn mapping(index: u16, bits: u8) -> u32 {
+        ((index as u32) << 16) | bits as u32
+    }
+
+    #[test]
+    fn test_fd_tpdo_carries_64_bytes() {
+        const MAPPINGS: [u32; 8] = [
+            mapping(0x2000, 64),
+            mapping(0x2001, 64),
+            mapping(0x2002, 64),
+            mapping(0x2003, 64),
+            mapping(0x2004, 64),
+            mapping(0x2005, 64),
+            mapping(0x2006, 64),
+            mapping(0x2007, 64),
+        ];
+        let od = WideOd::new();
+        let pdo = wide_pdo::<CanFdMessage>(od, &MAPPINGS);
+        assert!(pdo.valid());
+
+        pdo.send_pdo();
+        let frame = pdo.take_frame().unwrap();
+        assert_eq!(CanId::Std(TPDO_COB_ID as u16), frame.id());
+        assert_eq!(64, frame.len());
+        assert_eq!(64, frame.on_wire_len());
+        let expected: Vec<u8> = (1..=8u8).flat_map(|i| [i; 8]).collect();
+        assert_eq!(expected.as_slice(), frame.data());
+        // The frame was consumed
+        assert!(pdo.take_frame().is_none());
+    }
+
+    #[test]
+    fn test_fd_tpdo_is_padded_to_legal_length() {
+        const MAPPINGS: [u32; 2] = [mapping(0x2000, 64), mapping(0x2100, 16)];
+        let od = WideOd::new();
+        let pdo = wide_pdo::<CanFdMessage>(od, &MAPPINGS);
+
+        pdo.send_pdo();
+        let frame = pdo.take_frame().unwrap();
+        assert_eq!(10, frame.len());
+        assert_eq!(12, frame.on_wire_len());
+        assert_eq!(
+            &[1, 1, 1, 1, 1, 1, 1, 1, 0xEF, 0xBE, 0, 0],
+            frame.padded_data()
+        );
+    }
+
+    #[test]
+    fn test_fd_rpdo_ignores_padding() {
+        const MAPPINGS: [u32; 2] = [mapping(0x2000, 64), mapping(0x2100, 16)];
+        let od = WideOd::new();
+        let pdo = wide_pdo::<CanFdMessage>(od, &MAPPINGS);
+
+        // 10 mapped bytes arrive padded to 12; the padding must not reach any object
+        let data = [9, 9, 9, 9, 9, 9, 9, 9, 0x34, 0x12, 0xAA, 0xAA];
+        let frame = CanFdMessage::new(CanId::Std(TPDO_COB_ID as u16), &data);
+        assert!(pdo.receive_frame(&frame));
+        let payload = pdo.data.buffered_value.take().unwrap();
+        pdo.store_pdo_data(&payload);
+
+        assert_eq!(0x0909_0909_0909_0909, od.u64_objects[0].value.load());
+        assert_eq!(0x1234, od.u16_object.value.load());
+        assert_eq!(0x0202_0202_0202_0202, od.u64_objects[1].value.load());
+    }
+
+    #[test]
+    fn test_classic_pdo_rejects_more_than_8_bytes() {
+        const MAPPINGS: [u32; 2] = [mapping(0x2000, 64), mapping(0x2100, 16)];
+        let od = WideOd::new();
+        let pdo = wide_pdo::<CanMessage>(od, &MAPPINGS);
+        assert!(!pdo.valid());
+        assert_eq!(0, pdo.data.valid_maps.load());
+
+        // The same mappings fit a CAN FD frame
+        let pdo = wide_pdo::<CanFdMessage>(od, &MAPPINGS);
+        assert!(pdo.valid());
+        assert_eq!(2, pdo.data.valid_maps.load());
+    }
+
+    #[test]
+    fn test_classic_tpdo_unchanged() {
+        const MAPPINGS: [u32; 2] = [mapping(0x2000, 32), mapping(0x2100, 16)];
+        let od = WideOd::new();
+        let pdo = wide_pdo::<CanMessage>(od, &MAPPINGS);
+
+        pdo.send_pdo();
+        let frame = pdo.take_frame().unwrap();
+        assert_eq!(
+            CanMessage::new(CanId::Std(TPDO_COB_ID as u16), &[1, 1, 1, 1, 0xEF, 0xBE]),
+            frame
+        );
+    }
+
+    fn read_cob_id<F: NodeFrame>(pdo: &'static Pdo<'static, F>) -> u32 {
+        let comm = PdoCommObject::new(pdo);
+        let mut buf = [0; 4];
+        comm.read(1, 0, &mut buf).unwrap();
+        u32::from_le_bytes(buf)
+    }
+
+    #[test]
+    fn test_fd_pdo_has_no_rtr() {
+        const MAPPINGS: [u32; 1] = [mapping(0x2000, 64)];
+        let od = WideOd::new();
+        const RTR_DISABLED: u32 = 1 << 30;
+
+        // Defaults leave RTR enabled: a classic PDO keeps it, a CAN FD PDO cannot
+        let classic = wide_pdo::<CanMessage>(od, &MAPPINGS);
+        assert_eq!(0, read_cob_id(classic) & RTR_DISABLED);
+        let fd = wide_pdo::<CanFdMessage>(od, &MAPPINGS);
+        assert_eq!(RTR_DISABLED, read_cob_id(fd) & RTR_DISABLED);
+
+        // Writing a COB-ID with RTR enabled does not enable it on CAN FD
+        let comm = PdoCommObject::new(fd);
+        comm.write(1, &0x281u32.to_le_bytes()).unwrap();
+        assert_eq!(RTR_DISABLED | 0x281, read_cob_id(fd));
     }
 }

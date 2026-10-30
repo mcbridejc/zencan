@@ -73,7 +73,7 @@ impl ObjectGenerator for SystemObjectGenerator {
                 } else {
                     quote!(PdoCommObject)
                 };
-                object_type = quote!(#ty<'static>);
+                object_type = quote!(#ty<'static, Frame>);
                 initializer = quote!(#ty::new(&#pdos[#number]));
                 // PDO reset has special handling in codegen
                 reset = None;
