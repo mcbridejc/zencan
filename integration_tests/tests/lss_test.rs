@@ -33,8 +33,22 @@ async fn test_fast_scan() {
     bus.add_node(mbox2);
     let callbacks1 = Callbacks::new();
     let callbacks2 = Callbacks::new();
-    let mut node1 = Node::new(NodeId::new(255).unwrap(), callbacks1, mbox1, state1, od1);
-    let mut node2 = Node::new(NodeId::new(255).unwrap(), callbacks2, mbox2, state2, od2);
+    let mut node1 = Node::new(
+        NodeId::new(255).unwrap(),
+        zencan_node::BitTiming::default(),
+        callbacks1,
+        mbox1,
+        state1,
+        od1,
+    );
+    let mut node2 = Node::new(
+        NodeId::new(255).unwrap(),
+        zencan_node::BitTiming::default(),
+        callbacks2,
+        mbox2,
+        state2,
+        od2,
+    );
 
     let _logger = BusLogger::new(bus.new_receiver());
 

@@ -22,6 +22,7 @@ async fn test_sdo_read() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -73,6 +74,7 @@ async fn test_block_download() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -184,6 +186,7 @@ async fn test_domain_access() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -296,6 +299,7 @@ async fn test_application_callbacks_unregistered() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
