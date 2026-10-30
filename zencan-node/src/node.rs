@@ -14,7 +14,7 @@ use zencan_common::{
 };
 
 use crate::{
-    lss_slave::{LssConfig, LssSlave},
+    lss_slave::{BitTiming, LssConfig, LssSlave},
     node_mbox::NodeMbox,
     node_state::NmtStateAccess as _,
     object_dict::{ODEntry, ObjectDictionary, ObjectLookup},
@@ -25,11 +25,13 @@ use crate::{
 
 use defmt_or_log::{debug, info};
 
-pub type StoreNodeConfigFn<'a> = dyn FnMut(NodeId) + 'a;
+pub type StoreNodeAndBitTimingFn<'a> = dyn FnMut(NodeId, BitTiming) + 'a;
 pub type StoreObjectsFn<'a> = dyn Fn(&mut dyn embedded_io::Read<Error = Infallible>, usize) + 'a;
 pub type StateChangeFn<'a> = dyn FnMut(&[ODEntry<'static>]) + 'a;
 pub type SyncReceiveFn<'a> = dyn FnMut(SyncObject) + 'a;
 pub type PdoReceiveFn<'a> = dyn for<'b> FnMut(u8, &'b [MappingEntry<'a>]);
+pub type ActivateBitTimingFn<'a> = dyn FnMut(BitTiming, u16) + 'a;
+pub type BitTimingSupportedFn<'a> = dyn Fn(BitTiming) -> bool + 'a;
 
 /// Collection of callbacks events which Node object can call.
 ///
@@ -42,7 +44,7 @@ pub struct Callbacks<'a> {
     /// An application should implement this callback in order to support storing a configured node
     /// ID persistently. It is triggered when the LSS StoreConfiguration command is received. The
     /// passed NodeId should be stored, and used when creating the [`Node`] object on the next boot.
-    pub store_node_config: Option<&'a mut StoreNodeConfigFn<'a>>,
+    pub store_node_and_bit_timing: Option<&'a mut StoreNodeAndBitTimingFn<'a>>,
 
     /// Store object data to persistent flash
     ///
@@ -84,13 +86,21 @@ pub struct Callbacks<'a> {
 
     /// The node has received a PDO
     pub pdo_received: Option<&'a mut PdoReceiveFn<'a>>,
+
+    /// Activate Bit Timing
+    pub activate_bit_timing: Option<&'a mut ActivateBitTimingFn<'a>>,
+
+    /// Whether an LSS bit-timing table and index are supported by this device
+    ///
+    /// Called for `ConfigureBitTiming`. When absent, every combination is rejected.
+    pub bit_timing_supported: Option<&'a BitTimingSupportedFn<'a>>,
 }
 
 impl<'a> Callbacks<'a> {
     /// Create a new Callbacks struct with the provided send_message callback
     pub const fn new() -> Self {
         Self {
-            store_node_config: None,
+            store_node_and_bit_timing: None,
             store_objects: None,
             reset_app: None,
             reset_comms: None,
@@ -99,6 +109,8 @@ impl<'a> Callbacks<'a> {
             enter_preoperational: None,
             sync_received: None,
             pdo_received: None,
+            activate_bit_timing: None,
+            bit_timing_supported: None,
         }
     }
 }
@@ -116,12 +128,12 @@ pub trait NodeCallbacks {
     /// Whether [`store_node_config`](Self::store_node_config) is implemented
     ///
     /// The node only accepts the LSS StoreConfiguration command when it is.
-    fn store_node_config_supported(&self) -> bool {
+    fn store_node_and_bit_timing_supported(&self) -> bool {
         false
     }
 
     /// Store node config to flash; see [`Callbacks::store_node_config`]
-    fn store_node_config(&mut self, _node_id: NodeId) {}
+    fn store_node_and_bit_timing(&mut self, _node_id: NodeId, _bit_timing: BitTiming) {}
 
     /// Whether [`store_objects`](Self::store_objects) is implemented
     ///
@@ -158,18 +170,29 @@ pub trait NodeCallbacks {
 
     /// The node has received a PDO
     fn pdo_received(&mut self, _pdo: u8, _mapping: &[MappingEntry<'static>]) {}
+
+    /// Activate Bit Timing
+    fn activate_bit_timing(&mut self, _bit_timing: BitTiming, _delay: u16) {}
+
+    /// Whether this device supports the given LSS bit-timing table and index
+    ///
+    /// The default rejects every combination, so a node does not acknowledge a baud rate it cannot
+    /// apply.
+    fn bit_timing_supported(&self, _bit_timing: BitTiming) -> bool {
+        false
+    }
 }
 
 impl NodeCallbacks for () {}
 
 impl NodeCallbacks for Callbacks<'_> {
-    fn store_node_config_supported(&self) -> bool {
-        self.store_node_config.is_some()
+    fn store_node_and_bit_timing_supported(&self) -> bool {
+        self.store_node_and_bit_timing.is_some()
     }
 
-    fn store_node_config(&mut self, node_id: NodeId) {
-        if let Some(cb) = &mut self.store_node_config {
-            cb(node_id)
+    fn store_node_and_bit_timing(&mut self, node_id: NodeId, bit_timing: BitTiming) {
+        if let Some(cb) = &mut self.store_node_and_bit_timing {
+            cb(node_id, bit_timing)
         }
     }
 
@@ -228,6 +251,18 @@ impl NodeCallbacks for Callbacks<'_> {
             cb(pdo, mapping)
         }
     }
+
+    fn activate_bit_timing(&mut self, bit_timing: BitTiming, delay: u16) {
+        if let Some(cb) = &mut self.activate_bit_timing {
+            cb(bit_timing, delay)
+        }
+    }
+
+    fn bit_timing_supported(&self, bit_timing: BitTiming) -> bool {
+        self.bit_timing_supported
+            .map(|supported| supported(bit_timing))
+            .unwrap_or(false)
+    }
 }
 
 fn read_identity(od: &[ODEntry<'static>]) -> Option<LssIdentity> {
@@ -267,6 +302,7 @@ fn read_autostart(od: &dyn ObjectLookup<'_>) -> Option<bool> {
 #[allow(missing_debug_implementations)]
 pub struct Node<'a, C = Callbacks<'a>> {
     node_id: NodeId,
+    bit_timing: BitTiming,
     sdo_server: SdoServer<'static>,
     lss_slave: LssSlave,
     message_count: u32,
@@ -294,6 +330,7 @@ impl<C: NodeCallbacks> Node<'_, C> {
     /// * `od` - The `OD_TABLE` object containing the object dictionary created by `zencan-build`
     pub fn new(
         node_id: NodeId,
+        bit_timing: BitTiming,
         callbacks: C,
         mbox: &'static NodeMbox,
         state: &'static NodeState<'static>,
@@ -326,6 +363,7 @@ impl<C: NodeCallbacks> Node<'_, C> {
 
         let mut node = Self {
             node_id,
+            bit_timing,
             callbacks,
             sdo_server,
             lss_slave,
@@ -444,20 +482,36 @@ impl<C: NodeCallbacks> Node<'_, C> {
             }
         }
 
-        if let Ok(Some(resp)) = self.lss_slave.process(self.mbox.lss_receiver()) {
-            self.send_message(resp.to_can_message(LSS_RESP_ID));
+        let lss_result = {
+            let Node {
+                lss_slave,
+                callbacks,
+                mbox,
+                ..
+            } = self;
+            lss_slave.process(mbox.lss_receiver(), |timing| {
+                callbacks.bit_timing_supported(timing)
+            })
+        };
+        if let Ok(resp) = lss_result {
+            if let Some(resp) = resp {
+                self.send_message(resp.to_can_message(LSS_RESP_ID));
+            }
 
             if let Some(event) = self.lss_slave.pending_event() {
                 info!("LSS Slave Event: {:?}", event);
                 match event {
                     crate::lss_slave::LssEvent::StoreConfiguration => {
-                        self.callbacks.store_node_config(self.node_id)
+                        self.callbacks.store_node_and_bit_timing(self.node_id, self.bit_timing);
+                    }
+                    crate::lss_slave::LssEvent::ConfigureBitTiming { bit_timing } => {
+                        self.bit_timing = bit_timing;
                     }
                     crate::lss_slave::LssEvent::ActivateBitTiming {
-                        table: _,
-                        index: _,
-                        delay: _,
-                    } => (),
+                        delay,
+                    } => {
+                        self.callbacks.activate_bit_timing(self.bit_timing, delay);
+                    },
                     crate::lss_slave::LssEvent::ConfigureNodeId { node_id } => {
                         self.set_node_id(node_id)
                     }
@@ -651,7 +705,7 @@ impl<C: NodeCallbacks> Node<'_, C> {
         self.lss_slave.update_config(LssConfig {
             identity: read_identity(self.od.od_table()).unwrap_or_default(),
             node_id: self.node_id,
-            store_supported: self.callbacks.store_node_config_supported(),
+            store_supported: self.callbacks.store_node_and_bit_timing_supported(),
         });
 
         if let NodeId::Configured(node_id) = self.node_id {
@@ -687,19 +741,19 @@ const _: fn() = || {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use zencan_common::{
         can::CanMessage,
         object_model::ObjectCode,
-        protocol::{NmtCommand, NmtCommandSpecifier, NmtState, NodeId},
+        protocol::{LssRequest, LssResponse, NmtCommand, NmtCommandSpecifier, NmtState, NodeId},
     };
 
     use crate::{
-        object_dict::{
+        lss_slave::BitTiming, object_dict::{
             ODEntry, ObjectAccess, ObjectDictionary, ObjectLookup, ProvidesSubObjects,
             ScalarFieldU8, SubInfo, SubObjectAccess,
-        },
-        priority_queue::PriorityQueue,
-        Callbacks, Node, NodeCallbacks, NodeMbox, NodeState,
+        }, priority_queue::PriorityQueue, Callbacks, Node, NodeCallbacks, NodeMbox, NodeState
     };
 
     struct AutoStartObject {
@@ -759,6 +813,7 @@ mod tests {
 
         let mut node = Node::new(
             NodeId::new(1).unwrap(),
+            BitTiming::default(),
             Callbacks::default(),
             mbox,
             state,
@@ -799,6 +854,7 @@ mod tests {
 
         let mut node = Node::new(
             NodeId::new(1).unwrap(),
+            BitTiming::default(),
             Callbacks::default(),
             mbox,
             state,
@@ -844,6 +900,7 @@ mod tests {
 
         let mut node = Node::new(
             NodeId::new(1).unwrap(),
+            BitTiming::default(),
             EventRecorder::default(),
             mbox,
             state,
@@ -872,5 +929,157 @@ mod tests {
                 "enter_preoperational",
             ]
         );
+    }
+
+    /// Records LSS bit-timing queries, activation, and persistent node-config stores
+    struct BitTimingRecorder {
+        supported: RefCell<Vec<BitTiming>>,
+        activated: Vec<(BitTiming, u16)>,
+        stored: Vec<(NodeId, BitTiming)>,
+    }
+
+    impl NodeCallbacks for BitTimingRecorder {
+        fn store_node_and_bit_timing_supported(&self) -> bool {
+            true
+        }
+
+        fn store_node_and_bit_timing(&mut self, node_id: NodeId, bit_timing: BitTiming) {
+            self.stored.push((node_id, bit_timing));
+        }
+
+        fn bit_timing_supported(&self, bit_timing: BitTiming) -> bool {
+            self.supported.borrow_mut().push(bit_timing);
+            bit_timing.table == 0 && bit_timing.index == 2
+        }
+
+        fn activate_bit_timing(&mut self, bit_timing: BitTiming, delay: u16) {
+            self.activated.push((bit_timing, delay));
+        }
+    }
+
+    #[test]
+    fn test_configure_and_activate_bit_timing_callbacks() {
+        let entries = Box::leak(Box::new([]));
+        let od = Box::leak(Box::new(TestOd { entries }));
+
+        let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
+        let sdo_buffer = Box::leak(Box::new([0u8; 100]));
+        let mbox = Box::leak(Box::new(NodeMbox::new(&[], &[], tx_queue, sdo_buffer)));
+        let state = Box::leak(Box::new(NodeState::new(&[], &[])));
+
+        let initial = BitTiming { table: 0, index: 0 };
+        let mut node = Node::new(
+            NodeId::new(1).unwrap(),
+            initial,
+            BitTimingRecorder {
+                supported: RefCell::new(Vec::new()),
+                activated: Vec::new(),
+                stored: Vec::new(),
+            },
+            mbox,
+            state,
+            od,
+        );
+
+        node.process(0);
+        while tx_queue.pop().is_some() {}
+
+        mbox.store_message(LssRequest::SwitchModeGlobal { mode: 1 }.into())
+            .unwrap();
+        node.process(0);
+
+        mbox.store_message(
+            LssRequest::ConfigureBitTiming {
+                table: 0,
+                index: 9,
+            }
+            .into(),
+        )
+        .unwrap();
+        node.process(0);
+
+        assert_eq!(node.bit_timing, initial);
+        assert_eq!(
+            tx_queue.pop().and_then(|msg| LssResponse::try_from(msg).ok()),
+            Some(LssResponse::ConfigureBitTimingAck {
+                error: 1,
+                spec_error: 0,
+            })
+        );
+        assert!(node.callbacks.activated.is_empty());
+
+        let configured = BitTiming { table: 0, index: 2 };
+        mbox.store_message(
+            LssRequest::ConfigureBitTiming {
+                table: configured.table,
+                index: configured.index,
+            }
+            .into(),
+        )
+        .unwrap();
+        node.process(0);
+
+        assert_eq!(node.bit_timing, configured);
+        assert_eq!(
+            tx_queue.pop().and_then(|msg| LssResponse::try_from(msg).ok()),
+            Some(LssResponse::ConfigureBitTimingAck {
+                error: 0,
+                spec_error: 0,
+            })
+        );
+        assert_eq!(
+            node.callbacks.supported.borrow().as_slice(),
+            &[
+                BitTiming { table: 0, index: 9 },
+                configured,
+            ]
+        );
+
+        mbox.store_message(LssRequest::ActivateBitTiming { delay: 20 }.into())
+            .unwrap();
+        node.process(0);
+
+        assert_eq!(node.callbacks.activated, vec![(configured, 20)]);
+        assert!(tx_queue.pop().is_none());
+        assert!(node.callbacks.stored.is_empty());
+
+        let configured_id = NodeId::new(10).unwrap();
+        mbox.store_message(LssRequest::ConfigureNodeId { node_id: 10 }.into())
+            .unwrap();
+        node.process(0);
+        assert_eq!(
+            tx_queue.pop().and_then(|msg| LssResponse::try_from(msg).ok()),
+            Some(LssResponse::ConfigureNodeIdAck {
+                error: 0,
+                spec_error: 0,
+            })
+        );
+
+        mbox.store_message(LssRequest::StoreConfiguration.into())
+            .unwrap();
+        node.process(0);
+
+        assert_eq!(node.node_id, configured_id);
+        assert_eq!(
+            node.callbacks.stored,
+            vec![(configured_id, configured)]
+        );
+        assert_eq!(
+            lss_responses(tx_queue),
+            vec![LssResponse::StoreConfigurationAck {
+                error: 0,
+                spec_error: 0,
+            }]
+        );
+    }
+
+    fn lss_responses(tx_queue: &PriorityQueue<4, CanMessage>) -> Vec<LssResponse> {
+        let mut responses = Vec::new();
+        while let Some(msg) = tx_queue.pop() {
+            if let Ok(response) = LssResponse::try_from(msg) {
+                responses.push(response);
+            }
+        }
+        responses
     }
 }

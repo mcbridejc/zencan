@@ -26,6 +26,7 @@ async fn test_device_info_readback() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -67,6 +68,7 @@ async fn test_program() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),

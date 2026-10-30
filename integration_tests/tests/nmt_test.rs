@@ -17,7 +17,14 @@ async fn test_nmt_init() {
     let mut bus = SimBus::new();
     bus.add_node(mbox);
     let callbacks = Callbacks::new();
-    let mut node = Node::new(NodeId::new(NODE_ID).unwrap(), callbacks, mbox, state, od);
+    let mut node = Node::new(
+        NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
+        callbacks,
+        mbox,
+        state,
+        od,
+    );
 
     let _logger = BusLogger::new(bus.new_receiver());
 
