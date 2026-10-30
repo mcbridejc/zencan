@@ -15,12 +15,11 @@ use zencan_common::{
 pub enum LssEvent {
     /// Event to trigger configuration to be stored persistently
     StoreConfiguration,
+    ConfigureBitTiming {
+        bit_timing: BitTiming,
+    },
     /// Activate a baud rate setting
     ActivateBitTiming {
-        /// The table used for baud rate lookup
-        table: u8,
-        /// The index into the table
-        index: u8,
         /// Specifies the delay that should be waited before applying the change
         delay: u16,
     },
@@ -90,6 +89,16 @@ impl LssReceiver {
     }
 }
 
+/// CiA 305 bit-timing table selector and index within that table
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct BitTiming {
+    /// Table number from the CiA 305 bit-timing tables
+    pub table: u8,
+    /// Index within `table`
+    pub index: u8,
+}
+
 pub struct LssConfig {
     /// The identity of the device
     pub identity: LssIdentity,
@@ -108,6 +117,10 @@ pub(crate) struct LssSlave {
     /// The identity selected by LSS master for configuration
     pending_node_id: NodeId,
     store_config_flag: bool,
+    /// The bit timing table to activate
+    activate_bit_timing_table: Option<BitTiming>,
+    /// Delay from [`ActivateBitTiming`](LssRequest::ActivateBitTiming), if a timing is pending
+    activate_bit_timing_delay: Option<u16>,
 }
 
 impl LssSlave {
@@ -123,6 +136,8 @@ impl LssSlave {
             fast_scan_sub: 0,
             pending_node_id,
             store_config_flag: false,
+            activate_bit_timing_table: None,
+            activate_bit_timing_delay: None,
         }
     }
 
@@ -145,15 +160,26 @@ impl LssSlave {
         } else if self.store_config_flag {
             self.store_config_flag = false;
             Some(LssEvent::StoreConfiguration)
+        } else if let Some(bit_timing) = self.activate_bit_timing_table.take() {
+            Some(LssEvent::ConfigureBitTiming { bit_timing })
         } else {
-            None
+            self.activate_bit_timing_delay
+                .take()
+                .map(|delay| LssEvent::ActivateBitTiming { delay })
         }
     }
 
     /// Process an LSS request, updating the state of the slave
     ///
-    /// When a response is generated, it will be returned and should be transmitted to the CAN bus
-    pub fn process(&mut self, receiver: &LssReceiver) -> Result<Option<LssResponse>, MessageError> {
+    /// When a response is generated, it will be returned and should be transmitted to the CAN bus.
+    ///
+    /// `bit_timing_supported` reports whether this device can apply the requested table and index.
+    /// An unsupported pair is rejected with error code 1 and is not stored.
+    pub fn process(
+        &mut self,
+        receiver: &LssReceiver,
+        mut bit_timing_supported: impl FnMut(BitTiming) -> bool,
+    ) -> Result<Option<LssResponse>, MessageError> {
         let request = match receiver.rx_req.take() {
             Some(req) => req,
             None => return Ok(None),
@@ -183,16 +209,28 @@ impl LssSlave {
                 }
             }
 
-            LssRequest::ConfigureBitTiming { table: _, index: _ } => {
-                // Configuring bit timing is not supported
+            LssRequest::ConfigureBitTiming { table, index } => {
                 if self.state == LssState::Configuring {
+                    // CiA 305: error 1 means the bit timing is not supported
+                    let timing = BitTiming { table, index };
+                    let error = if bit_timing_supported(timing) {
+                        self.activate_bit_timing_table = Some(timing);
+                        0
+                    } else {
+                        1
+                    };
                     Ok(Some(LssResponse::ConfigureBitTimingAck {
-                        error: 1,
+                        error,
                         spec_error: 0,
                     }))
                 } else {
                     Ok(None)
                 }
+            }
+
+            LssRequest::ActivateBitTiming { delay } => {
+                self.activate_bit_timing_delay = Some(delay);
+                Ok(None)
             }
 
             LssRequest::StoreConfiguration => {
@@ -317,6 +355,10 @@ impl LssSlave {
 mod tests {
     use super::*;
 
+    fn reject_bit_timing(_: BitTiming) -> bool {
+        false
+    }
+
     #[test]
     fn test_fast_scan_simple() {
         const VENDOR_ID: u32 = 0x0;
@@ -346,7 +388,10 @@ mod tests {
             sub: 0,
             next: 1,
         }));
-        assert_eq!(slave.process(&rx), Ok(Some(LssResponse::IdentifySlave)));
+        assert_eq!(
+            slave.process(&rx, reject_bit_timing),
+            Ok(Some(LssResponse::IdentifySlave))
+        );
 
         // 0 Matches
         rx.rx_req.store(Some(LssRequest::FastScan {
@@ -355,7 +400,10 @@ mod tests {
             sub: 0,
             next: 1,
         }));
-        assert_eq!(slave.process(&rx), Ok(Some(LssResponse::IdentifySlave)));
+        assert_eq!(
+            slave.process(&rx, reject_bit_timing),
+            Ok(Some(LssResponse::IdentifySlave))
+        );
 
         // 1 does not match
         rx.rx_req.store(Some(LssRequest::FastScan {
@@ -364,7 +412,7 @@ mod tests {
             sub: 0,
             next: 1,
         }));
-        assert_eq!(slave.process(&rx), Ok(None));
+        assert_eq!(slave.process(&rx, reject_bit_timing), Ok(None));
     }
 
     /// Make sure that the slave goes into the configuration state after a complete scan
@@ -400,7 +448,7 @@ mod tests {
                 sub,
                 next,
             }));
-            let resp = slave.process(&rx).unwrap();
+            let resp = slave.process(&rx, reject_bit_timing).unwrap();
 
             matches!(resp, Some(LssResponse::IdentifySlave))
         }
@@ -461,13 +509,13 @@ mod tests {
         // Put the slave into Configuring mode
         rx.rx_req
             .store(Some(LssRequest::SwitchModeGlobal { mode: 1 }));
-        let _ = slave.process(&rx).unwrap();
+        let _ = slave.process(&rx, reject_bit_timing).unwrap();
 
         // Send command to set the node ID
         rx.rx_req.store(Some(LssRequest::ConfigureNodeId {
             node_id: node_id.raw(),
         }));
-        let resp = slave.process(&rx).unwrap();
+        let resp = slave.process(&rx, reject_bit_timing).unwrap();
         assert_eq!(
             Some(LssResponse::ConfigureNodeIdAck {
                 error: 0,
@@ -491,7 +539,7 @@ mod tests {
 
         // send command to store config
         rx.rx_req.store(Some(LssRequest::StoreConfiguration));
-        let resp = slave.process(&rx).unwrap();
+        let resp = slave.process(&rx, reject_bit_timing).unwrap();
         assert_eq!(
             Some(LssResponse::StoreConfigurationAck {
                 error: 0,
@@ -529,11 +577,11 @@ mod tests {
         // Put the slave into Configuring mode
         rx.rx_req
             .store(Some(LssRequest::SwitchModeGlobal { mode: 1 }));
-        let _ = slave.process(&rx).unwrap();
+        let _ = slave.process(&rx, reject_bit_timing).unwrap();
 
         rx.rx_req
             .store(Some(LssRequest::ConfigureNodeId { node_id: 10 }));
-        let resp = slave.process(&rx).unwrap();
+        let resp = slave.process(&rx, reject_bit_timing).unwrap();
         assert_eq!(
             Some(LssResponse::ConfigureNodeIdAck {
                 error: 0,
@@ -548,7 +596,7 @@ mod tests {
         });
 
         rx.rx_req.store(Some(LssRequest::StoreConfiguration));
-        let resp = slave.process(&rx).unwrap();
+        let resp = slave.process(&rx, reject_bit_timing).unwrap();
         assert_eq!(
             Some(LssResponse::StoreConfigurationAck {
                 error: 1,
@@ -558,5 +606,60 @@ mod tests {
         );
         // No events
         assert_eq!(None, slave.pending_event());
+    }
+
+    #[test]
+    fn test_configure_bit_timing_uses_predicate() {
+        let mut slave = LssSlave::new(LssConfig {
+            node_id: NodeId::Unconfigured,
+            identity: LssIdentity {
+                vendor_id: 0,
+                product_code: 0,
+                revision: 0,
+                serial: 0,
+            },
+            store_supported: false,
+        });
+        let rx = LssReceiver::new();
+        rx.rx_req
+            .store(Some(LssRequest::SwitchModeGlobal { mode: 1 }));
+        slave.process(&rx, reject_bit_timing).unwrap();
+
+        let supports_index_two = |timing: BitTiming| timing.table == 0 && timing.index == 2;
+
+        rx.rx_req
+            .store(Some(LssRequest::ConfigureBitTiming { table: 0, index: 9 }));
+        assert_eq!(
+            slave.process(&rx, supports_index_two),
+            Ok(Some(LssResponse::ConfigureBitTimingAck {
+                error: 1,
+                spec_error: 0,
+            }))
+        );
+        assert_eq!(None, slave.pending_event());
+
+        rx.rx_req
+            .store(Some(LssRequest::ConfigureBitTiming { table: 0, index: 2 }));
+        assert_eq!(
+            slave.process(&rx, supports_index_two),
+            Ok(Some(LssResponse::ConfigureBitTimingAck {
+                error: 0,
+                spec_error: 0,
+            }))
+        );
+        assert_eq!(
+            slave.pending_event(),
+            Some(LssEvent::ConfigureBitTiming {
+                bit_timing: BitTiming { table: 0, index: 2 },
+            })
+        );
+
+        rx.rx_req
+            .store(Some(LssRequest::ActivateBitTiming { delay: 20 }));
+        assert_eq!(slave.process(&rx, reject_bit_timing), Ok(None));
+        assert_eq!(
+            slave.pending_event(),
+            Some(LssEvent::ActivateBitTiming { delay: 20 })
+        );
     }
 }

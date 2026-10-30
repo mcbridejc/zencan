@@ -314,6 +314,15 @@ impl<S: AsyncCanSender, R: AsyncCanReceiver> LssMaster<S, R> {
         .await;
     }
 
+    /// Send command to the bus to activate the bit timing
+    pub async fn activate_bit_timing(&mut self, delay_ms: u16) {
+        self.send_and_receive(
+            LssRequest::ActivateBitTiming { delay: delay_ms },
+            Duration::ZERO,
+        )
+        .await;
+    }
+
     async fn send_and_receive(
         &mut self,
         msg: LssRequest,

@@ -64,6 +64,7 @@ async fn test_rpdo_assignment() {
     };
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -160,6 +161,7 @@ async fn test_tpdo_assignment() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -254,6 +256,7 @@ async fn test_tpdo_event_flags() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -403,6 +406,7 @@ async fn test_tpdo_sync_initiated_transmission() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -632,6 +636,7 @@ async fn test_pdo_configuration() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -702,6 +707,7 @@ async fn test_pdo_defaults() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -783,6 +789,7 @@ fn pdo_cob_id_add_node_id_during_autostart() {
     };
     let mut node = Node::new(
         NodeId::new(node_id.load()).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
