@@ -866,21 +866,9 @@ mod tests {
             index: object_ids::AUTO_START,
             object: autostart_object,
         }]));
-        let od = Box::leak(Box::new(TestOd { entries }));
 
-        let tx_queue = Box::leak(Box::new(PriorityQueue::<4, CanMessage>::new()));
-        let sdo_buffer = Box::leak(Box::new([0u8; 100]));
-        let mbox = Box::leak(Box::new(NodeMbox::new(&[], &[], tx_queue, sdo_buffer)));
-        let state = Box::leak(Box::new(NodeState::new(&[], &[])));
-
-        let mut node = Node::new(
-            NodeId::new(1).unwrap(),
-            BitTiming::default(),
-            Callbacks::default(),
-            mbox,
-            state,
-            od,
-        );
+        let mut sys = new_test_node(NodeId::new(1).unwrap(), Some(entries), ());
+        let node = &mut sys.node;
 
         node.process(0);
         assert_eq!(NmtState::PreOperational, node.nmt_state());
