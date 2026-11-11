@@ -5,10 +5,13 @@ use zencan_common::{
 
 use crate::object_dict::{ObjectAccess, ObjectLookup, SubInfo};
 
-use crate::sdo_server::{sdo_comms::ReceiverState, SdoComms};
+#[cfg(feature = "sdo-block")]
+use crate::sdo_server::sdo_comms::ReceiverState;
+use crate::sdo_server::SdoComms;
 
 /// Size of block transfers Always support max of 127 segments in block transfers. This may have to
 /// adjust to support configurable buffer size
+#[cfg(feature = "sdo-block")]
 const BLKSIZE: u8 = 127;
 
 /// Number of microseconds to wait for a message before timing out an SDO transaction
@@ -44,6 +47,7 @@ struct SdoResult<'a> {
 }
 
 impl<'a> SdoResult<'a> {
+    #[cfg(feature = "sdo-block")]
     fn block_segments_queued(new_state: SdoState<'a>) -> Self {
         Self {
             tx_pending: true,
@@ -105,6 +109,7 @@ struct Segmented<'a> {
     bytes_in_buffer: Option<u32>,
 }
 
+#[cfg(feature = "sdo-block")]
 #[derive(Clone, Copy)]
 struct DownloadBlock<'a> {
     index: u16,
@@ -115,6 +120,7 @@ struct DownloadBlock<'a> {
     object: &'a dyn ObjectAccess,
 }
 
+#[cfg(feature = "sdo-block")]
 #[derive(Clone, Copy)]
 struct UploadBlock<'a> {
     object: &'a dyn ObjectAccess,
@@ -130,12 +136,17 @@ enum SdoState<'a> {
     Idle,
     DownloadSegmented(Segmented<'a>),
     UploadSegmented(Segmented<'a>),
+    #[cfg(feature = "sdo-block")]
     DownloadBlock(DownloadBlock<'a>),
+    #[cfg(feature = "sdo-block")]
     EndDownloadBlock(DownloadBlock<'a>),
+    #[cfg(feature = "sdo-block")]
     InitiateUploadBlock(UploadBlock<'a>),
+    #[cfg(feature = "sdo-block")]
     UploadBlock(UploadBlock<'a>),
 }
 
+#[cfg(feature = "sdo-block")]
 fn copy_upload_sublock(
     rx: &SdoComms,
     obj: &dyn ObjectAccess,
@@ -183,11 +194,15 @@ impl<'a> SdoState<'a> {
             SdoState::Idle => Self::idle(od, rx),
             SdoState::DownloadSegmented(state) => Self::download_segmented(state, rx, elapsed_us),
             SdoState::UploadSegmented(state) => Self::upload_segmented(state, rx, elapsed_us),
+            #[cfg(feature = "sdo-block")]
             SdoState::DownloadBlock(state) => Self::download_block(state, rx, elapsed_us),
+            #[cfg(feature = "sdo-block")]
             SdoState::EndDownloadBlock(state) => Self::end_download_block(state, rx, elapsed_us),
+            #[cfg(feature = "sdo-block")]
             SdoState::InitiateUploadBlock(state) => {
                 Self::initiate_upload_block(*state, rx, elapsed_us)
             }
+            #[cfg(feature = "sdo-block")]
             SdoState::UploadBlock(state) => Self::upload_block(*state, rx, elapsed_us),
         }
     }
@@ -311,6 +326,7 @@ impl<'a> SdoState<'a> {
                     )
                 }
             }
+            #[cfg(feature = "sdo-block")]
             SdoRequest::InitiateBlockDownload {
                 cc,
                 s,
@@ -356,6 +372,7 @@ impl<'a> SdoState<'a> {
                     }),
                 )
             }
+            #[cfg(feature = "sdo-block")]
             SdoRequest::InitiateBlockUpload {
                 index,
                 sub,
@@ -603,6 +620,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
+    #[cfg(feature = "sdo-block")]
     fn download_block(state: &DownloadBlock<'a>, rx: &SdoComms, elapsed_us: u32) -> SdoResult<'a> {
         // During block download, up to 127 block segments are sent out in rapid succession, without
         // any acknowledgement, so the processing of these is handled in the receiver. Here, we wait
@@ -702,6 +720,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
+    #[cfg(feature = "sdo-block")]
     fn end_download_block(
         state: &DownloadBlock<'a>,
         rx: &SdoComms,
@@ -772,6 +791,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
+    #[cfg(feature = "sdo-block")]
     pub fn initiate_upload_block(
         mut state: UploadBlock<'a>,
         rx: &SdoComms,
@@ -818,6 +838,7 @@ impl<'a> SdoState<'a> {
         }
     }
 
+    #[cfg(feature = "sdo-block")]
     pub fn upload_block(
         mut state: UploadBlock<'a>,
         rx: &SdoComms,
@@ -979,11 +1000,11 @@ mod tests {
         ByteField, ConstField, NullTermByteField, ODEntry, ObjectLookup, ProvidesSubObjects,
         SubObjectAccess,
     };
-    use zencan_common::{
-        object_model::{AccessType, DataType, ObjectCode},
-        protocol::BlockSegment,
-    };
+    use zencan_common::object_model::{AccessType, DataType, ObjectCode};
+    #[cfg(feature = "sdo-block")]
+    use zencan_common::protocol::BlockSegment;
 
+    #[cfg(feature = "sdo-block")]
     use crate::SDO_BUFFER_SIZE;
 
     use super::*;
@@ -1040,6 +1061,7 @@ mod tests {
         entries
     }
 
+    #[cfg(feature = "sdo-block")]
     fn do_happy_block_download(
         server: &mut SdoServer<'static>,
         rx: &SdoComms,
@@ -1138,6 +1160,7 @@ mod tests {
         assert_eq!(data, read_buf);
     }
 
+    #[cfg(feature = "sdo-block")]
     #[test]
     fn test_block_download() {
         let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
@@ -1151,6 +1174,7 @@ mod tests {
         do_happy_block_download(&mut server, &comms, od, 1200);
     }
 
+    #[cfg(feature = "sdo-block")]
     #[test]
     fn test_block_download_missing_block() {
         let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
@@ -1272,6 +1296,7 @@ mod tests {
         assert_eq!(data.as_slice(), read_buf);
     }
 
+    #[cfg(feature = "sdo-block")]
     #[test]
     fn test_block_download_timeout() {
         let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
@@ -1335,6 +1360,7 @@ mod tests {
         assert_eq!(None, index);
     }
 
+    #[cfg(feature = "sdo-block")]
     #[test]
     fn test_block_upload() {
         let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));

@@ -3,27 +3,36 @@ use core::{
     sync::atomic::Ordering,
 };
 
-use portable_atomic::{AtomicU32, AtomicU8};
+use portable_atomic::AtomicU32;
+#[cfg(feature = "sdo-block")]
+use portable_atomic::AtomicU8;
+#[cfg(feature = "sdo-block")]
+use zencan_common::protocol::BlockSegment;
 use zencan_common::{
-    protocol::{BlockSegment, SdoRequest, SdoResponse},
+    protocol::{SdoRequest, SdoResponse},
     AtomicCell,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ReceiverState {
     Normal,
+    #[cfg(feature = "sdo-block")]
     BlockReceive,
+    #[cfg(feature = "sdo-block")]
     BlockReceiveCompleted {
         ackseq: u8,
         last_segment: u8,
         complete: bool,
     },
+    #[cfg(feature = "sdo-block")]
     BlockSend {
         block_size: u32,
         current_segment: u8,
         send_complete: bool,
     },
+    #[cfg(feature = "sdo-block")]
     BlockSendCompleted,
+    #[cfg(feature = "sdo-block")]
     BlockSendAborted,
 }
 
@@ -67,7 +76,9 @@ pub(crate) struct SdoComms {
     state: AtomicCell<ReceiverState>,
     buffer: AtomicCell<Option<&'static mut [u8]>>,
     timer: AtomicU32,
+    #[cfg(feature = "sdo-block")]
     last_seqnum: AtomicU8,
+    #[cfg(feature = "sdo-block")]
     blksize: AtomicU8,
 }
 
@@ -79,7 +90,9 @@ impl SdoComms {
             state: AtomicCell::new(ReceiverState::Normal),
             buffer: AtomicCell::new(Some(sdo_buffer)),
             timer: AtomicU32::new(0),
+            #[cfg(feature = "sdo-block")]
             last_seqnum: AtomicU8::new(0),
+            #[cfg(feature = "sdo-block")]
             blksize: AtomicU8::new(0),
         }
     }
@@ -91,7 +104,9 @@ impl SdoComms {
             self.response.borrow(cs).set(None);
             self.state.borrow(cs).set(ReceiverState::Normal);
             self.timer.store(0, Ordering::Relaxed);
+            #[cfg(feature = "sdo-block")]
             self.last_seqnum.store(0, Ordering::Relaxed);
+            #[cfg(feature = "sdo-block")]
             self.blksize.store(0, Ordering::Relaxed);
         });
     }
@@ -101,6 +116,9 @@ impl SdoComms {
         if let Some(resp) = self.response.take().map(|resp| resp.to_bytes()) {
             return Some(resp);
         }
+        #[cfg(not(feature = "sdo-block"))]
+        return None;
+        #[cfg(feature = "sdo-block")]
         critical_section::with(|_| {
             match self.state.load() {
                 ReceiverState::BlockSend {
@@ -160,6 +178,7 @@ impl SdoComms {
                 }
                 Err(_) => false,
             },
+            #[cfg(feature = "sdo-block")]
             ReceiverState::BlockReceive => {
                 // In block receive state, we expect that all messages are blocks, but also check
                 // for abort messages. Abort messages can be distinguished from blocks because a
@@ -206,7 +225,9 @@ impl SdoComms {
                 });
                 process_required
             }
+            #[cfg(feature = "sdo-block")]
             ReceiverState::BlockReceiveCompleted { .. } => true,
+            #[cfg(feature = "sdo-block")]
             ReceiverState::BlockSend {
                 block_size: _,
                 send_complete: _,
@@ -223,6 +244,7 @@ impl SdoComms {
                     false
                 }
             }
+            #[cfg(feature = "sdo-block")]
             ReceiverState::BlockSendCompleted => {
                 if let Ok(req) = msg_data.try_into() {
                     self.request.store(Some(req));
@@ -230,6 +252,7 @@ impl SdoComms {
                 }
                 true
             }
+            #[cfg(feature = "sdo-block")]
             ReceiverState::BlockSendAborted => {
                 if let Ok(req) = msg_data.try_into() {
                     self.request.store(Some(req));
@@ -244,10 +267,12 @@ impl SdoComms {
         self.response.store(Some(resp));
     }
 
+    #[cfg(feature = "sdo-block")]
     pub(crate) fn set_state(&self, state: ReceiverState) {
         self.state.store(state);
     }
 
+    #[cfg(feature = "sdo-block")]
     pub(crate) fn state(&self) -> ReceiverState {
         self.state.load()
     }
@@ -271,6 +296,7 @@ impl SdoComms {
         self.request.take()
     }
 
+    #[cfg(feature = "sdo-block")]
     pub(crate) fn begin_block_download(&self, blksize: u8) {
         critical_section::with(|_| {
             self.last_seqnum.store(0, Ordering::Relaxed);
@@ -280,6 +306,7 @@ impl SdoComms {
         });
     }
 
+    #[cfg(feature = "sdo-block")]
     pub(crate) fn restart_block_download(&self, ackseq: u8) {
         critical_section::with(|_| {
             self.last_seqnum.store(ackseq, Ordering::Relaxed);
@@ -288,6 +315,7 @@ impl SdoComms {
         });
     }
 
+    #[cfg(feature = "sdo-block")]
     pub(crate) fn begin_block_upload(&self, size: usize, send_complete: bool) {
         critical_section::with(|_| {
             self.timer.store(0, Ordering::Relaxed);

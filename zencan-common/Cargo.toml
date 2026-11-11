@@ -14,7 +14,7 @@ repository.workspace = true
 chrono = { version = "0.4.42", default-features = false }
 critical-section.workspace = true
 defmt = { workspace = true, optional = true }
-defmt-or-log = { workspace = true, default-features = false, features = ["at_least_one"] }
+defmt-or-log = { workspace = true, default-features = false }
 int-enum = "1.2.0"
 regex = { version = "1.11.1", optional = true }
 serde = { workspace = true, optional = true }
