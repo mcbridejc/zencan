@@ -38,6 +38,7 @@ impl ObjectGenerator for CallbackObjectGenerator {
             object_type,
             initializer,
             reset: None,
+            constant: false,
         }))
     }
 }

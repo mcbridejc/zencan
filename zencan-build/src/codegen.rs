@@ -121,6 +121,22 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
             let init = instance.initializer;
             let reset = instance.reset;
             let getter = instance.field_name;
+            let index = spec.index;
+
+            if instance.constant {
+                allocations.extend(quote!(static #var_name: #ty = #init;));
+                getters.extend(quote!(
+                    #[inline(always)]
+                    pub fn #getter(&self) -> &'static #ty {
+                        &#var_name
+                    }
+                ));
+                entries.push(quote!(ODEntryUninit::from_ptr(
+                    #index,
+                    &#var_name as *const #ty as *const dyn ObjectAccess
+                )));
+                continue;
+            }
 
             allocations
                 .extend(quote!(static #var_name: StaticStorage<#ty> = StaticStorage::new();));
@@ -144,7 +160,6 @@ fn generate(dev: &DeviceConfig) -> Result<TokenStream, CompileError> {
                     );
                 }
             }
-            let index = spec.index;
             entries.push(
                 quote!(ODEntryUninit::from_ptr(#index, #var_name.as_ptr() as *const dyn ObjectAccess)),
             );

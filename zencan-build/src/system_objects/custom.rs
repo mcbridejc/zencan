@@ -88,6 +88,22 @@ impl CustomObjectGenerator {
         Ok(field_tokens)
     }
 
+    /// The value of a VAR which never changes, or None when the object is not one
+    ///
+    /// Such a VAR is constant, cannot be mapped to a TPDO, and has a type whose bytes are computed
+    /// here. It becomes a [`ConstVarObject`](zencan_node::object_dict::ConstVarObject) in flash,
+    /// with no generated type, no storage in RAM and nothing to reset.
+    fn const_var_bytes(&self) -> Result<Option<Vec<u8>>, CompileError> {
+        let ObjectBuildShape::Var(var) = &self.spec.shape else {
+            return Ok(None);
+        };
+        let sub = &var.value;
+        if sub.access_type != AccessType::Const || sub.pdo_mapping.supports_tpdo() {
+            return Ok(None);
+        }
+        get_default_value_bytes(sub.default_value.as_ref(), sub.data_type)
+    }
+
     fn supports_tpdo(&self) -> bool {
         match &self.spec.shape {
             ObjectBuildShape::Var(v) => v.value.pdo_mapping.supports_tpdo(),
@@ -412,6 +428,9 @@ impl CustomObjectGenerator {
 
 impl super::ObjectGenerator for CustomObjectGenerator {
     fn type_definitions(&self) -> Result<TokenStream, CompileError> {
+        if self.const_var_bytes()?.is_some() {
+            return Ok(quote!());
+        }
         let struct_name = self.type_name();
         let fields = self.type_fields()?;
         let impls = self.object_access_impl()?;
@@ -431,6 +450,30 @@ impl super::ObjectGenerator for CustomObjectGenerator {
             syn::parse_str(&self.spec.object_name).map_err(|_| CompileError::InvalidFieldName {
                 field_name: self.spec.object_name.clone(),
             })?;
+        if let Some(bytes) = self.const_var_bytes()? {
+            let ObjectBuildShape::Var(var) = &self.spec.shape else {
+                unreachable!("only a VAR has const bytes");
+            };
+            let access_type = access_type_to_tokens(var.value.access_type);
+            let data_type = data_type_to_tokens(var.value.data_type);
+            let pdo_mapping = pdo_mappable_to_tokens(var.value.pdo_mapping);
+            let persist = var.value.persist;
+            return Ok(Some(ObjectInstance {
+                field_name,
+                object_type: quote!(ConstVarObject),
+                initializer: quote!(ConstVarObject::new(
+                    SubInfo {
+                        access_type: #access_type,
+                        data_type: #data_type,
+                        pdo_mapping: #pdo_mapping,
+                        persist: #persist,
+                    },
+                    &[#(#bytes),*],
+                )),
+                reset: None,
+                constant: true,
+            }));
+        }
         let object_type = self.type_name();
         let mut fields = TokenStream::new();
         match &self.spec.shape {
@@ -453,6 +496,7 @@ impl super::ObjectGenerator for CustomObjectGenerator {
             object_type: object_type.clone(),
             initializer: quote!(#object_type { #fields }),
             reset: Some(quote!(reset_object())),
+            constant: false,
         }))
     }
 }
@@ -580,7 +624,7 @@ fn get_rust_type(data_type: DataType) -> syn::Type {
     }
 }
 
-fn string_to_byte_literal_tokens(s: &str, size: usize) -> Result<TokenStream, CompileError> {
+fn string_to_bytes(s: &str, size: usize) -> Result<Vec<u8>, CompileError> {
     let b = s.as_bytes();
     if b.len() > size {
         return Err(CompileError::DefaultValueTooLong {
@@ -589,7 +633,11 @@ fn string_to_byte_literal_tokens(s: &str, size: usize) -> Result<TokenStream, Co
     }
     let mut padded = vec![0u8; size];
     padded[..b.len()].copy_from_slice(b);
+    Ok(padded)
+}
 
+fn string_to_byte_literal_tokens(s: &str, size: usize) -> Result<TokenStream, CompileError> {
+    let padded = string_to_bytes(s, size)?;
     Ok(quote!([#(#padded),*]))
 }
 
@@ -680,4 +728,52 @@ fn get_default_value_tokens(
             }
         }
     }
+}
+
+/// The little-endian bytes of an object's default value
+///
+/// Returns None for the types whose bytes are not computed here: time types and domains.
+fn get_default_value_bytes(
+    value: Option<&DefaultValue>,
+    data_type: DataType,
+) -> Result<Option<Vec<u8>>, CompileError> {
+    if matches!(
+        data_type,
+        DataType::TimeOfDay | DataType::TimeDifference | DataType::Domain
+    ) {
+        return Ok(None);
+    }
+    let default_value = default_default(data_type);
+    let Some(value) = value.or(default_value.as_ref()) else {
+        return Ok(None);
+    };
+    let mismatch = || CompileError::DefaultValueTypeMismatch {
+        message: format!(
+            "Default value {:?} is not a valid value for type {:?}",
+            value, data_type
+        ),
+    };
+    let bytes = match (value, data_type) {
+        (DefaultValue::String(s), t) if t.is_str() => string_to_bytes(s, t.size())?,
+        (DefaultValue::Integer(i), DataType::Boolean) => vec![u8::from(*i != 0)],
+        (DefaultValue::Integer(i), DataType::Real32) => (*i as f32).to_le_bytes().to_vec(),
+        (DefaultValue::Integer(i), DataType::Real64) => (*i as f64).to_le_bytes().to_vec(),
+        (
+            DefaultValue::Integer(i),
+            DataType::Int8
+            | DataType::Int16
+            | DataType::Int24
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt24
+            | DataType::UInt32
+            | DataType::UInt64,
+        ) => i.to_le_bytes()[..data_type.size()].to_vec(),
+        (DefaultValue::Float(f), DataType::Real32) => (*f as f32).to_le_bytes().to_vec(),
+        (DefaultValue::Float(f), DataType::Real64) => f.to_le_bytes().to_vec(),
+        _ => return Err(mismatch()),
+    };
+    Ok(Some(bytes))
 }

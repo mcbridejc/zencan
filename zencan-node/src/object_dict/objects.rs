@@ -84,19 +84,6 @@ pub trait ObjectAccess: Sync + Send {
     /// Get metadata about a sub object
     fn sub_info(&self, sub: u8) -> Result<SubInfo, AbortCode>;
 
-    /// Get the highest sub index available in this object
-    fn max_sub_number(&self) -> u8 {
-        match self.object_code() {
-            ObjectCode::Null => 0,
-            ObjectCode::Domain => 0,
-            ObjectCode::DefType => 0,
-            ObjectCode::DefStruct => 0,
-            ObjectCode::Var => 0,
-            ObjectCode::Array => self.read_u8(0).unwrap(),
-            ObjectCode::Record => self.read_u8(0).unwrap(),
-        }
-    }
-
     /// Set an event flag for the specified sub object on this object
     ///
     /// Event flags are used for triggering PDOs. This is optional, as not all objects support PDOs
@@ -117,24 +104,6 @@ pub trait ObjectAccess: Sync + Send {
     /// This is optional as not all objects support events
     fn clear_events(&self) {}
 
-    /// Get the access type of a specific sub object
-    fn access_type(&self, sub: u8) -> Result<AccessType, AbortCode> {
-        Ok(self.sub_info(sub)?.access_type)
-    }
-
-    /// Get the data type of a specific sub object
-    fn data_type(&self, sub: u8) -> Result<DataType, AbortCode> {
-        Ok(self.sub_info(sub)?.data_type)
-    }
-
-    /// Get the maximum size of an sub object
-    ///
-    /// For most sub objects, this matches the current_size, but for strings the size of the
-    /// currently stored value (returned by `current_size()`) may be smaller.
-    fn size(&self, sub: u8) -> Result<usize, AbortCode> {
-        Ok(self.sub_info(sub)?.size())
-    }
-
     /// Get the current size of a sub object
     ///
     /// Note that this is not necessarily the allocated size of the object, as some objects (such as
@@ -144,8 +113,9 @@ pub trait ObjectAccess: Sync + Send {
     fn current_size(&self, sub: u8) -> Result<usize, AbortCode> {
         const CHUNK_SIZE: usize = 8;
 
-        let size = self.size(sub)?;
-        if self.data_type(sub)?.is_str() {
+        let info = self.sub_info(sub)?;
+        let size = info.size();
+        if info.data_type.is_str() {
             // Look for first 0
             let mut chunk = 0;
             let mut buf = [0; CHUNK_SIZE];
@@ -163,58 +133,94 @@ pub trait ObjectAccess: Sync + Send {
         // not a string type or no null-terminator was found
         Ok(size)
     }
+}
+
+// The typed helpers are implemented once on `dyn ObjectAccess`, not as provided trait methods:
+// every type implementing the trait would otherwise get its own copy of each, and a vtable entry
+// for it, even when they are never called.
+impl dyn ObjectAccess + '_ {
+    /// Get the highest sub index available in this object
+    pub fn max_sub_number(&self) -> u8 {
+        match self.object_code() {
+            ObjectCode::Null => 0,
+            ObjectCode::Domain => 0,
+            ObjectCode::DefType => 0,
+            ObjectCode::DefStruct => 0,
+            ObjectCode::Var => 0,
+            ObjectCode::Array => self.read_u8(0).unwrap(),
+            ObjectCode::Record => self.read_u8(0).unwrap(),
+        }
+    }
+
+    /// Get the access type of a specific sub object
+    pub fn access_type(&self, sub: u8) -> Result<AccessType, AbortCode> {
+        Ok(self.sub_info(sub)?.access_type)
+    }
+
+    /// Get the data type of a specific sub object
+    pub fn data_type(&self, sub: u8) -> Result<DataType, AbortCode> {
+        Ok(self.sub_info(sub)?.data_type)
+    }
+
+    /// Get the maximum size of an sub object
+    ///
+    /// For most sub objects, this matches the current_size, but for strings the size of the
+    /// currently stored value (returned by `current_size()`) may be smaller.
+    pub fn size(&self, sub: u8) -> Result<usize, AbortCode> {
+        Ok(self.sub_info(sub)?.size())
+    }
 
     /// Read a sub object as a u32
-    fn read_u32(&self, sub: u8) -> Result<u32, AbortCode> {
+    pub fn read_u32(&self, sub: u8) -> Result<u32, AbortCode> {
         let mut buf = [0; 4];
         self.read(sub, 0, &mut buf)?;
         Ok(u32::from_le_bytes(buf))
     }
 
     /// Read a sub object as a u24
-    fn read_u24(&self, sub: u8) -> Result<u24, AbortCode> {
+    pub fn read_u24(&self, sub: u8) -> Result<u24, AbortCode> {
         let mut buf = [0; 3];
         self.read(sub, 0, &mut buf)?;
         Ok(u24::from_le_bytes(buf))
     }
 
     /// Read a sub object as a u16
-    fn read_u16(&self, sub: u8) -> Result<u16, AbortCode> {
+    pub fn read_u16(&self, sub: u8) -> Result<u16, AbortCode> {
         let mut buf = [0; 2];
         self.read(sub, 0, &mut buf)?;
         Ok(u16::from_le_bytes(buf))
     }
 
     /// Read a sub object as a u8
-    fn read_u8(&self, sub: u8) -> Result<u8, AbortCode> {
+    pub fn read_u8(&self, sub: u8) -> Result<u8, AbortCode> {
         let mut buf = [0; 1];
         self.read(sub, 0, &mut buf)?;
         Ok(buf[0])
     }
 
     /// Read a sub object as an i32
-    fn read_i32(&self, sub: u8) -> Result<i32, AbortCode> {
+    pub fn read_i32(&self, sub: u8) -> Result<i32, AbortCode> {
         let mut buf = [0; 4];
         self.read(sub, 0, &mut buf)?;
         Ok(i32::from_le_bytes(buf))
     }
 
     /// Read a sub object as an i24
-    fn read_i24(&self, sub: u8) -> Result<i24, AbortCode> {
+    pub fn read_i24(&self, sub: u8) -> Result<i24, AbortCode> {
         let mut buf = [0; 3];
         self.read(sub, 0, &mut buf)?;
         Ok(i24::from_le_bytes(buf))
     }
 
     /// Read a sub object as an i16
-    fn read_i16(&self, sub: u8) -> Result<i16, AbortCode> {
+    pub fn read_i16(&self, sub: u8) -> Result<i16, AbortCode> {
         let mut buf = [0; 2];
         self.read(sub, 0, &mut buf)?;
         Ok(i16::from_le_bytes(buf))
     }
 
     /// Read a sub object as an i8
-    fn read_i8(&self, sub: u8) -> Result<i8, AbortCode> {
+    pub fn read_i8(&self, sub: u8) -> Result<i8, AbortCode> {
         let mut buf = [0; 1];
         self.read(sub, 0, &mut buf)?;
         Ok(buf[0] as i8)
@@ -423,6 +429,86 @@ impl ObjectAccess for CallbackObject<'_> {
     }
 }
 
+/// A VAR object whose value never changes, such as the device name
+///
+/// The value is fixed at build time and kept in flash. Every constant VAR in a dictionary shares
+/// this one type, so they share one implementation of [`ObjectAccess`] rather than each getting
+/// its own.
+#[allow(missing_debug_implementations)]
+pub struct ConstVarObject {
+    info: SubInfo,
+    value: &'static [u8],
+}
+
+impl ConstVarObject {
+    /// Create a constant VAR object
+    ///
+    /// `value` holds the object's bytes in little-endian order. A visible or unicode string is
+    /// padded to its declared size with zeros, and reads stop at the first zero.
+    pub const fn new(info: SubInfo, value: &'static [u8]) -> Self {
+        Self { info, value }
+    }
+
+    /// The number of bytes a read returns
+    fn len(&self) -> usize {
+        if matches!(
+            self.info.data_type,
+            DataType::VisibleString(_) | DataType::UnicodeString(_)
+        ) {
+            self.value
+                .iter()
+                .position(|b| *b == 0)
+                .unwrap_or(self.value.len())
+        } else {
+            self.value.len()
+        }
+    }
+}
+
+impl ObjectAccess for ConstVarObject {
+    fn read(&self, sub: u8, offset: usize, buf: &mut [u8]) -> Result<usize, AbortCode> {
+        if sub != 0 {
+            return Err(AbortCode::NoSuchSubIndex);
+        }
+        let value = &self.value[..self.len()];
+        if offset >= value.len() {
+            return Ok(0);
+        }
+        let read_len = buf.len().min(value.len() - offset);
+        buf[..read_len].copy_from_slice(&value[offset..offset + read_len]);
+        Ok(read_len)
+    }
+
+    fn read_size(&self, sub: u8) -> Result<usize, AbortCode> {
+        self.current_size(sub)
+    }
+
+    fn write(&self, sub: u8, _data: &[u8]) -> Result<(), AbortCode> {
+        if sub != 0 {
+            return Err(AbortCode::NoSuchSubIndex);
+        }
+        Err(AbortCode::ReadOnly)
+    }
+
+    fn object_code(&self) -> ObjectCode {
+        ObjectCode::Var
+    }
+
+    fn sub_info(&self, sub: u8) -> Result<SubInfo, AbortCode> {
+        if sub != 0 {
+            return Err(AbortCode::NoSuchSubIndex);
+        }
+        Ok(self.info)
+    }
+
+    fn current_size(&self, sub: u8) -> Result<usize, AbortCode> {
+        if sub != 0 {
+            return Err(AbortCode::NoSuchSubIndex);
+        }
+        Ok(self.len())
+    }
+}
+
 /// Represents one item in a table of objects.
 ///
 /// Entries contain references only to fully initialized objects.
@@ -548,4 +634,57 @@ pub(crate) fn get_object_write_data<const N: usize>(data: &[u8]) -> Result<[u8; 
     let mut array = [0; N];
     array.copy_from_slice(data);
     Ok(array)
+}
+
+#[cfg(test)]
+mod tests {
+    use zencan_common::object_model::PdoMappable;
+
+    use super::*;
+
+    fn const_var(data_type: DataType, value: &'static [u8]) -> ConstVarObject {
+        ConstVarObject::new(
+            SubInfo {
+                data_type,
+                access_type: AccessType::Const,
+                pdo_mapping: PdoMappable::None,
+                persist: false,
+            },
+            value,
+        )
+    }
+
+    #[test]
+    fn const_var_string_reads_stop_at_the_padding() {
+        let obj = const_var(DataType::VisibleString(8), b"name\0\0\0\0");
+        let mut buf = [0xff; 8];
+        assert_eq!(obj.read(0, 0, &mut buf), Ok(4));
+        assert_eq!(&buf[..4], b"name");
+        assert_eq!(obj.read(0, 2, &mut buf), Ok(2));
+        assert_eq!(&buf[..2], b"me");
+        assert_eq!(obj.read(0, 6, &mut buf), Ok(0));
+        assert_eq!(obj.read_size(0), Ok(4));
+        assert_eq!(obj.current_size(0), Ok(4));
+    }
+
+    #[test]
+    fn const_var_octet_string_keeps_zero_bytes() {
+        let obj = const_var(DataType::OctetString(3), &[1, 0, 2]);
+        let mut buf = [0; 3];
+        assert_eq!(obj.read(0, 0, &mut buf), Ok(3));
+        assert_eq!(buf, [1, 0, 2]);
+    }
+
+    #[test]
+    fn const_var_is_read_only_with_only_sub_zero() {
+        let obj: &dyn ObjectAccess =
+            &const_var(DataType::UInt32, const { &0x0002_0192u32.to_le_bytes() });
+        assert_eq!(obj.read_u32(0), Ok(0x0002_0192));
+        assert_eq!(obj.write(0, &[0; 4]), Err(AbortCode::ReadOnly));
+        assert_eq!(obj.begin_partial(0), Err(AbortCode::ReadOnly));
+        assert_eq!(obj.read(1, 0, &mut [0; 4]), Err(AbortCode::NoSuchSubIndex));
+        assert_eq!(obj.write(1, &[0; 4]), Err(AbortCode::NoSuchSubIndex));
+        assert_eq!(obj.sub_info(1), Err(AbortCode::NoSuchSubIndex));
+        assert_eq!(obj.max_sub_number(), 0);
+    }
 }
