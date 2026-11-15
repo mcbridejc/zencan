@@ -19,7 +19,7 @@ use esp_hal::twai::{EspTwaiFrame, StandardId, TwaiMode, TwaiRx, TwaiTx};
 use esp_hal::{efuse, interrupt::software::SoftwareInterruptControl, twai, Async};
 use log::{error, info};
 use zencan_node::Callbacks;
-use zencan_node::{common::NodeId, Node};
+use zencan_node::{BitTiming, Node, common::NodeId};
 
 mod zencan {
     zencan_node::include_modules!(ZENCAN_CONFIG);
@@ -102,6 +102,7 @@ async fn canopen_process_task() {
     let callbacks = Callbacks::default();
     let mut node = Node::new(
         NodeId::new(42).unwrap(),
+        BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),

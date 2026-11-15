@@ -125,14 +125,14 @@ impl<'a> Callbacks<'a> {
 /// another, e.g. moved into an RTIC task. [`Callbacks`] holds plain closure references and is not
 /// `Send`; implement this trait on a `Send` type, or use `()`, for that.
 pub trait NodeCallbacks {
-    /// Whether [`store_node_config`](Self::store_node_config) is implemented
+    /// Whether [`store_node_and_bit_timing`](Self::store_node_and_bit_timing) is implemented
     ///
     /// The node only accepts the LSS StoreConfiguration command when it is.
     fn store_node_and_bit_timing_supported(&self) -> bool {
         false
     }
 
-    /// Store node config to flash; see [`Callbacks::store_node_config`]
+    /// Store node config to flash; see [`Callbacks::store_node_and_bit_timing`]
     fn store_node_and_bit_timing(&mut self, _node_id: NodeId, _bit_timing: BitTiming) {}
 
     /// Whether [`store_objects`](Self::store_objects) is implemented
