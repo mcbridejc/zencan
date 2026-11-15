@@ -101,11 +101,11 @@
 //!
 //! ```ignore
 //! // Get references to the functions which save to flash
-//! let store_node_config = &mut store_node_config;
+//! let store_node_and_bit_timing = &mut store_node_and_bit_timing;
 //! let store_objects = &mut store_objects;
 //!
 //! let callbacks = Callbacks {
-//!     store_node_config: Some(store_node_config),
+//!     store_node_and_bit_timing: Some(store_node_and_bit_timing),
 //!     store_objects: Some(store_objects),
 //!     ..Default::default()
 //! };
@@ -115,6 +115,7 @@
 //! let od = zencan::get_od();
 //! let mut node = Node::new(
 //!     NodeId::Unconfigured,
+//!     BitTiming::default(),
 //!     callbacks,
 //!     od.node_mbox(),
 //!     od.node_state(),
@@ -221,6 +222,7 @@ pub use bootloader::{BootloaderInfo, BootloaderSection, BootloaderSectionCallbac
 #[cfg_attr(docsrs, doc(all(feature = "socketcan", target_os = "linux")))]
 pub use common::open_socketcan;
 pub use identity_object::IdentityObject;
+pub use lss_slave::BitTiming;
 pub use node::{Callbacks, Node, NodeCallbacks};
 pub use node_mbox::NodeMbox;
 pub use node_state::{NmtStateAccess, NodeState, ResetScope};

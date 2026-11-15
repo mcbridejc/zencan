@@ -6,7 +6,7 @@ use cortex_m_rt::{entry, exception};
 use panic_halt as _;
 use portable_atomic::AtomicU64;
 use stm32_metapac as pac;
-use zencan_node::{Callbacks, Node, common::NodeId};
+use zencan_node::{BitTiming, Callbacks, Node, common::NodeId};
 mod can;
 
 mod zencan {
@@ -65,6 +65,7 @@ fn main() -> ! {
     let od = zencan::get_od();
     let mut node = Node::new(
         NodeId::new(1).unwrap(),
+        BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),

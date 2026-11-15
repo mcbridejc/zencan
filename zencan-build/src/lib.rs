@@ -46,7 +46,14 @@
 //! ```ignore
 //! let od = zencan::get_od();
 //! od.object1018().set_serial(get_serial());
-//! let node = zencan_node::Node::new(node_id, callbacks, od.node_mbox(), od.node_state(), od);
+//! let node = zencan_node::Node::new(
+//!     node_id,
+//!     zencan_node::BitTiming::default(),
+//!     callbacks,
+//!     od.node_mbox(),
+//!     od.node_state(),
+//!     od,
+//! );
 //! ```
 //!
 //! The dictionary owns its objects and runtime state in one static allocation,

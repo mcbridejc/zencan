@@ -32,7 +32,7 @@ use rtt_target::{self as _, rtt_init, set_defmt_channel};
 use zencan_node::{
     common::NodeId,
     object_dict::{ODEntry, ObjectAccess},
-    restore_stored_comm_objects, restore_stored_objects, Callbacks, Node,
+    restore_stored_comm_objects, restore_stored_objects, BitTiming, Callbacks, Node,
 };
 
 /// Create a serial number from the UID register
@@ -108,8 +108,8 @@ fn store_objects(
 
 /// Callback from zencan to store node configuraiton to flash
 #[allow(static_mut_refs)]
-fn store_node_config(flash: &mut Stm32g0Flash, id: NodeId) {
-    let data = [id.raw()];
+fn store_node_config(flash: &mut Stm32g0Flash, id: NodeId, bit_timing: BitTiming) {
+    let data = [id.raw(), bit_timing.table, bit_timing.index];
     if persist::update_sections(
         &mut flash.unlock(),
         &mut [SectionUpdate {
@@ -128,8 +128,10 @@ fn notify_can_task() {
     CAN_NOTIFY.notify();
 }
 
-/// Read the node ID from flash
-fn read_saved_node_id(flash: &mut Stm32g0Flash) -> NodeId {
+/// Read the node ID and LSS bit timing stored in flash.
+///
+/// Older images only stored the node ID. Missing timing bytes keep the default table.
+fn read_saved_node_config(flash: &mut Stm32g0Flash) -> (NodeId, BitTiming) {
     if let Some(sections) = persist::load_sections(&flash.unlock()) {
         for s in sections {
             let section_type = FlashSections::from(s.section_id);
@@ -137,7 +139,17 @@ fn read_saved_node_id(flash: &mut Stm32g0Flash) -> NodeId {
                 FlashSections::NodeConfig => {
                     if s.data.len() > 0 {
                         match NodeId::try_from(s.data[0]) {
-                            Ok(node_id) => return node_id,
+                            Ok(node_id) => {
+                                let bit_timing = if s.data.len() >= 3 {
+                                    BitTiming {
+                                        table: s.data[1],
+                                        index: s.data[2],
+                                    }
+                                } else {
+                                    BitTiming::default()
+                                };
+                                return (node_id, bit_timing);
+                            }
                             Err(_) => {
                                 defmt::error!("Read invalid node_id {} from flash", s.data[0]);
                                 break;
@@ -152,7 +164,7 @@ fn read_saved_node_id(flash: &mut Stm32g0Flash) -> NodeId {
         }
     }
 
-    NodeId::Unconfigured
+    (NodeId::Unconfigured, BitTiming::default())
 }
 
 fn read_persisted_objects(flash: &mut Stm32g0Flash, restore_fn: impl Fn(&[u8])) {
@@ -304,7 +316,7 @@ fn main() -> ! {
 
     configure_adc();
 
-    let node_id = read_saved_node_id(&mut flash);
+    let (node_id, bit_timing) = read_saved_node_config(&mut flash);
 
     let od = zencan::get_od();
 
@@ -313,8 +325,8 @@ fn main() -> ! {
 
     let flash = RefCell::new(flash);
 
-    let mut store_node_config = |node_id| {
-        store_node_config(&mut flash.borrow_mut(), node_id);
+    let mut store_node_and_bit_timing = |node_id, bit_timing| {
+        store_node_config(&mut flash.borrow_mut(), node_id, bit_timing);
     };
     let mut store_objects = |reader: &mut dyn embedded_io::Read<Error = Infallible>, len| {
         store_objects(&mut flash.borrow_mut(), reader, len)
@@ -350,7 +362,7 @@ fn main() -> ! {
     };
 
     let callbacks = Callbacks {
-        store_node_config: Some(&mut store_node_config),
+        store_node_and_bit_timing: Some(&mut store_node_and_bit_timing),
         store_objects: Some(&mut store_objects),
         reset_app: Some(&mut reset_app),
         reset_comms: Some(&mut reset_comms),
@@ -359,6 +371,7 @@ fn main() -> ! {
 
     let node = Node::new(
         node_id,
+        bit_timing,
         callbacks,
         od.node_mbox(),
         od.node_state(),

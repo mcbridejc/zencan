@@ -9,7 +9,7 @@ use std::{
 use clap::Parser;
 use tokio::time::timeout;
 use zencan_node::{
-    Callbacks, Node,
+    BitTiming, Callbacks, Node,
     common::{
         can::{AsyncCanReceiver, AsyncCanSender},
         protocol::{NodeId, SyncObject},
@@ -105,7 +105,14 @@ async fn main() {
         ..Default::default()
     };
 
-    let mut node = Node::new(node_id, callbacks, od.node_mbox(), od.node_state(), od);
+    let mut node = Node::new(
+        node_id,
+        BitTiming::default(),
+        callbacks,
+        od.node_mbox(),
+        od.node_state(),
+        od,
+    );
 
     let (mut tx, mut rx) = open_socketcan(&args.socket).unwrap();
 

@@ -29,6 +29,7 @@ async fn test_device_info_readback() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -73,6 +74,7 @@ async fn test_identity_readback() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -128,6 +130,7 @@ async fn test_string_write() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -181,6 +184,7 @@ async fn test_record_access() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -237,6 +241,7 @@ async fn test_array_access() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -300,6 +305,7 @@ async fn test_store_and_restore_objects() {
 
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -370,6 +376,7 @@ async fn test_empty_string_read() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -434,6 +441,7 @@ async fn test_node_state_callbacks() {
 
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -484,6 +492,7 @@ async fn test_time_field_access() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -526,6 +535,7 @@ async fn test_boolean_object_access() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -571,6 +581,7 @@ async fn test_sync_object_callback() {
 
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
@@ -608,6 +619,7 @@ async fn test_numeric_access() {
     let callbacks = Callbacks::new();
     let mut node = Node::new(
         NodeId::new(NODE_ID).unwrap(),
+        zencan_node::BitTiming::default(),
         callbacks,
         od.node_mbox(),
         od.node_state(),
