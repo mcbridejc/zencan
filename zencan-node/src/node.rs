@@ -464,7 +464,12 @@ impl<C: NodeCallbacks> Node<'_, C> {
             }
         }
 
-        if self.heartbeat_period_ms != 0 && now_us >= self.next_heartbeat_time_us {
+        // Not in Bootup: after an NMT reset, the boot-up message sent by the next process call is
+        // the node's first heartbeat, so none goes out here in the same state before it.
+        if self.heartbeat_period_ms != 0
+            && self.nmt_state() != NmtState::Bootup
+            && now_us >= self.next_heartbeat_time_us
+        {
             self.send_heartbeat();
             // Perform catchup if we are behind, e.g. if we have not send a heartbeat in a long
             // time because we have not been configured
@@ -660,6 +665,10 @@ impl<C: NodeCallbacks> Node<'_, C> {
             }
             self.mbox.set_sdo_rx_cob_id(Some(self.sdo_rx_cob_id()));
             self.mbox.set_sdo_tx_cob_id(Some(self.sdo_tx_cob_id()));
+            // The boot-up message is the first heartbeat (CiA 301), so the period counts from
+            // it. Counted from time 0, a node first processed more than a period later would
+            // find its next heartbeat overdue, and send it straight after the boot-up message.
+            self.next_heartbeat_time_us = self.last_process_time_us;
             self.send_heartbeat();
         }
     }
@@ -931,5 +940,78 @@ mod tests {
             ],
             heartbeats
         );
+    }
+
+    /// A node with a 1000 ms heartbeat producer time and no other objects.
+    fn new_heartbeat_test_node(node_id: NodeId) -> TestNodeCtx<()> {
+        let heartbeat_object = Box::leak(Box::new(VarObject::new(ScalarFieldU16::new(1000))));
+        let entries = Box::leak(Box::new([ODEntry {
+            index: object_ids::HEARTBEAT_PRODUCER_TIME,
+            object: heartbeat_object,
+        }]));
+        new_test_node(node_id, Some(entries), ())
+    }
+
+    /// The states of the heartbeats the node has queued since the last call.
+    fn take_heartbeat_states(mbox: &NodeMbox) -> Vec<NmtState> {
+        let mut states = Vec::new();
+        while let Some(msg) = mbox.next_transmit_message() {
+            if let Ok(ZencanMessage::Heartbeat(heartbeat)) = msg.try_into() {
+                states.push(heartbeat.state);
+            }
+        }
+        states
+    }
+
+    /// The boot-up message counts as the first heartbeat, so the next one follows a period
+    /// later, also for a node first processed long after time 0, e.g. on a clock that counts
+    /// from power-up.
+    #[test]
+    fn test_late_boot_up_is_the_first_heartbeat() {
+        let node_id = NodeId::new(1).unwrap();
+        let mut sys = new_heartbeat_test_node(node_id);
+        let node = &mut sys.node;
+        let mbox = sys.mbox;
+        let period_us = node.heartbeat_period_ms as u64 * 1000;
+        let boot_us = 5 * period_us;
+
+        node.process(boot_us);
+        assert_eq!(vec![NmtState::Bootup], take_heartbeat_states(mbox));
+
+        node.process(boot_us + period_us - 1);
+        assert_eq!(Vec::<NmtState>::new(), take_heartbeat_states(mbox));
+
+        node.process(boot_us + period_us);
+        assert_eq!(vec![NmtState::PreOperational], take_heartbeat_states(mbox));
+    }
+
+    /// An NMT reset is announced with exactly one boot-up message, in the pass after the
+    /// reset, followed by heartbeats a period apart.
+    #[test]
+    fn test_reset_sends_one_boot_up_message() {
+        let node_id = NodeId::new(1).unwrap();
+        let mut sys = new_heartbeat_test_node(node_id);
+        let node = &mut sys.node;
+        let mbox = sys.mbox;
+        let period_us = node.heartbeat_period_ms as u64 * 1000;
+
+        node.process(0);
+        assert_eq!(vec![NmtState::Bootup], take_heartbeat_states(mbox));
+
+        let reset_us = period_us / 2;
+        mbox.store_message(
+            NmtCommand {
+                cs: NmtCommandSpecifier::ResetApp,
+                node: node_id.raw(),
+            }
+            .into(),
+        )
+        .unwrap();
+        node.process(reset_us);
+        node.process(reset_us + 1);
+        assert_eq!(vec![NmtState::Bootup], take_heartbeat_states(mbox));
+
+        node.process(reset_us + 1 + period_us);
+        assert_eq!(vec![NmtState::PreOperational], take_heartbeat_states(mbox));
     }
 }
