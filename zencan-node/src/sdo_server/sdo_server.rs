@@ -387,6 +387,10 @@ impl<'a> SdoState<'a> {
                     }),
                 )
             }
+            // An abort is unconfirmed (CiA 301), and with no transfer open there is nothing
+            // to end. A reply would read as the answer to the client's next request: some
+            // clients send an abort ahead of every request.
+            SdoRequest::Abort { .. } => SdoResult::no_response(SdoState::Idle),
             _ => SdoResult::abort(0, 0, AbortCode::InvalidCommandSpecifier),
         }
     }
@@ -1136,6 +1140,32 @@ mod tests {
             .read(SUB, 0, &mut read_buf)
             .unwrap();
         assert_eq!(data, read_buf);
+    }
+
+    /// An abort is unconfirmed (CiA 301): with no transfer open the server stays idle and
+    /// sends nothing, and the next request is answered as usual.
+    #[test]
+    fn test_abort_while_idle_gets_no_reply() {
+        let buffer = Box::leak(Box::new([0; SDO_BUFFER_SIZE]));
+        let mut server = SdoServer::new();
+        let comms = SdoComms::new(buffer);
+        let od = test_od();
+
+        let abort = SdoRequest::abort(0x1000, 1, AbortCode::GeneralError).to_bytes();
+        comms.handle_req(&abort);
+        server.process(&comms, 0, od);
+        assert_eq!(None, comms.next_transmit_message());
+
+        let upload = SdoRequest::initiate_upload(0x1000, 0).to_bytes();
+        comms.handle_req(&upload);
+        server.process(&comms, 0, od);
+        let resp: Option<SdoResponse> = comms
+            .next_transmit_message()
+            .map(|data| data.try_into().unwrap());
+        assert!(
+            matches!(resp, Some(SdoResponse::ConfirmUpload { .. })),
+            "{resp:?}"
+        );
     }
 
     #[test]
